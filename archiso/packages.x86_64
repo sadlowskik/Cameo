@@ -35,13 +35,18 @@ rocm-hip-sdk
 rocminfo
 rocm-smi-lib
 
-# The inference engine itself. Everything the CLI spawns lives here:
-# llama-cli, llama-server and llama-quantize. Without these the image boots
-# but every serve/run/quantize path dies with ENOENT, which is the whole
-# mission. The -vulkan build is the universal baseline; -hip is Tier 1/2 and
+# The inference engine itself. llama-cpp provides llama-cli, llama-server and
+# llama-quantize -- everything the CLI spawns. Without it the image boots but
+# every serve/run/quantize path dies with ENOENT, which is the whole mission.
+#
+# Upstream consolidated llama-cpp-vulkan and llama-cpp-rocm into this single
+# package and moved the compute backend into ggml, which now ships one package
+# per backend. That maps onto Cameo's tiers directly: ggml-vulkan is the
+# universal baseline for every card, ggml-hip is the Tier 1/2 accelerator and
 # is stripped for the lite edition by scripts/build-iso.sh.
-llama.cpp-vulkan
-llama.cpp-hip
+llama-cpp
+ggml-vulkan
+ggml-hip
 
 # Wireless. The target is a laptop, and networkd alone cannot associate to an
 # access point -- that is iwd's job. Without this there is no way to fetch a

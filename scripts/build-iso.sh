@@ -135,10 +135,10 @@ install -Dm755 "$REPO/target/release/cameo" "$BUILD/airootfs/usr/local/bin/cameo
 
 # 3. Lite edition: drop the heavy ROCm / PyTorch packages (Vulkan-only, much smaller).
 if [ "$EDITION" = "lite" ]; then
-  # llama.cpp-hip matches neither ^rocm nor ^python-pytorch, so it needs its
-  # own alternative or the "Vulkan-only" edition ships the whole ROCm stack
-  # as a dependency of the inference engine.
-  grep -viE '^(rocm|python-pytorch|llama\.cpp-hip)' "$PROFILE/packages.x86_64" > "$BUILD/packages.x86_64"
+  # ggml-hip matches neither ^rocm nor ^python-pytorch, so it needs its own
+  # alternative or the "Vulkan-only" edition pulls the whole ROCm stack in as
+  # a dependency of the compute backend.
+  grep -viE '^(rocm|python-pytorch|ggml-hip)' "$PROFILE/packages.x86_64" > "$BUILD/packages.x86_64"
   log "Lite edition: ROCm/PyTorch excluded — Vulkan baseline only."
 fi
 
