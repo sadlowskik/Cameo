@@ -18,3 +18,6 @@ Thumbs.db
 # Build/ISO outputs
 /archiso/out/
 /archiso/work/
+
+# CI build log (produced inside the runner workspace)
+build.log

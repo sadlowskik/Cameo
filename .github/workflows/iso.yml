@@ -71,14 +71,68 @@ jobs:
       - name: Build cameo CLI
         run: docker exec arch bash -euo pipefail -c "cargo build --release -p cameo-cli"
 
+      # pacman 7 runs downloads under an unprivileged DownloadUser confined by
+      # landlock. That sandbox cannot be set up inside a container and aborts
+      # pacstrap, which is what mkarchiso uses to populate the airootfs.
+      - name: Disable pacman sandbox for the nested pacstrap
+        run: |
+          docker exec arch bash -euo pipefail -c \
+            "grep -q '^DisableSandbox' /usr/share/archiso/configs/releng/pacman.conf \
+             || sed -i '/^\[options\]/a DisableSandbox' /usr/share/archiso/configs/releng/pacman.conf"
+          docker exec arch bash -euo pipefail -c \
+            "sed -n '/\[options\]/,/^$/p' /usr/share/archiso/configs/releng/pacman.conf"
+
       - name: Build ISO
         env:
           EDITION: ${{ github.event.inputs.edition || 'lite' }}
-        run: docker exec -e CAMEO_EDITION="$EDITION" arch bash -euo pipefail -c "bash ./scripts/build-iso.sh"
+        run: docker exec -e CAMEO_EDITION="$EDITION" arch bash -euo pipefail -c "bash ./scripts/build-iso.sh 2>&1 | tee /repo/build.log"
 
       - name: Disk after build
         if: always()
         run: df -h /
+
+      # Log text is only readable with authentication, but step conclusions are
+      # public. Each probe below turns "is this string in the log?" into a step
+      # result, so a failure is diagnosable without reading the log.
+      - name: "DIAG tail of build log"
+        if: failure()
+        run: tail -n 80 build.log || echo "no build.log produced"
+
+      - name: "DIAG probe pacman sandbox or landlock error"
+        if: failure()
+        run: grep -qiE 'sandbox|landlock|DownloadUser' build.log
+
+      - name: "DIAG probe no space left on device"
+        if: failure()
+        run: grep -qiE 'no space left|disk full' build.log
+
+      - name: "DIAG probe mount or loop device failure"
+        if: failure()
+        run: grep -qiE 'mount:|loop device|failed to mount|Operation not permitted' build.log
+
+      - name: "DIAG probe package target not found"
+        if: failure()
+        run: grep -qiE 'target not found|could not find all required packages' build.log
+
+      - name: "DIAG probe permission denied"
+        if: failure()
+        run: grep -qiE 'permission denied|operation not supported' build.log
+
+      - name: "DIAG probe squashfs or compression failure"
+        if: failure()
+        run: grep -qiE 'mksquashfs|squashfs' build.log
+
+      - name: "DIAG probe missing releng or profile file"
+        if: failure()
+        run: grep -qiE 'not found at|No such file or directory' build.log
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+          if-no-files-found: warn
 
       - name: Collect output
         run: |
