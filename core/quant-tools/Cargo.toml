@@ -1,0 +1,11 @@
+[package]
+name = "cameo-quant-tools"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "GGUF quantization pipeline wrapping llama.cpp's llama-quantize."
+
+[dependencies]
+cameo-placement.workspace = true

@@ -1,0 +1,344 @@
+//! Agent orchestration: binding agents' engine slots to compute.
+//!
+//! An "agent" is a harness (e.g. Knossos) instance with *something in its engine
+//! slot*. That something is either a **cloud** endpoint or a **local** model that
+//! Cameo serves on chosen hardware. This module resolves an [`AgentSpec`] into a
+//! concrete [`AgentRunPlan`]: for cloud, the provider endpoint; for local, it
+//! reuses [`crate::fleet::place_on_fleet`] to pick a node and
+//! [`crate::command::build_llama_server`] to produce the serve command + endpoint.
+//!
+//! Scope, honestly: this is the **binding + placement** layer. Actually running
+//! the agent (spawning the harness, pointing its slot at the endpoint, and any
+//! multi-agent coordination) is the harness's job — Cameo places the compute, the
+//! harness runs the loop.
+
+use crate::command::{build_llama_server, CommandSpec};
+use crate::error::Error;
+use crate::fleet::{place_on_fleet, Cluster, FleetPlacement};
+use crate::model::ModelMeta;
+use crate::plan::{plan, Task};
+use cameo_config::Settings;
+use serde::Serialize;
+
+/// Where an agent's engine (model) comes from.
+#[derive(Debug, Clone, PartialEq)]
+pub enum EngineBinding {
+    /// A cloud/API model — the harness points its slot at a provider endpoint.
+    Cloud { provider: String, model: String },
+    /// A local model that Cameo serves on chosen hardware.
+    Local {
+        /// Path to the GGUF model on the target node.
+        path: String,
+        model: ModelMeta,
+        target: PlacementTarget,
+    },
+}
+
+/// How to place a local agent's model.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PlacementTarget {
+    /// Let the fleet planner choose the best node.
+    Auto,
+    /// Pin to a named node.
+    Node(String),
+}
+
+/// A declarative agent: a name, a role, and where its engine comes from.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AgentSpec {
+    pub name: String,
+    /// Free-form role/label, e.g. "planner", "coder", "reviewer".
+    pub role: String,
+    pub engine: EngineBinding,
+}
+
+/// A resolved, runnable agent binding.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AgentRunPlan {
+    /// Point the harness at a cloud provider.
+    Cloud {
+        name: String,
+        role: String,
+        provider: String,
+        model: String,
+        endpoint: String,
+    },
+    /// Serve a local model on a node, then point the harness at it.
+    Local {
+        name: String,
+        role: String,
+        node: usize,
+        node_name: String,
+        endpoint: String,
+        /// The `llama-server` command that stands the model up on the node.
+        serve: CommandSpec,
+    },
+}
+
+/// Base URL for a known cloud provider.
+fn provider_endpoint(provider: &str) -> Option<&'static str> {
+    match provider.to_lowercase().as_str() {
+        "anthropic" => Some("https://api.anthropic.com"),
+        "openai" => Some("https://api.openai.com/v1"),
+        _ => None,
+    }
+}
+
+/// Resolve one agent spec into a run plan. `port` is used only for local serving.
+pub fn resolve_agent(
+    spec: &AgentSpec,
+    cluster: &Cluster,
+    settings: &Settings,
+    port: u16,
+) -> Result<AgentRunPlan, Error> {
+    match &spec.engine {
+        EngineBinding::Cloud { provider, model } => {
+            let endpoint = provider_endpoint(provider)
+                .ok_or_else(|| Error::UnknownProvider(provider.clone()))?;
+            Ok(AgentRunPlan::Cloud {
+                name: spec.name.clone(),
+                role: spec.role.clone(),
+                provider: provider.clone(),
+                model: model.clone(),
+                endpoint: endpoint.to_string(),
+            })
+        }
+        EngineBinding::Local {
+            path,
+            model,
+            target,
+        } => {
+            let (node_idx, node_plan, node_name) = match target {
+                PlacementTarget::Auto => {
+                    let fp = place_on_fleet(cluster, model, Task::Inference, settings)?;
+                    match fp.chosen {
+                        FleetPlacement::SingleNode {
+                            node,
+                            node_name,
+                            plan,
+                        } => (node, plan, node_name),
+                        FleetPlacement::Distributed { .. } => {
+                            return Err(Error::LocalAgentTooLarge(spec.name.clone()))
+                        }
+                    }
+                }
+                PlacementTarget::Node(name) => {
+                    let node = cluster
+                        .nodes
+                        .iter()
+                        .position(|n| &n.name == name)
+                        .ok_or_else(|| Error::NodeNotFound(name.clone()))?;
+                    let p = plan(
+                        &cluster.nodes[node].topology,
+                        &cluster.nodes[node].assessments,
+                        model,
+                        Task::Inference,
+                        settings,
+                    )?;
+                    (node, p, name.clone())
+                }
+            };
+
+            let host = cluster.nodes[node_idx]
+                .address
+                .split(':')
+                .next()
+                .unwrap_or("127.0.0.1")
+                .to_string();
+            let serve =
+                build_llama_server(&node_plan, model, path, "llama-server", "0.0.0.0", port);
+            Ok(AgentRunPlan::Local {
+                name: spec.name.clone(),
+                role: spec.role.clone(),
+                node: node_idx,
+                node_name,
+                endpoint: format!("http://{host}:{port}"),
+                serve,
+            })
+        }
+    }
+}
+
+/// Resolve a fleet of agents at once, assigning a distinct port to each local
+/// agent. Where several local agents land on the same node they share its VRAM —
+/// `cameod`'s residency manager arbitrates that at runtime.
+pub fn resolve_agents(
+    specs: &[AgentSpec],
+    cluster: &Cluster,
+    settings: &Settings,
+) -> Vec<Result<AgentRunPlan, Error>> {
+    let mut port: u16 = 8100;
+    let mut out = Vec::with_capacity(specs.len());
+    for spec in specs {
+        let resolved = resolve_agent(spec, cluster, settings, port);
+        if matches!(resolved, Ok(AgentRunPlan::Local { .. })) {
+            port += 1;
+        }
+        out.push(resolved);
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fleet::{NetworkClass, NodeInfo};
+    use crate::model::QuantLevel;
+    use cameo_gpu_detect::{classify, GpuInfo, OverrideDb, Topology};
+
+    fn node(name: &str, gfx: &str, vram_mb: u64) -> NodeInfo {
+        let db = OverrideDb::embedded();
+        let gpu = GpuInfo {
+            model: gfx.into(),
+            pci_id: "1002:0000".into(),
+            vram_mb: Some(vram_mb),
+            gfx_arch: Some(gfx.into()),
+            driver_version: None,
+        };
+        let assessments = vec![classify(gpu.clone(), &db)];
+        NodeInfo {
+            name: name.into(),
+            address: format!("{name}.local:9000"),
+            topology: Topology::new(vec![gpu], Vec::new()),
+            assessments,
+        }
+    }
+
+    fn cluster() -> Cluster {
+        Cluster {
+            nodes: vec![
+                node("edge", "gfx1030", 16384),
+                node("beefy", "gfx1100", 24576),
+            ],
+            network: NetworkClass::FastEthernet,
+        }
+    }
+
+    fn local_spec(name: &str, target: PlacementTarget) -> AgentSpec {
+        AgentSpec {
+            name: name.into(),
+            role: "coder".into(),
+            engine: EngineBinding::Local {
+                path: "/models/qwen7b.gguf".into(),
+                model: ModelMeta::dense("qwen-7b", 7.0, QuantLevel::Q4_K_M),
+                target,
+            },
+        }
+    }
+
+    #[test]
+    fn cloud_agent_resolves_to_provider_endpoint() {
+        let spec = AgentSpec {
+            name: "planner".into(),
+            role: "planner".into(),
+            engine: EngineBinding::Cloud {
+                provider: "anthropic".into(),
+                model: "claude-opus-4-8".into(),
+            },
+        };
+        let plan = resolve_agent(&spec, &cluster(), &Settings::default(), 8100).unwrap();
+        match plan {
+            AgentRunPlan::Cloud { endpoint, .. } => assert!(endpoint.contains("anthropic")),
+            other => panic!("expected Cloud, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unknown_provider_errors() {
+        let spec = AgentSpec {
+            name: "x".into(),
+            role: "x".into(),
+            engine: EngineBinding::Cloud {
+                provider: "acme-ai".into(),
+                model: "m".into(),
+            },
+        };
+        assert!(matches!(
+            resolve_agent(&spec, &cluster(), &Settings::default(), 8100),
+            Err(Error::UnknownProvider(_))
+        ));
+    }
+
+    #[test]
+    fn local_agent_auto_places_and_produces_serve() {
+        let plan = resolve_agent(
+            &local_spec("worker", PlacementTarget::Auto),
+            &cluster(),
+            &Settings::default(),
+            8100,
+        )
+        .unwrap();
+        match plan {
+            AgentRunPlan::Local {
+                endpoint, serve, ..
+            } => {
+                assert!(endpoint.starts_with("http://"));
+                assert_eq!(serve.program, "llama-server");
+                assert!(serve.args.iter().any(|a| a == "--port"));
+            }
+            other => panic!("expected Local, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn local_agent_pins_to_named_node() {
+        let plan = resolve_agent(
+            &local_spec("w", PlacementTarget::Node("beefy".into())),
+            &cluster(),
+            &Settings::default(),
+            8100,
+        )
+        .unwrap();
+        match plan {
+            AgentRunPlan::Local { node_name, .. } => assert_eq!(node_name, "beefy"),
+            other => panic!("expected Local on beefy, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn missing_node_errors() {
+        assert!(matches!(
+            resolve_agent(
+                &local_spec("w", PlacementTarget::Node("ghost".into())),
+                &cluster(),
+                &Settings::default(),
+                8100
+            ),
+            Err(Error::NodeNotFound(_))
+        ));
+    }
+
+    #[test]
+    fn orchestrating_mixed_fleet_assigns_ports_to_locals_only() {
+        let specs = vec![
+            AgentSpec {
+                name: "brain".into(),
+                role: "planner".into(),
+                engine: EngineBinding::Cloud {
+                    provider: "openai".into(),
+                    model: "gpt".into(),
+                },
+            },
+            local_spec("hands1", PlacementTarget::Node("edge".into())),
+            local_spec("hands2", PlacementTarget::Node("beefy".into())),
+        ];
+        let plans: Vec<_> = resolve_agents(&specs, &cluster(), &Settings::default())
+            .into_iter()
+            .map(|r| r.unwrap())
+            .collect();
+
+        // Cloud agent, then two local agents on distinct ports 8100 / 8101.
+        assert!(matches!(plans[0], AgentRunPlan::Cloud { .. }));
+        let ports: Vec<u16> = plans[1..]
+            .iter()
+            .map(|p| match p {
+                AgentRunPlan::Local { endpoint, .. } => {
+                    endpoint.rsplit(':').next().unwrap().parse().unwrap()
+                }
+                _ => panic!("expected local"),
+            })
+            .collect();
+        assert_eq!(ports, vec![8100, 8101]);
+    }
+}

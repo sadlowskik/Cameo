@@ -1,0 +1,9 @@
+
+Welcome to Cameo — any AMD card -> a working LLM box.
+
+  cameo gpu-status       see your GPU's support tier (1/2/3)
+  cameo serve <model>    stand up an OpenAI-compatible endpoint
+  cameo run <model>      run inference
+  cameo --help           everything else
+
+Docs & source: https://github.com/korbin/cameo

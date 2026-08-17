@@ -1,0 +1,10 @@
+NAME="Cameo"
+PRETTY_NAME="Cameo Linux"
+ID=cameo
+ID_LIKE=arch
+BUILD_ID=rolling
+ANSI_COLOR="38;5;209"
+HOME_URL="https://github.com/korbin/cameo"
+DOCUMENTATION_URL="https://github.com/korbin/cameo"
+SUPPORT_URL="https://github.com/korbin/cameo"
+LOGO=cameo

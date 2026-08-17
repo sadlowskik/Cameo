@@ -1,0 +1,47 @@
+[workspace]
+resolver = "2"
+members = [
+    "core/gpu-detect",
+    "core/config",
+    "core/placement",
+    "core/api",
+    "core/backend-vulkan",
+    "core/backend-rocm",
+    "core/moe-harness",
+    "core/quant-tools",
+    "core/net-strategy",
+    "cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+authors = ["Korbin Sadlowski"]
+repository = "https://github.com/korbin/cameo"
+rust-version = "1.85"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+thiserror = "1"
+anyhow = "1"
+regex = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+clap = { version = "4", features = ["derive"] }
+
+# Internal crates (path deps, versioned together)
+cameo-gpu-detect = { path = "core/gpu-detect" }
+cameo-config = { path = "core/config" }
+cameo-placement = { path = "core/placement" }
+cameo-api = { path = "core/api" }
+cameo-backend-vulkan = { path = "core/backend-vulkan" }
+cameo-backend-rocm = { path = "core/backend-rocm" }
+cameo-moe-harness = { path = "core/moe-harness" }
+cameo-quant-tools = { path = "core/quant-tools" }
+cameo-net-strategy = { path = "core/net-strategy" }
+
+[profile.release]
+lto = "thin"

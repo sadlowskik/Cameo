@@ -1,0 +1,38 @@
+# Cameo ISO package set.
+#
+# Versions are pinned per GPU tier during Phase 5; this is the baseline set.
+# Confirm the ROCm / kernel / mesa combination against scripts/phase1 results
+# before shipping — the whole point of Cameo is a validated combination.
+
+# Base system
+base
+linux
+linux-firmware
+linux-headers
+mkinitcpio
+sudo
+
+# AMD graphics + Vulkan userspace (the universal baseline — every tier)
+mesa
+vulkan-radeon
+vulkan-icd-loader
+vulkan-tools
+libva-mesa-driver
+
+# ROCm stack (Tier 1/2). Heavy; Phase 5 may move this to a post-install step
+# so Tier 3 images stay small.
+rocm-hip-sdk
+rocminfo
+rocm-smi-lib
+
+# Build + runtime deps for llama.cpp / PyTorch
+git
+cmake
+ninja
+base-devel
+curl
+python
+python-pytorch-rocm
+
+# NOTE: the `cameo` CLI package itself is injected by the build pipeline once
+# packaged (cargo build --release -> PKGBUILD). See archiso/README.md.

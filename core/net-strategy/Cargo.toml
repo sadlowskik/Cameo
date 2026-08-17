@@ -1,0 +1,11 @@
+[package]
+name = "cameo-net-strategy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Multi-node networking strategy selection (stub — v2, do not build yet)."
+
+[dependencies]
+thiserror.workspace = true

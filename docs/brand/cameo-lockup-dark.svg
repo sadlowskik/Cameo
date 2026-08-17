@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="200" viewBox="0 0 720 200" role="img" aria-label="Cameo">
+<title>Cameo</title>
+<g transform="translate(20,30) scale(0.29167)">
+<circle cx="240" cy="240" r="240" fill="#1C1920"/>
+<circle cx="240" cy="240" r="232" fill="none" stroke="#3A343C" stroke-width="17" stroke-dasharray="4 8"/>
+<path d="M 240 8 A 232 232 0 0 0 8 240" fill="none" stroke="#6E6472" stroke-width="17" stroke-dasharray="4 8" opacity="0.55"/>
+<circle cx="240" cy="240" r="222" fill="#221E26"/>
+<circle cx="240" cy="240" r="222" fill="none" stroke="#0C0B0E" stroke-width="3"/>
+<path d="M 240 18 A 222 222 0 0 0 18 240" fill="none" stroke="#8A8090" stroke-width="2" opacity="0.5"/>
+<circle cx="240" cy="240" r="210" fill="#16141A"/>
+<g opacity="0.5">
+<circle cx="240" cy="240" r="203" fill="none" stroke="#7C4B3A" stroke-width="0.8"/>
+<circle cx="240" cy="240" r="203" fill="none" stroke="#B4472F" stroke-width="9" stroke-dasharray="2 40"/>
+</g>
+<circle cx="240" cy="240" r="194" fill="none" stroke="#0B0A0D" stroke-width="2"/>
+<g fill="none" stroke-linecap="butt">
+<path d="M 308.8 141.7 A 120 120 0 1 0 308.8 338.3" stroke="#0A090C" stroke-width="46" transform="translate(5,6)" opacity="0.9"/>
+<path d="M 308.8 141.7 A 120 120 0 1 0 308.8 338.3" stroke="#FFFFFF" stroke-width="46" transform="translate(-3,-4)" opacity="0.6"/>
+<path d="M 308.8 141.7 A 120 120 0 1 0 308.8 338.3" stroke="#E8E1D5" stroke-width="46"/>
+<path d="M 308.8 141.7 A 120 120 0 0 1 351.3 195.1" stroke="#E8E1D5" stroke-width="46" stroke-dasharray="7 11"/>
+<path d="M 308.8 338.3 A 120 120 0 0 0 351.3 284.9" stroke="#E8E1D5" stroke-width="46" stroke-dasharray="7 11"/>
+</g>
+<circle cx="360" cy="240" r="18" fill="#7A2E12" opacity="0.55"/>
+<circle cx="360" cy="240" r="12" fill="#FF7A1A"/>
+<circle cx="358" cy="237" r="6" fill="#FFD08A"/>
+</g>
+<text x="190" y="132" fill="#E8E1D5" font-family="Inter, 'DejaVu Sans', 'Segoe UI', Helvetica, Arial, sans-serif" font-size="84" font-weight="500" letter-spacing="1">cameo</text>
+</svg>

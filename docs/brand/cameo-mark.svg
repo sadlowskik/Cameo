@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="480" height="480" viewBox="0 0 480 480" role="img" aria-label="Cameo">
+<title>Cameo</title>
+<circle cx="240" cy="240" r="240" fill="#1C1920"/>
+<circle cx="240" cy="240" r="232" fill="none" stroke="#3A343C" stroke-width="17" stroke-dasharray="4 8"/>
+<path d="M 240 8 A 232 232 0 0 0 8 240" fill="none" stroke="#6E6472" stroke-width="17" stroke-dasharray="4 8" opacity="0.55"/>
+<circle cx="240" cy="240" r="222" fill="#221E26"/>
+<circle cx="240" cy="240" r="222" fill="none" stroke="#0C0B0E" stroke-width="3"/>
+<path d="M 240 18 A 222 222 0 0 0 18 240" fill="none" stroke="#8A8090" stroke-width="2" opacity="0.5"/>
+<circle cx="240" cy="240" r="210" fill="#16141A"/>
+<path d="M 30 240 A 210 210 0 0 0 240 450" fill="none" stroke="#4A424E" stroke-width="2" opacity="0.5"/>
+<g opacity="0.5">
+<circle cx="240" cy="240" r="203" fill="none" stroke="#7C4B3A" stroke-width="0.8"/>
+<circle cx="240" cy="240" r="203" fill="none" stroke="#B4472F" stroke-width="9" stroke-dasharray="2 40"/>
+<circle cx="240" cy="240" r="203" fill="none" stroke="#7C4B3A" stroke-width="9" stroke-dasharray="14 26" opacity="0.45"/>
+</g>
+<circle cx="240" cy="240" r="194" fill="none" stroke="#0B0A0D" stroke-width="2"/>
+<g fill="none" stroke-linecap="butt">
+<path d="M 308.8 141.7 A 120 120 0 1 0 308.8 338.3" stroke="#0A090C" stroke-width="46" transform="translate(5,6)" opacity="0.9"/>
+<path d="M 308.8 141.7 A 120 120 0 0 1 351.3 195.1" stroke="#0A090C" stroke-width="46" stroke-dasharray="7 11" transform="translate(5,6)" opacity="0.9"/>
+<path d="M 308.8 338.3 A 120 120 0 0 0 351.3 284.9" stroke="#0A090C" stroke-width="46" stroke-dasharray="7 11" transform="translate(5,6)" opacity="0.9"/>
+<path d="M 308.8 141.7 A 120 120 0 1 0 308.8 338.3" stroke="#FFFFFF" stroke-width="46" transform="translate(-3,-4)" opacity="0.6"/>
+<path d="M 308.8 141.7 A 120 120 0 0 1 351.3 195.1" stroke="#FFFFFF" stroke-width="46" stroke-dasharray="7 11" transform="translate(-3,-4)" opacity="0.6"/>
+<path d="M 308.8 141.7 A 120 120 0 1 0 308.8 338.3" stroke="#E8E1D5" stroke-width="46"/>
+<path d="M 308.8 141.7 A 120 120 0 0 1 351.3 195.1" stroke="#E8E1D5" stroke-width="46" stroke-dasharray="7 11"/>
+<path d="M 308.8 338.3 A 120 120 0 0 0 351.3 284.9" stroke="#E8E1D5" stroke-width="46" stroke-dasharray="7 11"/>
+</g>
+<g stroke="#B4472F" stroke-width="1.6" fill="none" opacity="0.75">
+<path d="M 374 232 L 408 216 L 424 222"/>
+<path d="M 374 248 L 406 260 L 420 256"/>
+<path d="M 370 240 L 412 240"/>
+</g>
+<circle cx="360" cy="240" r="18" fill="#7A2E12" opacity="0.55"/>
+<circle cx="360" cy="240" r="12" fill="#FF7A1A"/>
+<circle cx="358" cy="237" r="6" fill="#FFD08A"/>
+<circle cx="374" cy="208" r="3" fill="#FF9A3C" opacity="0.85"/>
+<circle cx="382" cy="188" r="2" fill="#FFC26B" opacity="0.7"/>
+<circle cx="370" cy="276" r="2.4" fill="#FF9A3C" opacity="0.7"/>
+</svg>

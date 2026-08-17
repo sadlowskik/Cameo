@@ -1,0 +1,15 @@
+[Unit]
+Description=Cameo first-boot GPU tier report
+After=multi-user.target
+ConditionPathExists=!/var/lib/cameo/.firstboot-done
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/cameo-firstboot
+ExecStartPost=/usr/bin/mkdir -p /var/lib/cameo
+ExecStartPost=/usr/bin/touch /var/lib/cameo/.firstboot-done
+StandardOutput=journal+console
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

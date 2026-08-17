@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="480" height="480" viewBox="0 0 480 480" role="img" aria-label="Cameo">
+<title>Cameo</title>
+<circle cx="240" cy="240" r="240" fill="#16141A"/>
+<circle cx="240" cy="240" r="232" fill="none" stroke="#3A343C" stroke-width="10"/>
+<path d="M 308.8 141.7 A 120 120 0 1 0 308.8 338.3" fill="none" stroke="#E8E1D5" stroke-width="52" stroke-linecap="butt"/>
+<circle cx="362" cy="240" r="26" fill="#FF7A1A"/>
+</svg>

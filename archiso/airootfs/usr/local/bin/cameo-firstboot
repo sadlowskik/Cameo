@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Cameo first-boot: greet the user with their GPU's support tier in plain
+# language, so "what will actually work on my card" is answered immediately.
+set -euo pipefail
+
+echo
+echo "========================  Cameo  ========================"
+if command -v cameo >/dev/null 2>&1; then
+  cameo gpu-status || echo "(GPU status unavailable — see 'cameo gpu-status')"
+else
+  echo "cameo CLI not present on this image (development ISO build)."
+  echo "Detected AMD GPUs:"
+  lspci -nn | grep -iE 'vga|display|3d controller' | grep -i '\[1002:' || true
+fi
+echo "========================================================="
+echo

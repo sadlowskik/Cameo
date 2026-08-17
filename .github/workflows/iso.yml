@@ -1,0 +1,62 @@
+name: ISO
+
+on:
+  workflow_dispatch:
+    inputs:
+      edition:
+        description: "Cameo edition to build"
+        type: choice
+        options:
+          - lite
+          - full
+        default: lite
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      # mkarchiso unpacks the whole package set twice (airootfs + squashfs work
+      # copy). A stock runner has ~25 GB free, which the lite edition fits into
+      # only after the preinstalled toolchains are removed.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android \
+                      /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          df -h /
+
+      - name: Build ISO
+        env:
+          EDITION: ${{ github.event.inputs.edition || 'lite' }}
+        run: |
+          docker run --rm --privileged \
+            -v "$PWD:/repo" -w /repo \
+            -e CAMEO_EDITION="$EDITION" \
+            archlinux:base-devel \
+            bash -euo pipefail -c '
+              pacman -Sy --noconfirm --needed archlinux-keyring
+              pacman -Syu --noconfirm --needed archiso rust
+              bash ./scripts/build-iso.sh
+            '
+
+      - name: Collect output
+        run: |
+          sudo chown -R "$(id -u):$(id -g)" archiso/out
+          cd archiso/out
+          sha256sum ./*.iso > SHA256SUMS
+          ls -lh
+          df -h /
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cameo-iso-${{ github.event.inputs.edition || 'lite' }}
+          path: |
+            archiso/out/*.iso
+            archiso/out/SHA256SUMS
+          retention-days: 14
+          if-no-files-found: error

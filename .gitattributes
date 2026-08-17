@@ -1,0 +1,9 @@
+# Cameo targets Linux. Everything textual stays LF in the repo *and* in the
+# working tree, even when checked out on Windows: a CRLF shebang makes bash
+# fail with "\r: command not found", which would break the ISO build and the
+# firstboot scripts in ways that are annoying to diagnose from CI logs.
+* text=auto eol=lf
+
+*.png binary
+*.ico binary
+*.iso binary

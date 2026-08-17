@@ -1,0 +1,28 @@
+[package]
+name = "cameo-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "The `cameo` command-line tool — a thin client over the Cameo core."
+
+[[bin]]
+name = "cameo"
+path = "src/main.rs"
+
+[dependencies]
+cameo-gpu-detect.workspace = true
+cameo-config.workspace = true
+cameo-placement.workspace = true
+cameo-api.workspace = true
+cameo-backend-vulkan.workspace = true
+cameo-backend-rocm.workspace = true
+cameo-quant-tools.workspace = true
+cameo-moe-harness.workspace = true
+
+clap.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

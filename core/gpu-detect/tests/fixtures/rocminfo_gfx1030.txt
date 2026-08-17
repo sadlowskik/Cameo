@@ -1,0 +1,24 @@
+=====================
+ROCk module is loaded
+=====================
+HSA System Attributes
+=====================
+Runtime Version:         1.1
+
+*******
+Agent 1
+*******
+  Name:                    AMD Ryzen 7 5800X
+  Device Type:             CPU
+
+*******
+Agent 2
+*******
+  Name:                    gfx1030
+  Marketing Name:          AMD Radeon RX 6700 XT
+  Vendor Name:             AMD
+  Device Type:             GPU
+  Cache Info:
+    L1:                    16(0x10) KB
+  Chip ID:                 29663(0x73df)
+  Compute Unit:            40

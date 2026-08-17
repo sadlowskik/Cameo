@@ -1,0 +1,41 @@
+# Cameo GPU compatibility / HSA override database.
+#
+# ============================ ILLUSTRATIVE SEED DATA ==========================
+# These entries are best-effort placeholders, NOT verified ground truth. Each
+# one must be confirmed or corrected by a real `scripts/phase1` run on actual
+# hardware, which emits a known-good-combo.json that feeds back into this file.
+#
+# Schema:
+#   version        database schema version (bump on breaking changes)
+#   [[entry]]
+#     gfx_arch     AMD architecture token, e.g. "gfx1030" (matched case-insensitively)
+#     tier         1 = ROCm official, 2 = workable via HSA override, 3 = Vulkan-only
+#     hsa_override (Tier 2) known-good HSA_OVERRIDE_GFX_VERSION value
+#     note         free-text context
+# =============================================================================
+version = 1
+
+[[entry]]
+gfx_arch = "gfx1100"   # RDNA3 — e.g. RX 7900 XTX / XT
+tier = 1
+
+[[entry]]
+gfx_arch = "gfx1030"   # RDNA2 — e.g. RX 6800 / 6900 / 6700 XT
+tier = 2
+hsa_override = "10.3.0"
+note = "RDNA2 desktop; ROCm commonly works with the gfx1030 override."
+
+[[entry]]
+gfx_arch = "gfx1010"   # RDNA1 — e.g. RX 5700 / 5700 XT
+tier = 2
+hsa_override = "10.1.0"
+note = "RDNA1; community-tested, not guaranteed."
+
+[[entry]]
+gfx_arch = "gfx900"    # Vega 10 — e.g. Vega 56 / 64
+tier = 1
+
+[[entry]]
+gfx_arch = "gfx803"    # Polaris — e.g. RX 570 / 580
+tier = 3
+note = "Polaris dropped from modern ROCm; Vulkan-only in practice."
