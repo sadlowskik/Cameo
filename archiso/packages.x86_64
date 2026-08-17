@@ -10,6 +10,12 @@ linux
 linux-firmware
 linux-headers
 mkinitcpio
+# Builds the archiso hooks into the initramfs — without it the live image has
+# no way to find and mount its own squashfs root.
+mkinitcpio-archiso
+# Required by the 'bios.syslinux' boot mode; mkarchiso fails profile
+# validation outright if it is absent.
+syslinux
 sudo
 
 # AMD graphics + Vulkan userspace (the universal baseline — every tier)

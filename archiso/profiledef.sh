@@ -16,11 +16,12 @@ iso_application="Cameo — LLMs on AMD GPUs"
 iso_version="$(date +%Y.%m.%d)"
 install_dir="cameo"
 buildmodes=('iso')
+# The old four-name form ('bios.syslinux.mbr', 'uefi-x64.systemd-boot.esp',
+# and their eltorito variants) is deprecated upstream; each pair collapses into
+# a single mode. mkarchiso warns on the old names.
 bootmodes=(
-  'bios.syslinux.mbr'
-  'bios.syslinux.eltorito'
-  'uefi-x64.systemd-boot.esp'
-  'uefi-x64.systemd-boot.eltorito'
+  'bios.syslinux'
+  'uefi.systemd-boot'
 )
 arch="x86_64"
 pacman_conf="pacman.conf"

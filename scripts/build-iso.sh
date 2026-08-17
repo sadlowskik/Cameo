@@ -42,6 +42,15 @@ for d in efiboot syslinux grub; do
   [ -e "$BUILD/$d" ] || cp -r "$RELENG/$d" "$BUILD/" 2>/dev/null || true
 done
 
+# Same rationale for the mkinitcpio hooks/presets that build the archiso
+# initramfs: Cameo doesn't vendor them, so borrow them from releng too.
+for f in etc/mkinitcpio.conf.d etc/mkinitcpio.d; do
+  if [ ! -e "$BUILD/airootfs/$f" ] && [ -e "$RELENG/airootfs/$f" ]; then
+    mkdir -p "$(dirname "$BUILD/airootfs/$f")"
+    cp -r "$RELENG/airootfs/$f" "$BUILD/airootfs/$f"
+  fi
+done
+
 # 2. Build the cameo CLI (native, for the ISO's arch) and stage it into the image.
 log "Building the cameo CLI (release)..."
 ( cd "$REPO" && cargo build --release -p cameo-cli )
