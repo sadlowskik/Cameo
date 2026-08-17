@@ -98,6 +98,19 @@ jobs:
         if: always()
         run: df -h /
 
+      # Boot-screen text is otherwise only verifiable by booting the ISO, so
+      # assert it against the staged profile instead.
+      - name: Verify boot menu branding
+        run: |
+          echo "--- branded titles ---"
+          grep -rhE 'MENU LABEL|^title' build/profile/syslinux build/profile/efiboot 2>/dev/null | sort -u
+          echo "--- checking for leftovers ---"
+          if grep -rn "Arch Linux" build/profile/syslinux build/profile/efiboot 2>/dev/null; then
+            echo "FAIL: unbranded 'Arch Linux' titles remain"
+            exit 1
+          fi
+          echo "OK: no unbranded titles remain"
+
       - name: "DIAG log size and tail"
         if: always()
         run: |

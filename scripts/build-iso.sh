@@ -51,6 +51,24 @@ for f in etc/mkinitcpio.conf.d etc/mkinitcpio.d; do
   fi
 done
 
+# 1b. Brand the boot menus. Those borrowed configs label every entry "Arch
+# Linux install medium", so the boot screen would announce the wrong distro.
+# Retitle them in the staged copy — done with sed against whatever releng
+# ships rather than by vendoring copies that would rot against upstream.
+# Only human-readable titles change; kernel paths, archisobasedir and
+# archisolabel are lowercase and untouched.
+log "Branding the boot menus"
+branded=0
+while IFS= read -r -d '' f; do
+  sed -i \
+    -e 's/Arch Linux install medium/Cameo Linux/g' \
+    -e 's/Arch Linux/Cameo Linux/g' \
+    "$f"
+  branded=$((branded + 1))
+done < <(find "$BUILD/syslinux" "$BUILD/efiboot" "$BUILD/grub" \
+           -type f \( -name '*.cfg' -o -name '*.conf' \) -print0 2>/dev/null)
+log "Rebranded $branded boot config file(s)"
+
 # 2. Build the cameo CLI (native, for the ISO's arch) and stage it into the image.
 log "Building the cameo CLI (release)..."
 ( cd "$REPO" && cargo build --release -p cameo-cli )
