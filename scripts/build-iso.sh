@@ -44,6 +44,19 @@ done
 
 # Same rationale for the mkinitcpio hooks/presets that build the archiso
 # initramfs: Cameo doesn't vendor them, so borrow them from releng too.
+# Account database too. Without it root's password state comes from whatever
+# the base packages ship, which can be locked -- and a locked root makes
+# login -f fall through to a password prompt, defeating the autologin.
+# profiledef.sh has always declared permissions for /etc/shadow; this is the
+# file that declaration was waiting for.
+for f in etc/shadow etc/gshadow; do
+  if [ ! -e "$BUILD/airootfs/$f" ] && [ -e "$RELENG/airootfs/$f" ]; then
+    mkdir -p "$(dirname "$BUILD/airootfs/$f")"
+    cp "$RELENG/airootfs/$f" "$BUILD/airootfs/$f"
+    log "Borrowed $f from releng"
+  fi
+done
+
 for f in etc/mkinitcpio.conf.d etc/mkinitcpio.d; do
   if [ ! -e "$BUILD/airootfs/$f" ] && [ -e "$RELENG/airootfs/$f" ]; then
     mkdir -p "$(dirname "$BUILD/airootfs/$f")"

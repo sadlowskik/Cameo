@@ -156,6 +156,21 @@ jobs:
       # Workflow logs need authentication to read. Publishing the captured log
       # to a throwaway branch makes it fetchable over raw.githubusercontent,
       # which is what allows this failure to be diagnosed from outside CI.
+      # Fold the account state into the published log. The verify steps above
+      # print it too, but their output lands in the workflow log, which needs
+      # authentication to read; build.log is fetchable.
+      - name: Record account state in the published log
+        if: always()
+        run: |
+          {
+            echo "=== root line, built airootfs ==="
+            sudo grep '^root:' build/tmp/x86_64/airootfs/etc/shadow 2>/dev/null || echo "(none)"
+            echo "=== shadow shipped in profile? ==="
+            ls -l build/profile/airootfs/etc/shadow 2>/dev/null || echo "(profile ships no shadow)"
+            echo "=== autologin drop-in ==="
+            cat build/profile/airootfs/etc/systemd/system/getty@tty1.service.d/autologin.conf 2>/dev/null || echo "(missing)"
+          } >> build.log
+
       - name: Publish build log to ci-logs branch
         if: always()
         run: |
