@@ -76,7 +76,22 @@ ln -sf /etc/systemd/system/cameo-firstboot.service "$WANTS/cameo-firstboot.servi
 # networkd and resolved ship inside systemd itself, so these can never dangle.
 ln -sf /usr/lib/systemd/system/systemd-networkd.service "$WANTS/systemd-networkd.service"
 ln -sf /usr/lib/systemd/system/systemd-resolved.service "$WANTS/systemd-resolved.service"
-log "Enabled cameo-firstboot, systemd-networkd, systemd-resolved"
+# Initialises /etc/pacman.d/gnupg. Without it every pacman install on the live
+# image fails on signature trust, which also kills the only workaround for a
+# missing package.
+ln -sf /etc/systemd/system/pacman-init.service "$WANTS/pacman-init.service"
+# Wireless association. Package is in packages.x86_64, so this cannot dangle.
+ln -sf /usr/lib/systemd/system/iwd.service "$WANTS/iwd.service"
+log "Enabled cameo-firstboot, networkd, resolved, pacman-init, iwd"
+
+# Clock. A laptop with a flat CMOS battery boots with a wrong time, which
+# breaks TLS on model downloads and pacman signature validity before anything
+# else has a chance to fail.
+SYSINIT="$BUILD/airootfs/etc/systemd/system/sysinit.target.wants"
+mkdir -p "$SYSINIT"
+ln -sf /usr/lib/systemd/system/systemd-timesyncd.service "$SYSINIT/systemd-timesyncd.service"
+ln -sf /usr/lib/systemd/system/systemd-time-wait-sync.service "$SYSINIT/systemd-time-wait-sync.service"
+log "Enabled time synchronisation"
 
 # 1b. Brand the boot menus. Those borrowed configs label every entry "Arch
 # Linux install medium", so the boot screen would announce the wrong distro.
@@ -120,7 +135,10 @@ install -Dm755 "$REPO/target/release/cameo" "$BUILD/airootfs/usr/local/bin/cameo
 
 # 3. Lite edition: drop the heavy ROCm / PyTorch packages (Vulkan-only, much smaller).
 if [ "$EDITION" = "lite" ]; then
-  grep -viE '^(rocm|python-pytorch)' "$PROFILE/packages.x86_64" > "$BUILD/packages.x86_64"
+  # llama.cpp-hip matches neither ^rocm nor ^python-pytorch, so it needs its
+  # own alternative or the "Vulkan-only" edition ships the whole ROCm stack
+  # as a dependency of the inference engine.
+  grep -viE '^(rocm|python-pytorch|llama\.cpp-hip)' "$PROFILE/packages.x86_64" > "$BUILD/packages.x86_64"
   log "Lite edition: ROCm/PyTorch excluded — Vulkan baseline only."
 fi
 

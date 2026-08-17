@@ -35,6 +35,24 @@ rocm-hip-sdk
 rocminfo
 rocm-smi-lib
 
+# The inference engine itself. Everything the CLI spawns lives here:
+# llama-cli, llama-server and llama-quantize. Without these the image boots
+# but every serve/run/quantize path dies with ENOENT, which is the whole
+# mission. The -vulkan build is the universal baseline; -hip is Tier 1/2 and
+# is stripped for the lite edition by scripts/build-iso.sh.
+llama.cpp-vulkan
+llama.cpp-hip
+
+# Wireless. The target is a laptop, and networkd alone cannot associate to an
+# access point -- that is iwd's job. Without this there is no way to fetch a
+# model on a machine with no Ethernet port.
+iwd
+wireless-regdb
+
+# AMD microcode. releng's mkinitcpio config already has the microcode hook;
+# without this package there is nothing for it to embed, on an AMD-first distro.
+amd-ucode
+
 # Build + runtime deps for llama.cpp / PyTorch
 git
 cmake
@@ -43,6 +61,13 @@ base-devel
 curl
 python
 python-pytorch-rocm
+
+# Minimum usable live system. openssh is present but its daemon is NOT
+# enabled -- the client matters for a serving box, the listener is a
+# deliberate opt-in.
+nano
+less
+openssh
 
 # NOTE: the `cameo` CLI package itself is injected by the build pipeline once
 # packaged (cargo build --release -> PKGBUILD). See archiso/README.md.

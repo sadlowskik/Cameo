@@ -168,6 +168,15 @@ jobs:
           sudo test -L "$A/etc/systemd/system/multi-user.target.wants/cameo-firstboot.service" \
             || { echo "FAIL: firstboot not enabled"; exit 1; }
 
+          # The mission check. Every serve/run/quantize path spawns one of
+          # these; without them the image boots and does nothing it exists for.
+          echo "--- inference engine ---"
+          for b in llama-server llama-cli llama-quantize; do
+            sudo test -x "$A/usr/bin/$b" \
+              || { echo "FAIL: $b missing - the image cannot serve or run a model"; exit 1; }
+            echo "found $b"
+          done
+
           echo "--- pacman mirrors in the live image ---"
           sudo grep -c '^Server' "$A/etc/pacman.d/mirrorlist" \
             || { echo "FAIL: live image has no pacman mirrors"; exit 1; }
