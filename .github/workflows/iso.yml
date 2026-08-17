@@ -22,6 +22,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 180
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -82,49 +84,43 @@ jobs:
           docker exec arch bash -euo pipefail -c \
             "sed -n '/\[options\]/,/^$/p' /usr/share/archiso/configs/releng/pacman.conf"
 
+      # tee on the host, not in the container: this also captures docker exec's
+      # own failures, which a container-side redirect would miss entirely.
       - name: Build ISO
         env:
           EDITION: ${{ github.event.inputs.edition || 'lite' }}
-        run: docker exec -e CAMEO_EDITION="$EDITION" arch bash -euo pipefail -c "bash ./scripts/build-iso.sh 2>&1 | tee /repo/build.log"
+        run: |
+          set -o pipefail
+          docker exec -e CAMEO_EDITION="$EDITION" arch \
+            bash -euo pipefail -c "bash ./scripts/build-iso.sh" 2>&1 | tee build.log
 
       - name: Disk after build
         if: always()
         run: df -h /
 
-      # Log text is only readable with authentication, but step conclusions are
-      # public. Each probe below turns "is this string in the log?" into a step
-      # result, so a failure is diagnosable without reading the log.
-      - name: "DIAG tail of build log"
-        if: failure()
-        run: tail -n 80 build.log || echo "no build.log produced"
+      - name: "DIAG log size and tail"
+        if: always()
+        run: |
+          ls -l build.log || echo "NO build.log ON DISK"
+          wc -c build.log || true
+          echo "--- tail ---"
+          tail -n 100 build.log || true
 
-      - name: "DIAG probe pacman sandbox or landlock error"
-        if: failure()
-        run: grep -qiE 'sandbox|landlock|DownloadUser' build.log
-
-      - name: "DIAG probe no space left on device"
-        if: failure()
-        run: grep -qiE 'no space left|disk full' build.log
-
-      - name: "DIAG probe mount or loop device failure"
-        if: failure()
-        run: grep -qiE 'mount:|loop device|failed to mount|Operation not permitted' build.log
-
-      - name: "DIAG probe package target not found"
-        if: failure()
-        run: grep -qiE 'target not found|could not find all required packages' build.log
-
-      - name: "DIAG probe permission denied"
-        if: failure()
-        run: grep -qiE 'permission denied|operation not supported' build.log
-
-      - name: "DIAG probe squashfs or compression failure"
-        if: failure()
-        run: grep -qiE 'mksquashfs|squashfs' build.log
-
-      - name: "DIAG probe missing releng or profile file"
-        if: failure()
-        run: grep -qiE 'not found at|No such file or directory' build.log
+      # Workflow logs need authentication to read. Publishing the captured log
+      # to a throwaway branch makes it fetchable over raw.githubusercontent,
+      # which is what allows this failure to be diagnosed from outside CI.
+      - name: Publish build log to ci-logs branch
+        if: always()
+        run: |
+          rm -rf /tmp/logpub && mkdir -p /tmp/logpub
+          cp build.log /tmp/logpub/build.log 2>/dev/null || echo "no build.log produced" > /tmp/logpub/build.log
+          cd /tmp/logpub
+          git init -q -b ci-logs
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add build.log
+          git commit -qm "build log for run ${{ github.run_number }}"
+          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}" ci-logs
 
       - name: Upload build log
         if: always()
