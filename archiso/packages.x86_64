@@ -17,7 +17,8 @@ mesa
 vulkan-radeon
 vulkan-icd-loader
 vulkan-tools
-libva-mesa-driver
+# VA-API comes from `mesa` itself — the standalone libva-mesa-driver package no
+# longer exists upstream, it is only a virtual provide now.
 
 # ROCm stack (Tier 1/2). Heavy; Phase 5 may move this to a post-install step
 # so Tier 3 images stay small.
