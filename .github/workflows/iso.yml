@@ -126,16 +126,41 @@ jobs:
           fi
           echo "OK: no unbranded titles remain"
 
-      # Login and firstboot are only observable by booting, so assert them
-      # against the profile and the populated airootfs instead.
-      - name: Verify autologin and firstboot are wired up
+      # Assert against the real built root filesystem, not the profile. These
+      # are the properties whose absence is only visible by booting, and each
+      # one here has already cost a burn-and-boot cycle to discover.
+      - name: Verify the live environment is usable
         run: |
+          A=$(sudo find build/tmp -maxdepth 3 -type d -name airootfs | head -1)
+          echo "airootfs: $A"
+          test -n "$A" || { echo "FAIL: no built airootfs found"; exit 1; }
+
+          echo "--- root account ---"
+          sudo grep '^root:' "$A/etc/shadow"
+          if sudo grep -qE '^root:[!*]' "$A/etc/shadow"; then
+            echo "FAIL: root is locked; autologin falls through to a password prompt"
+            exit 1
+          fi
+          echo "OK: root is not locked"
+
           echo "--- autologin drop-in ---"
-          cat build/profile/airootfs/etc/systemd/system/getty@tty1.service.d/autologin.conf
-          echo "--- firstboot enablement symlink ---"
-          ls -l build/profile/airootfs/etc/systemd/system/multi-user.target.wants/
-          echo "--- root account state in the built airootfs ---"
-          sudo grep '^root:' build/tmp/x86_64/airootfs/etc/shadow || echo "no root line found"
+          sudo cat "$A/etc/systemd/system/getty@tty1.service.d/autologin.conf"
+
+          echo "--- enabled units ---"
+          sudo ls -l "$A/etc/systemd/system/multi-user.target.wants/"
+          sudo test -e "$A/etc/systemd/system/multi-user.target.wants/cameo-firstboot.service" \
+            || { echo "FAIL: firstboot not enabled"; exit 1; }
+
+          echo "--- pacman mirrors in the live image ---"
+          sudo grep -c '^Server' "$A/etc/pacman.d/mirrorlist" \
+            || { echo "FAIL: live image has no pacman mirrors"; exit 1; }
+
+          echo "--- dangling enablement symlinks ---"
+          if sudo find "$A/etc/systemd/system" -xtype l | grep .; then
+            echo "FAIL: broken unit symlinks above would fail at boot"
+            exit 1
+          fi
+          echo "OK: no dangling unit symlinks"
 
       - name: Verify boot splash was rendered
         run: |

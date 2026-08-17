@@ -42,36 +42,41 @@ for d in efiboot syslinux grub; do
   [ -e "$BUILD/$d" ] || cp -r "$RELENG/$d" "$BUILD/" 2>/dev/null || true
 done
 
-# Same rationale for the mkinitcpio hooks/presets that build the archiso
-# initramfs: Cameo doesn't vendor them, so borrow them from releng too.
-# Account database too. Without it root's password state comes from whatever
-# the base packages ship, which can be locked -- and a locked root makes
-# login -f fall through to a password prompt, defeating the autologin.
-# profiledef.sh has always declared permissions for /etc/shadow; this is the
-# file that declaration was waiting for.
-for f in etc/shadow etc/gshadow; do
-  if [ ! -e "$BUILD/airootfs/$f" ] && [ -e "$RELENG/airootfs/$f" ]; then
-    mkdir -p "$(dirname "$BUILD/airootfs/$f")"
-    cp "$RELENG/airootfs/$f" "$BUILD/airootfs/$f"
-    log "Borrowed $f from releng"
-  fi
-done
+# 1a. Build airootfs as releng's live root with Cameo's files overlaid.
+#
+# Cherry-picking individual files from releng was the wrong model. Cameo's
+# airootfs holds only branding and tuning, so everything a live system needs
+# and Cameo doesn't happen to vendor -- the account database, mkinitcpio
+# hooks, mirrorlist, network config -- was simply absent, and each omission
+# surfaced only as a broken boot. Starting from releng's working root and
+# letting Cameo win on conflict makes the live environment complete by
+# construction rather than by enumeration.
+#
+# .wants is stripped from the base first: releng enables units for packages it
+# ships and Cameo may not, which would leave systemd failing on units that do
+# not exist. Cameo enables what it needs explicitly, below.
+if [ -d "$RELENG/airootfs" ]; then
+  MERGED="$WORK/airootfs.merged"
+  rm -rf "$MERGED"
+  cp -a "$RELENG/airootfs" "$MERGED"
+  rm -rf "$MERGED"/etc/systemd/system/*.wants
+  [ -d "$BUILD/airootfs" ] && cp -a "$BUILD/airootfs/." "$MERGED/"
+  rm -rf "$BUILD/airootfs"
+  mv "$MERGED" "$BUILD/airootfs"
+  log "Merged airootfs: releng base, Cameo overlay"
+fi
 
-for f in etc/mkinitcpio.conf.d etc/mkinitcpio.d; do
-  if [ ! -e "$BUILD/airootfs/$f" ] && [ -e "$RELENG/airootfs/$f" ]; then
-    mkdir -p "$(dirname "$BUILD/airootfs/$f")"
-    cp -r "$RELENG/airootfs/$f" "$BUILD/airootfs/$f"
-  fi
-done
-
-# 1a. Enable the firstboot service. systemd only honours [Install] at
+# Enable the units Cameo wants. systemd only honours [Install] at
 # `systemctl enable` time, which never happens for a live image, so archiso
-# profiles ship the .wants symlink instead. Created here rather than committed
-# because the source tree is edited on Windows, where git symlinks are a trap.
-mkdir -p "$BUILD/airootfs/etc/systemd/system/multi-user.target.wants"
-ln -sf /etc/systemd/system/cameo-firstboot.service \
-  "$BUILD/airootfs/etc/systemd/system/multi-user.target.wants/cameo-firstboot.service"
-log "Enabled cameo-firstboot.service"
+# profiles ship the .wants symlinks instead. Created here rather than committed
+# because the tree is edited on Windows, where git symlinks are a trap.
+WANTS="$BUILD/airootfs/etc/systemd/system/multi-user.target.wants"
+mkdir -p "$WANTS"
+ln -sf /etc/systemd/system/cameo-firstboot.service "$WANTS/cameo-firstboot.service"
+# networkd and resolved ship inside systemd itself, so these can never dangle.
+ln -sf /usr/lib/systemd/system/systemd-networkd.service "$WANTS/systemd-networkd.service"
+ln -sf /usr/lib/systemd/system/systemd-resolved.service "$WANTS/systemd-resolved.service"
+log "Enabled cameo-firstboot, systemd-networkd, systemd-resolved"
 
 # 1b. Brand the boot menus. Those borrowed configs label every entry "Arch
 # Linux install medium", so the boot screen would announce the wrong distro.
