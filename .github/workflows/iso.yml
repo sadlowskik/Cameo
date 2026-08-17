@@ -126,6 +126,17 @@ jobs:
           fi
           echo "OK: no unbranded titles remain"
 
+      # Login and firstboot are only observable by booting, so assert them
+      # against the profile and the populated airootfs instead.
+      - name: Verify autologin and firstboot are wired up
+        run: |
+          echo "--- autologin drop-in ---"
+          cat build/profile/airootfs/etc/systemd/system/getty@tty1.service.d/autologin.conf
+          echo "--- firstboot enablement symlink ---"
+          ls -l build/profile/airootfs/etc/systemd/system/multi-user.target.wants/
+          echo "--- root account state in the built airootfs ---"
+          sudo grep '^root:' build/tmp/x86_64/airootfs/etc/shadow || echo "no root line found"
+
       - name: Verify boot splash was rendered
         run: |
           ls -l build/profile/syslinux/splash.png

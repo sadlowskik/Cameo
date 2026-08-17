@@ -51,6 +51,15 @@ for f in etc/mkinitcpio.conf.d etc/mkinitcpio.d; do
   fi
 done
 
+# 1a. Enable the firstboot service. systemd only honours [Install] at
+# `systemctl enable` time, which never happens for a live image, so archiso
+# profiles ship the .wants symlink instead. Created here rather than committed
+# because the source tree is edited on Windows, where git symlinks are a trap.
+mkdir -p "$BUILD/airootfs/etc/systemd/system/multi-user.target.wants"
+ln -sf /etc/systemd/system/cameo-firstboot.service \
+  "$BUILD/airootfs/etc/systemd/system/multi-user.target.wants/cameo-firstboot.service"
+log "Enabled cameo-firstboot.service"
+
 # 1b. Brand the boot menus. Those borrowed configs label every entry "Arch
 # Linux install medium", so the boot screen would announce the wrong distro.
 # Retitle them in the staged copy — done with sed against whatever releng
