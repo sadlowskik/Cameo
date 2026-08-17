@@ -17,6 +17,9 @@ mkinitcpio-archiso
 # validation outright if it is absent.
 syslinux
 sudo
+# The account database is inherited from releng, which points root at zsh.
+# Without it the shell does not exist and tty1 autologin fails silently.
+zsh
 
 # AMD graphics + Vulkan userspace (the universal baseline — every tier)
 mesa

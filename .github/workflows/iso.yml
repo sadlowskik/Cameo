@@ -146,20 +146,39 @@ jobs:
           echo "--- autologin drop-in ---"
           sudo cat "$A/etc/systemd/system/getty@tty1.service.d/autologin.conf"
 
+          # root's shell must exist inside the image. The account database comes
+          # from releng, which points root at zsh; if the edition's package list
+          # drops zsh, autologin fails with no visible reason.
+          echo "--- root shell ---"
+          SHELL_PATH=$(sudo grep '^root:' "$A/etc/passwd" | cut -d: -f7)
+          echo "root shell: $SHELL_PATH"
+          sudo test -x "$A$SHELL_PATH" \
+            || { echo "FAIL: root's shell $SHELL_PATH is not present in the image"; exit 1; }
+          echo "OK: root's shell exists"
+
           echo "--- enabled units ---"
           sudo ls -l "$A/etc/systemd/system/multi-user.target.wants/"
-          sudo test -e "$A/etc/systemd/system/multi-user.target.wants/cameo-firstboot.service" \
+          # -L not -e: these are absolute symlinks into the image, and -e would
+          # follow them against the runner's filesystem and always fail.
+          sudo test -L "$A/etc/systemd/system/multi-user.target.wants/cameo-firstboot.service" \
             || { echo "FAIL: firstboot not enabled"; exit 1; }
 
           echo "--- pacman mirrors in the live image ---"
           sudo grep -c '^Server' "$A/etc/pacman.d/mirrorlist" \
             || { echo "FAIL: live image has no pacman mirrors"; exit 1; }
 
-          echo "--- dangling enablement symlinks ---"
-          if sudo find "$A/etc/systemd/system" -xtype l | grep .; then
-            echo "FAIL: broken unit symlinks above would fail at boot"
-            exit 1
-          fi
+          # Resolve each link against the image root rather than the runner's.
+          echo "--- dangling unit symlinks ---"
+          bad=0
+          while IFS= read -r l; do
+            t=$(sudo readlink "$l")
+            case "$t" in
+              /*) r="$A$t" ;;
+              *)  r="$(dirname "$l")/$t" ;;
+            esac
+            sudo test -e "$r" || { echo "DANGLING: $l -> $t"; bad=1; }
+          done < <(sudo find "$A/etc/systemd/system" -type l)
+          [ "$bad" -eq 0 ] || { echo "FAIL: broken unit symlinks would fail at boot"; exit 1; }
           echo "OK: no dangling unit symlinks"
 
       - name: Verify boot splash was rendered
@@ -187,11 +206,21 @@ jobs:
       - name: Record account state in the published log
         if: always()
         run: |
+          # Report the PROPERTY, never the record. This log is published to a
+          # branch that is readable without authentication; the day a root
+          # password is set for the installer, exporting the hash here would
+          # publish it and nothing would flag it.
+          A=$(sudo find build/tmp -maxdepth 3 -type d -name airootfs | head -1)
           {
-            echo "=== root line, built airootfs ==="
-            sudo grep '^root:' build/tmp/x86_64/airootfs/etc/shadow 2>/dev/null || echo "(none)"
-            echo "=== shadow shipped in profile? ==="
-            ls -l build/profile/airootfs/etc/shadow 2>/dev/null || echo "(profile ships no shadow)"
+            echo "=== account state ==="
+            if sudo grep -qE '^root::' "$A/etc/shadow" 2>/dev/null; then
+              echo "root: passwordless (expected for a live image)"
+            elif sudo grep -qE '^root:[!*]' "$A/etc/shadow" 2>/dev/null; then
+              echo "root: LOCKED (autologin will fall through to a prompt)"
+            else
+              echo "root: password hash set (unexpected for a live image)"
+            fi
+            echo "root shell: $(sudo grep '^root:' "$A/etc/passwd" | cut -d: -f7)"
             echo "=== autologin drop-in ==="
             cat build/profile/airootfs/etc/systemd/system/getty@tty1.service.d/autologin.conf 2>/dev/null || echo "(missing)"
           } >> build.log
