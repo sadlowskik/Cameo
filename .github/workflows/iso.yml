@@ -130,7 +130,12 @@ jobs:
       # are the properties whose absence is only visible by booting, and each
       # one here has already cost a burn-and-boot cycle to discover.
       - name: Verify the live environment is usable
+        if: always()
         run: |
+          # Mirror everything to build.log. Workflow logs need authentication
+          # to read, so a check that fails only into the workflow log reports
+          # that something is wrong without reporting what.
+          exec > >(tee -a build.log) 2>&1
           A=$(sudo find build/tmp -maxdepth 3 -type d -name airootfs | head -1)
           echo "airootfs: $A"
           test -n "$A" || { echo "FAIL: no built airootfs found"; exit 1; }
