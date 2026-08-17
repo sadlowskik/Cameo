@@ -64,8 +64,9 @@ jobs:
       - name: Refresh keyring
         run: docker exec arch bash -euo pipefail -c "pacman -Sy --noconfirm --needed archlinux-keyring"
 
+      # librsvg supplies rsvg-convert, which renders the boot splash from SVG.
       - name: Install archiso and rust
-        run: docker exec arch bash -euo pipefail -c "pacman -Syu --noconfirm --needed archiso rust"
+        run: docker exec arch bash -euo pipefail -c "pacman -Syu --noconfirm --needed archiso rust librsvg"
 
       - name: Verify toolchain
         run: docker exec arch bash -euo pipefail -c "mkarchiso -h >/dev/null && cargo --version && rustc --version"
@@ -110,6 +111,14 @@ jobs:
             exit 1
           fi
           echo "OK: no unbranded titles remain"
+
+      - name: Verify boot splash was rendered
+        run: |
+          ls -l build/profile/syslinux/splash.png
+          file build/profile/syslinux/splash.png
+          file build/profile/syslinux/splash.png | grep -q "640 x 480" \
+            || { echo "FAIL: splash is not 640x480"; exit 1; }
+          echo "OK: Cameo splash rendered at 640x480"
 
       - name: "DIAG log size and tail"
         if: always()

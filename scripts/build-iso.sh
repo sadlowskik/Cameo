@@ -69,6 +69,23 @@ done < <(find "$BUILD/syslinux" "$BUILD/efiboot" "$BUILD/grub" \
            -type f \( -name '*.cfg' -o -name '*.conf' \) -print0 2>/dev/null)
 log "Rebranded $branded boot config file(s)"
 
+# 1c. Render the Cameo mark into the syslinux menu background. releng's
+# archiso_head.cfg points MENU BACKGROUND at splash.png, so overwriting that
+# file is all the wiring needed. A missing rasteriser is not fatal: the stock
+# splash still boots, and a cosmetic asset must never fail a build.
+SPLASH_SVG="$REPO/docs/brand/cameo-splash.svg"
+if [ -f "$SPLASH_SVG" ] && [ -d "$BUILD/syslinux" ]; then
+  if command -v rsvg-convert >/dev/null 2>&1; then
+    rsvg-convert -w 640 -h 480 -o "$BUILD/syslinux/splash.png" "$SPLASH_SVG"
+    log "Rendered the Cameo boot splash (rsvg-convert)"
+  elif command -v magick >/dev/null 2>&1; then
+    magick -background none "$SPLASH_SVG" -resize 640x480! "$BUILD/syslinux/splash.png"
+    log "Rendered the Cameo boot splash (ImageMagick)"
+  else
+    log "No SVG rasteriser found - keeping the stock splash"
+  fi
+fi
+
 # 2. Build the cameo CLI (native, for the ISO's arch) and stage it into the image.
 log "Building the cameo CLI (release)..."
 ( cd "$REPO" && cargo build --release -p cameo-cli )
