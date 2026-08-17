@@ -67,10 +67,14 @@ jobs:
       # transient and does not resolve by retrying.
       - name: Pin mirrors that publish db and packages together
         run: |
+          # kernel.org demoted: it has stalled mid-transfer on three separate
+          # runs with "Operation too slow", which pacman treats as fatal for
+          # the whole transaction.
           cat > /tmp/mirrorlist <<'MIRRORS'
-          Server = https://mirrors.kernel.org/archlinux/$repo/os/$arch
           Server = https://mirror.rackspace.com/archlinux/$repo/os/$arch
           Server = https://geo.mirror.pkgbuild.com/$repo/os/$arch
+          Server = https://mirror.leaseweb.net/archlinux/$repo/os/$arch
+          Server = https://mirrors.kernel.org/archlinux/$repo/os/$arch
           MIRRORS
           docker cp /tmp/mirrorlist arch:/etc/pacman.d/mirrorlist
           docker exec arch bash -euo pipefail -c "cat /etc/pacman.d/mirrorlist && pacman -Syy --noconfirm"
@@ -106,8 +110,21 @@ jobs:
           EDITION: ${{ github.event.inputs.edition || 'lite' }}
         run: |
           set -o pipefail
-          docker exec -e CAMEO_EDITION="$EDITION" arch \
-            bash -euo pipefail -c "bash ./scripts/build-iso.sh" 2>&1 | tee build.log
+          # Arch mirrors have failed transiently on three runs -- once as a
+          # database/pool skew 404, twice as a mid-transfer stall. pacman treats
+          # either as fatal for the entire transaction, so a whole ISO build is
+          # lost to one slow file. Retry rather than burning a manual re-run.
+          for attempt in 1 2 3; do
+            echo "=== build attempt $attempt ===" | tee -a build.log
+            if docker exec -e CAMEO_EDITION="$EDITION" arch \
+                 bash -euo pipefail -c "rm -rf /repo/build/tmp; bash ./scripts/build-iso.sh" 2>&1 | tee -a build.log; then
+              exit 0
+            fi
+            echo "attempt $attempt failed" | tee -a build.log
+            sleep 30
+          done
+          echo "all three build attempts failed" | tee -a build.log
+          exit 1
 
       - name: Disk after build
         if: always()
