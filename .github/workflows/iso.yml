@@ -14,6 +14,10 @@ on:
     tags:
       - "v*"
 
+# The build runs inside a long-lived privileged Arch container driven by
+# `docker exec`, one named step per command. That is deliberate: workflow logs
+# require authentication to read, but per-step conclusions are public API, so
+# granular step names make a failure diagnosable from outside.
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -21,28 +25,60 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # mkarchiso unpacks the whole package set twice (airootfs + squashfs work
-      # copy). A stock runner has ~25 GB free, which the lite edition fits into
-      # only after the preinstalled toolchains are removed.
+      - name: Runner diagnostics
+        run: |
+          docker version
+          df -h /
+          free -h
+
+      # mkarchiso unpacks the package set twice (airootfs + squashfs work copy).
       - name: Free disk space
         run: |
           sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android \
                       /opt/hostedtoolcache/CodeQL /usr/local/share/boost
           df -h /
 
+      # Anonymous Docker Hub pulls from shared runner IPs get rate-limited, so
+      # retry rather than failing the whole build on a 429.
+      - name: Pull Arch image
+        run: |
+          for i in 1 2 3 4 5; do
+            if docker pull archlinux:base-devel; then
+              exit 0
+            fi
+            echo "pull attempt $i failed; retrying in 20s"
+            sleep 20
+          done
+          echo "could not pull archlinux:base-devel after 5 attempts"
+          exit 1
+
+      - name: Start container
+        run: |
+          docker run -d --privileged --name arch \
+            -v "$PWD:/repo" -w /repo \
+            archlinux:base-devel sleep infinity
+          docker ps
+
+      - name: Refresh keyring
+        run: docker exec arch bash -euo pipefail -c "pacman -Sy --noconfirm --needed archlinux-keyring"
+
+      - name: Install archiso and rust
+        run: docker exec arch bash -euo pipefail -c "pacman -Syu --noconfirm --needed archiso rust"
+
+      - name: Verify toolchain
+        run: docker exec arch bash -euo pipefail -c "mkarchiso -h >/dev/null && cargo --version && rustc --version"
+
+      - name: Build cameo CLI
+        run: docker exec arch bash -euo pipefail -c "cargo build --release -p cameo-cli"
+
       - name: Build ISO
         env:
           EDITION: ${{ github.event.inputs.edition || 'lite' }}
-        run: |
-          docker run --rm --privileged \
-            -v "$PWD:/repo" -w /repo \
-            -e CAMEO_EDITION="$EDITION" \
-            archlinux:base-devel \
-            bash -euo pipefail -c '
-              pacman -Sy --noconfirm --needed archlinux-keyring
-              pacman -Syu --noconfirm --needed archiso rust
-              bash ./scripts/build-iso.sh
-            '
+        run: docker exec -e CAMEO_EDITION="$EDITION" arch bash -euo pipefail -c "bash ./scripts/build-iso.sh"
+
+      - name: Disk after build
+        if: always()
+        run: df -h /
 
       - name: Collect output
         run: |
@@ -50,7 +86,6 @@ jobs:
           cd archiso/out
           sha256sum ./*.iso > SHA256SUMS
           ls -lh
-          df -h /
 
       - uses: actions/upload-artifact@v4
         with:
