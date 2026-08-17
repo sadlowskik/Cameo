@@ -12,7 +12,11 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROFILE="$REPO/archiso"
-WORK="${CAMEO_WORK:-$REPO/archiso/work}"
+# The work dir must live OUTSIDE the profile. mkarchiso builds from a staged
+# copy at $WORK/profile, so a work dir of archiso/work makes that copy
+# `cp -r archiso archiso/work/profile` — a directory into itself, which cp
+# refuses. Keep this outside archiso/ or the build cannot start.
+WORK="${CAMEO_WORK:-$REPO/build}"
 OUT="${CAMEO_OUT:-$REPO/archiso/out}"
 EDITION="${CAMEO_EDITION:-full}"
 RELENG="${CAMEO_RELENG:-/usr/share/archiso/configs/releng}"
