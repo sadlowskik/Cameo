@@ -11,7 +11,7 @@
 use std::sync::Arc;
 
 use cameo_config::{Backend, Settings};
-use cameo_gpu_detect::{classify_topology, detect_topology, Captures, OverrideDb};
+use cameo_gpu_detect::{classify_topology, detect_topology_or_cpu, Captures, OverrideDb};
 use cameo_placement::command::build_llama_server;
 use cameo_placement::{plan as make_plan, ModelMeta, QuantLevel, Task};
 use serde::Deserialize;
@@ -98,6 +98,7 @@ impl ModelRequest {
         match self.backend.as_deref() {
             Some("vulkan") => Some(Backend::Vulkan),
             Some("rocm") => Some(Backend::Rocm),
+            Some("cpu") => Some(Backend::Cpu),
             Some("auto") | None => None,
             Some(_) => None,
         }
@@ -167,7 +168,7 @@ fn route_api(state: &Arc<AppState>, req: &Request, rest: &[&str]) -> Response {
 /// Detect + classify, mapping detection errors to an HTTP response. `Ok` carries
 /// the JSON GPU report the dashboard renders.
 fn detect_report(state: &Arc<AppState>) -> Result<Value, Response> {
-    let topo = detect_topology(&state.captures).map_err(|e| match e {
+    let topo = detect_topology_or_cpu(&state.captures).map_err(|e| match e {
         cameo_gpu_detect::Error::UnsupportedOs => Response::error(
             501,
             "live GPU detection needs Linux. Start cameod with captured fixtures \
@@ -225,7 +226,7 @@ fn plan_for(
     state: &Arc<AppState>,
     body: &ModelRequest,
 ) -> Result<(cameo_placement::PlacementPlan, cameo_placement::CommandSpec), Response> {
-    let topo = detect_topology(&state.captures).map_err(|e| match e {
+    let topo = detect_topology_or_cpu(&state.captures).map_err(|e| match e {
         cameo_gpu_detect::Error::UnsupportedOs => Response::error(
             501,
             "live GPU detection needs Linux. Start cameod with captured fixtures to plan here.",

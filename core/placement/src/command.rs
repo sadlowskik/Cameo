@@ -448,6 +448,19 @@ mod tests {
     }
 
     #[test]
+    fn cpu_plan_emits_ngl_zero_and_no_gpu_flags() {
+        // No GPU → CPU plan. The command must force all layers onto the CPU
+        // (`-ngl 0`) and leak none of the multi-GPU / HSA machinery.
+        let topo = Topology::cpu_only(None);
+        let m = ModelMeta::dense("llama-7b", 7.0, QuantLevel::Q4_K_M);
+        let p = plan(&topo, &[], &m, Task::Inference, &Settings::default()).unwrap();
+        let spec = build_llama_run(&p, &m, "/m.gguf", "llama-cli");
+        assert!(spec.args.windows(2).any(|w| w == ["-ngl", "0"]));
+        assert!(!spec.args.iter().any(|a| a == "--split-mode"));
+        assert!(spec.env.is_empty(), "no HSA override on CPU");
+    }
+
+    #[test]
     fn dry_run_display_is_readable() {
         let m = ModelMeta::dense("llama-7b", 7.0, QuantLevel::Q4_K_M);
         let p = plan_for(vec![gpu("gfx1030", 16384)], vec![], &m, Task::Inference);

@@ -17,7 +17,7 @@ use clap::{Parser, Subcommand};
 
 use cameo_config::{Backend, Settings};
 use cameo_gpu_detect::{
-    classify_topology, detect_topology, Captures, OverrideDb, TierAssessment, Topology,
+    classify_topology, detect_topology_or_cpu, Captures, OverrideDb, TierAssessment, Topology,
 };
 use cameo_placement::command::{
     build_llama_run, build_llama_server, build_quantize, build_training,
@@ -227,6 +227,8 @@ enum BackendArg {
     Auto,
     Vulkan,
     Rocm,
+    /// CPU only — run the model in system RAM, no GPU. Works on any machine.
+    Cpu,
 }
 
 impl From<BackendArg> for Backend {
@@ -235,6 +237,7 @@ impl From<BackendArg> for Backend {
             BackendArg::Auto => Backend::Auto,
             BackendArg::Vulkan => Backend::Vulkan,
             BackendArg::Rocm => Backend::Rocm,
+            BackendArg::Cpu => Backend::Cpu,
         }
     }
 }
@@ -335,12 +338,14 @@ fn detect(cli: &Cli) -> Result<(Topology, Vec<TierAssessment>)> {
         gpu_mem: read_opt(&cli.gpu_mem_file)?,
     };
 
-    let topo = detect_topology(&captures).map_err(|e| match e {
+    // `_or_cpu`: no AMD GPU is not an error — it is the CPU-only case, a valid
+    // target that runs the model in system RAM. Only a live-detection failure on
+    // a non-Linux host (or a malformed capture) stops us here.
+    let topo = detect_topology_or_cpu(&captures).map_err(|e| match e {
         cameo_gpu_detect::Error::UnsupportedOs => anyhow!(
             "live GPU detection needs Linux. On this host, pass captured output with \
              --lspci-file (and optionally --rocminfo-file / --topo-file / --meminfo-file)."
         ),
-        cameo_gpu_detect::Error::NoGpu => anyhow!("no AMD GPU detected"),
         other => anyhow!(other.to_string()),
     })?;
 
@@ -433,8 +438,13 @@ fn emit_plan(cli: &Cli, plan: &PlacementPlan, spec: Option<&CommandSpec>) {
         "Offload:  layers={:?} experts_on_host={} kv_on_host={}",
         plan.offload.gpu_layers, plan.offload.experts_on_host, plan.offload.kv_on_host
     );
+    let fit_label = if plan.backend == Backend::Cpu {
+        "Fits RAM: "
+    } else {
+        "Fits VRAM:"
+    };
     println!(
-        "Fits VRAM:{}",
+        "{fit_label}{}",
         if plan.fits_in_vram { " yes" } else { " no" }
     );
     for n in &plan.notes {
@@ -481,6 +491,27 @@ fn cmd_gpu_status(cli: &Cli) -> Result<()> {
                 "bottleneck": topo.bottleneck_link().map(|k| format!("{k:?}")),
             }))?
         );
+        return Ok(());
+    }
+
+    if assessments.is_empty() {
+        println!("{}", style::bold("No AMD GPU detected — CPU-only mode"));
+        println!(
+            "  {}  models run in system RAM on the CPU (any x86-64 CPU works).",
+            style::dim("mode")
+        );
+        println!(
+            "  {}  expect slower inference than a GPU; force it anywhere with --backend cpu.",
+            style::dim("note")
+        );
+        if let Some(h) = topo.host_mem {
+            println!(
+                "  {}  {:.1} GiB total, {:.1} GiB available",
+                style::dim("ram "),
+                cameo_placement::gib(h.total_bytes),
+                cameo_placement::gib(h.available_bytes)
+            );
+        }
         return Ok(());
     }
 
@@ -735,6 +766,30 @@ fn cmd_quantize(cli: &Cli, args: &QuantizeArgs) -> Result<()> {
 
 fn cmd_install(cli: &Cli) -> Result<()> {
     let (_topo, assessments) = detect(cli)?;
+
+    // No AMD GPU → a CPU-only install: none of the GPU stack, just the CPU
+    // inference engine. This is what makes Cameo install-and-run on any machine.
+    if assessments.is_empty() {
+        let packages = ["linux (kernel + headers)", "llama.cpp (CPU backend)"];
+        if cli.json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "backend": "cpu",
+                    "hsa_override": serde_json::Value::Null,
+                    "packages": packages,
+                }))?
+            );
+            return Ok(());
+        }
+        println!("Install plan (no AMD GPU — CPU-only):");
+        for p in packages {
+            println!("  - {p}");
+        }
+        println!("\nModels run in system RAM. Any x86-64 CPU works — no GPU required.");
+        return Ok(());
+    }
+
     let top = &assessments[0];
     let mut packages = vec![
         "linux (kernel + headers)",

@@ -74,6 +74,22 @@ impl Topology {
         self
     }
 
+    /// A topology with no GPUs: the CPU-only case. Not an error — a machine with
+    /// no AMD GPU (or no GPU at all) still runs models on the CPU, sized against
+    /// the host RAM recorded here.
+    pub fn cpu_only(host_mem: Option<HostMemory>) -> Self {
+        Self {
+            gpus: Vec::new(),
+            links: Vec::new(),
+            host_mem,
+        }
+    }
+
+    /// Whether this machine has no usable GPU and will run on the CPU.
+    pub fn is_cpu_only(&self) -> bool {
+        self.gpus.is_empty()
+    }
+
     pub fn gpu_count(&self) -> usize {
         self.gpus.len()
     }

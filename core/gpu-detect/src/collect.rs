@@ -38,6 +38,22 @@ pub fn collect_topology() -> Result<Topology, Error> {
     Err(Error::UnsupportedOs)
 }
 
+/// Read host RAM from `/proc/meminfo` on its own — used by the CPU-only fallback,
+/// which needs the memory figure even when GPU detection found nothing to size a
+/// GPU plan against. `None` off Linux or when the file is unreadable.
+#[cfg(target_os = "linux")]
+pub fn live_host_memory() -> Option<crate::hostmem::HostMemory> {
+    std::fs::read_to_string("/proc/meminfo")
+        .ok()
+        .and_then(|t| crate::hostmem::parse_meminfo(&t))
+}
+
+/// Non-Linux stub for [`live_host_memory`].
+#[cfg(not(target_os = "linux"))]
+pub fn live_host_memory() -> Option<crate::hostmem::HostMemory> {
+    None
+}
+
 /// Detect AMD GPUs on the current machine (Linux only).
 #[cfg(target_os = "linux")]
 pub fn collect() -> Result<Vec<GpuInfo>, Error> {

@@ -25,6 +25,10 @@ pub enum Backend {
     Vulkan,
     /// Force the ROCm backend (Tier 1/2 only).
     Rocm,
+    /// CPU only: no GPU, the whole model runs in system RAM. The universal
+    /// fallback — it works on any x86-64 machine, AMD or not, and is what
+    /// Cameo selects automatically when no AMD GPU is present.
+    Cpu,
 }
 
 /// A single configuration layer. Unset (`None`) fields defer to lower layers.

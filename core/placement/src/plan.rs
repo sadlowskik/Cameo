@@ -190,12 +190,20 @@ pub fn plan(
     task: Task,
     settings: &Settings,
 ) -> Result<PlacementPlan, Error> {
-    if topo.gpus.is_empty() || assessments.is_empty() {
+    // Before any arithmetic: a description that cannot be reasoned about must
+    // fail here with a message, not downstream as a nonsense byte count. This
+    // guards the CPU path too.
+    model.validate()?;
+
+    // No usable GPU, or the CPU backend explicitly forced → run in system RAM.
+    // This is the universal fallback that makes Cameo work on any machine, AMD
+    // or not, GPU or not.
+    if topo.gpus.is_empty() || settings.backend == Some(Backend::Cpu) {
+        return plan_cpu(topo, model, task, settings);
+    }
+    if assessments.is_empty() {
         return Err(Error::NoGpus);
     }
-    // Before any arithmetic: a description that cannot be reasoned about must
-    // fail here with a message, not downstream as a nonsense byte count.
-    model.validate()?;
     let top = &assessments[0];
 
     let backend = resolve_backend(settings.backend, top, task)?;
@@ -241,6 +249,73 @@ pub fn plan(
         Task::Inference => plan_inference(topo, model, backend, env, budget, settings, notes),
         Task::Training => plan_training(topo, model, backend, env, budget, settings, notes),
     }
+}
+
+/// Plan CPU-only execution: the whole model runs in system RAM, no GPU.
+///
+/// Selected automatically when no AMD GPU is present, or when the operator forces
+/// [`Backend::Cpu`]. It works on any x86-64 machine. Fit is judged against host
+/// RAM (there is no VRAM); training is refused, because CPU training of these
+/// models is not practical — CPU mode is inference-only, like Tier 3.
+fn plan_cpu(
+    topo: &Topology,
+    model: &ModelMeta,
+    task: Task,
+    settings: &Settings,
+) -> Result<PlacementPlan, Error> {
+    if task == Task::Training {
+        return Err(Error::CpuInferenceOnly);
+    }
+
+    let budget = MemoryBudget::of(topo); // VRAM is 0; host RAM is carried through.
+    let need = model.total_bytes();
+    let mut notes =
+        vec!["No usable GPU — running on CPU in system RAM (works on any x86-64 CPU).".to_string()];
+
+    // Unknown RAM is unknown, not zero: note it rather than refusing, matching
+    // the GPU path's treatment of an unreadable /proc/meminfo.
+    let fits = match budget.usable_host_bytes {
+        Some(host) => {
+            if need > host && !settings.allow_oversize.unwrap_or(false) {
+                return Err(Error::InsufficientMemory {
+                    needed_gib: gib(need),
+                    available_gib: gib(host),
+                });
+            }
+            notes.push(format!(
+                "Model ~{:.1} GiB against ~{:.1} GiB of usable RAM.",
+                gib(need),
+                gib(host)
+            ));
+            need <= host
+        }
+        None => {
+            notes.push(
+                "Host RAM unknown (no /proc/meminfo); running on CPU unchecked — if it \
+                 OOMs, use a smaller model or a heavier quantization."
+                    .to_string(),
+            );
+            false
+        }
+    };
+
+    Ok(PlacementPlan {
+        task: Task::Inference,
+        backend: Backend::Cpu,
+        gpu_count: 0,
+        multi_gpu: MultiGpu::Single,
+        // Everything on the CPU: no layers on a GPU (`-ngl 0`), nothing to
+        // offload elsewhere because there is nowhere else.
+        offload: Offload {
+            gpu_layers: GpuLayers::Count(0),
+            experts_on_host: false,
+            kv_on_host: false,
+        },
+        budget,
+        env: Vec::new(),
+        fits_in_vram: fits,
+        notes,
+    })
 }
 
 fn resolve_backend(
@@ -764,6 +839,76 @@ mod tests {
         let p = plan(&topo, &a, &small, Task::Inference, &Settings::default()).unwrap();
         assert!(p.notes.iter().any(|n| n.contains("Integrated GPU")));
         assert!(p.fits_in_vram, "notes: {:?}", p.notes);
+    }
+
+    // ---- CPU-only -----------------------------------------------------------
+
+    #[test]
+    fn no_gpu_plans_cpu_with_no_layers_on_a_gpu() {
+        let topo = Topology::cpu_only(Some(HostMemory {
+            total_bytes: gb(16.0),
+            available_bytes: gb(12.0),
+        }));
+        let m = ModelMeta::dense("llama-7b", 7.0, QuantLevel::Q4_K_M);
+        let p = plan(&topo, &[], &m, Task::Inference, &Settings::default()).unwrap();
+        assert_eq!(p.backend, Backend::Cpu);
+        assert_eq!(p.gpu_count, 0);
+        assert_eq!(p.offload.gpu_layers, GpuLayers::Count(0));
+        assert!(p.fits_in_vram, "a 7B fits 12 GiB of RAM");
+    }
+
+    #[test]
+    fn forcing_cpu_ignores_a_present_gpu() {
+        let (topo, a) = topo_with(vec![gpu("gfx1100", 16384)], vec![]);
+        let topo = topo.with_host_memory(Some(HostMemory {
+            total_bytes: gb(16.0),
+            available_bytes: gb(12.0),
+        }));
+        let m = ModelMeta::dense("llama-7b", 7.0, QuantLevel::Q4_K_M);
+        let settings = Settings {
+            backend: Some(Backend::Cpu),
+            ..Default::default()
+        };
+        let p = plan(&topo, &a, &m, Task::Inference, &settings).unwrap();
+        assert_eq!(p.backend, Backend::Cpu);
+        assert_eq!(p.offload.gpu_layers, GpuLayers::Count(0));
+    }
+
+    #[test]
+    fn cpu_refuses_a_model_bigger_than_ram() {
+        let topo = Topology::cpu_only(Some(HostMemory {
+            total_bytes: gb(4.0),
+            available_bytes: gb(2.5),
+        }));
+        let m = ModelMeta::dense("llama-70b", 70.0, QuantLevel::Q4_K_M);
+        assert!(matches!(
+            plan(&topo, &[], &m, Task::Inference, &Settings::default()),
+            Err(Error::InsufficientMemory { .. })
+        ));
+    }
+
+    #[test]
+    fn cpu_is_inference_only() {
+        let topo = Topology::cpu_only(Some(HostMemory {
+            total_bytes: gb(32.0),
+            available_bytes: gb(24.0),
+        }));
+        let m = ModelMeta::dense("llama-7b", 7.0, QuantLevel::Q4_K_M);
+        assert!(matches!(
+            plan(&topo, &[], &m, Task::Training, &Settings::default()),
+            Err(Error::CpuInferenceOnly)
+        ));
+    }
+
+    #[test]
+    fn cpu_with_unknown_ram_plans_anyway() {
+        // A live CPU box with no /proc/meminfo capture still gets a plan, not a
+        // refusal — unknown RAM is unknown, not zero.
+        let topo = Topology::cpu_only(None);
+        let m = ModelMeta::dense("llama-7b", 7.0, QuantLevel::Q4_K_M);
+        let p = plan(&topo, &[], &m, Task::Inference, &Settings::default()).unwrap();
+        assert_eq!(p.backend, Backend::Cpu);
+        assert!(p.notes.iter().any(|n| n.contains("Host RAM unknown")));
     }
 
     // ---- validation ---------------------------------------------------------

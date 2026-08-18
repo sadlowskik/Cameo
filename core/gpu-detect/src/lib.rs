@@ -24,7 +24,7 @@ pub mod types;
 
 pub use classify::{classify, classify_topology};
 pub use collect::{collect, collect_topology};
-pub use detect::{detect_topology, Captures};
+pub use detect::{detect_topology, detect_topology_or_cpu, Captures};
 pub use error::Error;
 pub use hostmem::{parse_meminfo, HostMemory};
 pub use memfacts::{apply_gpu_memory, parse_gpu_memory};
