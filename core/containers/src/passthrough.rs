@@ -38,8 +38,8 @@ pub struct GpuPassthrough {
 impl GpuPassthrough {
     /// The broad, works-everywhere recipe: expose the compute node and the whole
     /// DRM directory, join both groups, relax seccomp. This is what
-    /// `cameo docker-run` uses by default when it has not enumerated specific
-    /// render nodes — the container sees every AMD GPU on the box.
+    /// `cameo containers run-args` emits by default when no specific render nodes
+    /// were named — the container sees every AMD GPU on the box.
     pub fn amd_all() -> Self {
         Self {
             devices: vec!["/dev/kfd".into(), "/dev/dri".into()],

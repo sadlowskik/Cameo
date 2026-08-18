@@ -97,6 +97,7 @@ dependencies = [
  "cameo-backend-rocm",
  "cameo-backend-vulkan",
  "cameo-config",
+ "cameo-containers",
  "cameo-gpu-detect",
  "cameo-models",
  "cameo-net-strategy",

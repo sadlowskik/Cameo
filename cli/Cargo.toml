@@ -20,6 +20,7 @@ cameo-backend-vulkan.workspace = true
 cameo-backend-rocm.workspace = true
 cameo-quant-tools.workspace = true
 cameo-net-strategy.workspace = true
+cameo-containers.workspace = true
 
 clap.workspace = true
 serde = { workspace = true }

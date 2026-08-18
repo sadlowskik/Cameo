@@ -16,6 +16,7 @@ use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
 
 use cameo_config::{Backend, Settings};
+use cameo_containers::{run_args, GpuPassthrough, RunOpts};
 use cameo_gpu_detect::{
     classify_topology, detect_topology_or_cpu, Captures, OverrideDb, TierAssessment, Topology,
 };
@@ -176,6 +177,8 @@ enum Command {
     Model(ModelArgs),
     /// Front several cameod nodes as one fleet (poll /api/node, place a model).
     Fleet(FleetArgs),
+    /// Build the `podman`/`docker run` command that passes AMD GPUs into a container.
+    Containers(ContainersArgs),
     /// Print the install plan Cameo would apply for the detected hardware.
     Install,
 }
@@ -184,6 +187,52 @@ enum Command {
 struct FleetArgs {
     #[command(subcommand)]
     action: FleetAction,
+}
+
+/// Arguments for `cameo containers` — the AMD-passthrough command builder.
+#[derive(clap::Args)]
+struct ContainersArgs {
+    #[command(subcommand)]
+    action: ContainersAction,
+}
+
+#[derive(Subcommand)]
+enum ContainersAction {
+    /// Print the full `run` command that grants the container AMD GPU access.
+    RunArgs(ContainerRunArgs),
+}
+
+/// Flags for `cameo containers run-args`. These mirror the pure recipe in
+/// `cameo_containers`: the GPU passthrough (devices/groups/seccomp) is filled in
+/// automatically; everything here is the surrounding `run` shape.
+#[derive(clap::Args)]
+struct ContainerRunArgs {
+    /// Container image to run (e.g. `rocm/dev-ubuntu-22.04`).
+    image: String,
+    /// Container engine the command targets.
+    #[arg(long, default_value = "podman")]
+    engine: String,
+    /// Expose only these DRM render nodes (repeatable), e.g. `/dev/dri/renderD128`.
+    /// Omit to expose every AMD GPU on the box.
+    #[arg(long = "render-node", value_name = "NODE")]
+    render_nodes: Vec<String>,
+    /// `--rm`: delete the container when it exits.
+    #[arg(long)]
+    rm: bool,
+    /// `-d`: run detached.
+    #[arg(long)]
+    detach: bool,
+    /// `--name`: a stable container name.
+    #[arg(long)]
+    name: Option<String>,
+    /// Extra raw `run` flags passed through verbatim (repeatable), e.g.
+    /// `--opt -p --opt 8080:8080`. Hyphen-leading values are allowed so flags
+    /// like `-p` pass straight through.
+    #[arg(long = "opt", value_name = "FLAG", allow_hyphen_values = true)]
+    opt: Vec<String>,
+    /// Command to run inside the container, after `--`.
+    #[arg(last = true)]
+    command: Vec<String>,
 }
 
 #[derive(Subcommand)]
@@ -400,6 +449,7 @@ fn run(cli: &Cli) -> Result<()> {
         Command::Train(a) => cmd_train(cli, a),
         Command::Model(a) => cmd_model(cli, a),
         Command::Fleet(a) => cmd_fleet(cli, a),
+        Command::Containers(a) => cmd_containers(cli, a),
         Command::Install => cmd_install(cli),
     }
 }
@@ -1119,6 +1169,57 @@ fn cmd_install(cli: &Cli) -> Result<()> {
     Ok(())
 }
 
+// ---- containers ------------------------------------------------------------
+
+/// Build (and print) the `podman`/`docker run` command that grants a container
+/// AMD GPU access. Pure: it assembles the argv via `cameo_containers` and prints
+/// it for the operator to run — spawning a container is the Linux-gated boundary
+/// the daemon owns, not this planner-style helper.
+fn cmd_containers(cli: &Cli, args: &ContainersArgs) -> Result<()> {
+    match &args.action {
+        ContainersAction::RunArgs(a) => {
+            let argv = container_run_argv(a);
+
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "engine": a.engine,
+                        "args": argv,
+                    }))?
+                );
+                return Ok(());
+            }
+            // A copy-paste-able command line. The passthrough recipe is device and
+            // group names with no shell-hostile characters, so a space join is
+            // faithful; a value that needs quoting would come only from --opt or
+            // the trailing command, which the operator typed themselves.
+            println!("{} {}", a.engine, argv.join(" "));
+            Ok(())
+        }
+    }
+}
+
+/// Map the CLI flags to the pure `cameo_containers` recipe and return the `run`
+/// argv (without the engine name). Split out from I/O so the mapping — the
+/// render-node narrowing and the option pass-through — is unit-tested.
+fn container_run_argv(a: &ContainerRunArgs) -> Vec<String> {
+    let gpu = if a.render_nodes.is_empty() {
+        GpuPassthrough::amd_all()
+    } else {
+        let nodes: Vec<&str> = a.render_nodes.iter().map(String::as_str).collect();
+        GpuPassthrough::amd_render_nodes(&nodes)
+    };
+    let opts = RunOpts {
+        remove: a.rm,
+        detach: a.detach,
+        name: a.name.clone(),
+        extra: a.opt.clone(),
+        command: a.command.clone(),
+    };
+    run_args(&a.image, &opts, &gpu)
+}
+
 // ---- errors ----------------------------------------------------------------
 
 /// Convert a placement error into a clean CLI exit (never returns for known cases).
@@ -1156,4 +1257,55 @@ fn fail(json: bool, code: &str, message: &str) -> ! {
         "invalid_model" => 5,
         _ => 1,
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn base_run_args(image: &str) -> ContainerRunArgs {
+        ContainerRunArgs {
+            image: image.to_string(),
+            engine: "podman".to_string(),
+            render_nodes: Vec::new(),
+            rm: false,
+            detach: false,
+            name: None,
+            opt: Vec::new(),
+            command: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn containers_default_exposes_all_gpus() {
+        let argv = container_run_argv(&base_run_args("rocm/dev-ubuntu-22.04"));
+        // Whole-directory passthrough, ahead of the image, no --rm by default.
+        assert!(argv.windows(2).any(|w| w == ["--device", "/dev/dri"]));
+        assert!(!argv.iter().any(|a| a == "--rm"));
+        assert_eq!(argv.last().unwrap(), "rocm/dev-ubuntu-22.04");
+    }
+
+    #[test]
+    fn containers_narrow_render_nodes_and_pass_through_opts() {
+        let mut a = base_run_args("ubuntu");
+        a.render_nodes = vec!["/dev/dri/renderD128".to_string()];
+        a.rm = true;
+        a.name = Some("gpu-box".to_string());
+        a.opt = vec!["-p".to_string(), "8080:8080".to_string()];
+        a.command = vec!["rocminfo".to_string()];
+        let argv = container_run_argv(&a);
+
+        // Named node exposed, broad directory not.
+        assert!(argv
+            .windows(2)
+            .any(|w| w == ["--device", "/dev/dri/renderD128"]));
+        assert!(!argv.windows(2).any(|w| w == ["--device", "/dev/dri"]));
+        // --rm and --name present; raw opts land before the image; command last.
+        assert!(argv.iter().any(|a| a == "--rm"));
+        assert!(argv.windows(2).any(|w| w == ["--name", "gpu-box"]));
+        let img = argv.iter().position(|x| x == "ubuntu").unwrap();
+        let p = argv.iter().position(|x| x == "-p").unwrap();
+        assert!(p < img, "pass-through flags precede the image");
+        assert_eq!(argv.last().unwrap(), "rocminfo");
+    }
 }

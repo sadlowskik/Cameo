@@ -237,12 +237,18 @@ fn route_v1(state: &Arc<AppState>, req: &Request, rest: &[&str]) -> Response {
 /// Route one gateway request: find the endpoint serving the body's `model`, mark
 /// it used (for LRU residency), and proxy the call to its `llama-server`.
 fn gateway_proxy(state: &Arc<AppState>, req: &Request) -> Response {
-    let model = serde_json::from_slice::<Value>(&req.body)
-        .ok()
+    let parsed = serde_json::from_slice::<Value>(&req.body).ok();
+    let model = parsed
+        .as_ref()
         .and_then(|v| v.get("model").and_then(Value::as_str).map(str::to_string));
     let Some(model) = model else {
         return Response::error(400, "request body must be JSON with a \"model\" field");
     };
+    // OpenAI's `stream: true` asks for an SSE token stream; anything else buffers.
+    let wants_stream = parsed
+        .as_ref()
+        .and_then(|v| v.get("stream").and_then(Value::as_bool))
+        .unwrap_or(false);
 
     let Some((host, port, id)) = state.sup.endpoint_for_model(&model) else {
         return Response::error(
@@ -252,16 +258,43 @@ fn gateway_proxy(state: &Arc<AppState>, req: &Request) -> Response {
     };
     state.sup.touch(&id);
 
-    let content_type = req.header("content-type").unwrap_or("application/json");
-    match crate::proxy::forward(
-        &host,
+    let content_type = req
+        .header("content-type")
+        .unwrap_or("application/json")
+        .to_string();
+    let key = state.settings.serve_api_key.clone();
+
+    if wants_stream {
+        // Hand the socket to the proxy so upstream SSE frames are relayed as they
+        // arrive instead of being buffered into one final blob. The closure owns
+        // the request bytes because it outlives this call.
+        let method = req.method.clone();
+        let path = req.path.clone();
+        let body = req.body.clone();
+        return Response::streaming(move |w| {
+            let upstream = crate::proxy::ProxyRequest {
+                host: &host,
+                port,
+                method: &method,
+                path: &path,
+                content_type: &content_type,
+                body: &body,
+                backend_key: key.as_deref(),
+            };
+            crate::proxy::forward_streaming(&upstream, w)
+        });
+    }
+
+    let upstream = crate::proxy::ProxyRequest {
+        host: &host,
         port,
-        &req.method,
-        &req.path,
-        content_type,
-        &req.body,
-        state.settings.serve_api_key.as_deref(),
-    ) {
+        method: &req.method,
+        path: &req.path,
+        content_type: &content_type,
+        body: &req.body,
+        backend_key: key.as_deref(),
+    };
+    match crate::proxy::forward(&upstream) {
         Ok(b) => Response::new(b.status, &b.content_type, b.body),
         Err(e) => Response::error(502, format!("upstream {host}:{port} unreachable: {e}")),
     }

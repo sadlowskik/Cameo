@@ -65,6 +65,11 @@ A keyless daemon (loopback dev) serves `/metrics` openly, like every other route
 The gateway holds each endpoint's serve key and injects it upstream, so a client
 presents **one** key to **one** door for **many** models.
 
+A request body with `"stream": true` is streamed: the upstream `text/event-stream`
+(SSE) response is relayed to the client token-by-token as it is produced, rather
+than buffered and returned as one blob. Non-streaming requests are buffered as
+before.
+
 ## Notes
 
 - The JSON-RPC contract in `core/api` is the *typed* internal surface (Phase 2

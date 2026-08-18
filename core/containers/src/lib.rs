@@ -13,6 +13,10 @@
 //! boundary in `cameo_gpu_detect::collect` and the execution boundary in
 //! `cameo_placement::command`. Everything here stays pure and testable, so the
 //! console's Containers view can be built and exercised with no daemon present.
+//!
+//! This recipe is surfaced today by `cameo containers run-args`, which prints the
+//! `podman`/`docker run` command an operator runs to pass their AMD GPU(s) into a
+//! container — the CLI half of the integration, spawn deferred to that boundary.
 
 pub mod passthrough;
 

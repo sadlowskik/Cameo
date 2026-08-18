@@ -66,6 +66,15 @@ impl Request {
     }
 }
 
+/// A closure that takes over an accepted connection and writes the entire HTTP
+/// response itself, byte by byte. This is the escape hatch for streaming (the
+/// `/v1` gateway's SSE passthrough): the normal `Fn(&Request) -> Response` path
+/// builds a whole body first, which is wrong for `stream: true`, so a streaming
+/// route hands back a `Response` whose `stream` field pumps the socket directly.
+/// `Send` because the response is produced and consumed on the per-connection
+/// worker thread.
+pub type ResponseStream = Box<dyn FnOnce(&mut dyn Write) -> std::io::Result<()> + Send>;
+
 /// A response to write back. Construct via the helpers rather than by hand so the
 /// framing headers stay consistent.
 pub struct Response {
@@ -73,6 +82,10 @@ pub struct Response {
     pub content_type: String,
     pub body: Vec<u8>,
     pub extra_headers: Vec<(String, String)>,
+    /// When `Some`, the connection is handed to this closure and the `status`/
+    /// `content_type`/`body` fields above are ignored — the closure is fully
+    /// responsible for framing (used by the streaming gateway).
+    pub stream: Option<ResponseStream>,
 }
 
 impl Response {
@@ -82,6 +95,24 @@ impl Response {
             content_type: content_type.to_string(),
             body,
             extra_headers: Vec::new(),
+            stream: None,
+        }
+    }
+
+    /// A streaming response: `f` receives the client socket and writes a complete
+    /// HTTP/1.1 response to it (status line, headers, and a progressively-flushed
+    /// body). Used by the `/v1` gateway to relay an upstream SSE stream verbatim
+    /// instead of buffering it.
+    pub fn streaming<F>(f: F) -> Self
+    where
+        F: FnOnce(&mut dyn Write) -> std::io::Result<()> + Send + 'static,
+    {
+        Self {
+            status: 200,
+            content_type: String::new(),
+            body: Vec::new(),
+            extra_headers: Vec::new(),
+            stream: Some(Box::new(f)),
         }
     }
 
@@ -167,7 +198,7 @@ where
         Err(ParseError::Io(e)) => return Err(e),
     };
 
-    write_response(reader.get_mut(), &response)
+    write_response(reader.get_mut(), response)
 }
 
 #[derive(Debug)]
@@ -298,7 +329,11 @@ fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-fn write_response<W: Write>(w: &mut W, resp: &Response) -> std::io::Result<()> {
+fn write_response<W: Write>(w: &mut W, resp: Response) -> std::io::Result<()> {
+    // Streaming route: the closure owns framing and body entirely.
+    if let Some(stream) = resp.stream {
+        return stream(w);
+    }
     let reason = reason_phrase(resp.status);
     let mut head = format!(
         "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n",
@@ -431,11 +466,28 @@ mod tests {
     #[test]
     fn response_framing_has_length_and_close() {
         let mut out = Vec::new();
-        write_response(&mut out, &Response::text(404, "nope")).unwrap();
+        write_response(&mut out, Response::text(404, "nope")).unwrap();
         let s = String::from_utf8(out).unwrap();
         assert!(s.starts_with("HTTP/1.1 404 Not Found\r\n"));
         assert!(s.contains("Content-Length: 4\r\n"));
         assert!(s.contains("Connection: close\r\n"));
         assert!(s.ends_with("\r\n\r\nnope"));
+    }
+
+    #[test]
+    fn streaming_response_owns_the_socket() {
+        // A streaming Response bypasses normal framing entirely: whatever the
+        // closure writes is exactly what lands on the wire.
+        let mut out = Vec::new();
+        let resp = Response::streaming(|w| {
+            w.write_all(b"HTTP/1.1 200 OK\r\n\r\ndata: one\n\n")?;
+            w.write_all(b"data: two\n\n")?;
+            Ok(())
+        });
+        write_response(&mut out, resp).unwrap();
+        let s = String::from_utf8(out).unwrap();
+        assert_eq!(s, "HTTP/1.1 200 OK\r\n\r\ndata: one\n\ndata: two\n\n");
+        // No Content-Length was injected — the closure is fully in charge.
+        assert!(!s.contains("Content-Length"));
     }
 }
