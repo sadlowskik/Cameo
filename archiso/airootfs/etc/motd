@@ -10,4 +10,8 @@ Welcome to Cameo — any AMD card -> a working LLM box.
 
 First time? Try:  cameo pull tinyllama && cameo serve tinyllama
 
+Running from the USB? Install Cameo permanently to this machine:
+  cameo-install          dry run — shows the plan, changes nothing
+  cameo-install --commit installs to a disk you pick (erases it)
+
 Docs & source: https://github.com/korbin/cameo

@@ -55,4 +55,5 @@ file_permissions=(
   ["/usr/local/bin/cameo-console-init"]="0:0:755"
   ["/usr/local/bin/cameo"]="0:0:755"
   ["/usr/local/bin/cameod"]="0:0:755"
+  ["/usr/local/bin/cameo-install"]="0:0:755"
 )

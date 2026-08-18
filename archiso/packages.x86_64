@@ -79,6 +79,16 @@ vim
 man-db
 man-pages
 
+# Installer tooling. `cameo-install` runs from this live medium to put Cameo on a
+# disk (partition, pacstrap, GRUB, admin account), so the medium needs the
+# install scripts and partitioning tools present: arch-install-scripts gives
+# pacstrap/genfstab/arch-chroot, gptfdisk gives sgdisk, dosfstools gives
+# mkfs.fat for the EFI partition, and parted gives partprobe.
+arch-install-scripts
+gptfdisk
+dosfstools
+parted
+
 # NOTE: the `cameo` CLI and the `cameod` control-plane daemon are injected by the
 # build pipeline (cargo build --release, staged into the airootfs) rather than
 # listed here as packages. cameod is started on boot by cameod.service and serves

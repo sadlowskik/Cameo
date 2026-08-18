@@ -37,5 +37,12 @@ if systemctl is-active --quiet cameod 2>/dev/null; then
 else
   echo "Web console (cameod) is not running — start it with: systemctl start cameod"
 fi
+# Only meaningful while running from the live medium: on an installed system
+# there is nothing left to install.
+if [ -d /run/archiso ]; then
+  echo "---------------------------------------------------------"
+  echo "Running from USB. To install Cameo to this machine's disk:"
+  echo "  cameo-install            (dry run — shows the plan first)"
+fi
 echo "========================================================="
 echo
