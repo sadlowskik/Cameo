@@ -129,6 +129,13 @@ pub fn route(state: &Arc<AppState>, req: &Request) -> Response {
             // Prometheus scrape (F11). Unauthenticated like the probes so any
             // scraper reaches it; the console reads the same endpoint for tiles.
             ["metrics"] => return metrics_response(state),
+            // Version, for the console's "update available?" check (F5).
+            ["version"] => {
+                return Response::json(
+                    200,
+                    &json!({ "name": "cameod", "version": env!("CARGO_PKG_VERSION") }),
+                )
+            }
             _ => {}
         }
     }
