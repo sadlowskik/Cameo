@@ -2,8 +2,12 @@
 Welcome to Cameo — any AMD card -> a working LLM box.
 
   cameo gpu-status       see your GPU's support tier (1/2/3)
-  cameo serve <model>    stand up an OpenAI-compatible endpoint
-  cameo run <model>      run inference
+  cameo pull tinyllama   fetch a small model that fits a 4 GB card
+  cameo serve tinyllama  stand up an OpenAI-compatible endpoint
+  cameo run tinyllama    run inference
+  cameo pull --list      see model aliases and what's cached
   cameo --help           everything else
+
+First time? Try:  cameo pull tinyllama && cameo serve tinyllama
 
 Docs & source: https://github.com/korbin/cameo

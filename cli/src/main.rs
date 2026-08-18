@@ -21,6 +21,8 @@ use cameo_placement::command::{
 };
 use cameo_placement::{plan as make_plan, CommandSpec, ModelMeta, PlacementPlan, QuantLevel, Task};
 
+mod models;
+
 /// Terminal styling. Zero-dependency ANSI, auto-off when piped, on a dumb
 /// terminal, or when `NO_COLOR` / `CAMEO_NO_COLOR` is set. Cameo's signature
 /// accent is a warm coral (the carved-shell namesake); tiers are colour-coded
@@ -132,6 +134,8 @@ enum Command {
     Run(RunArgs),
     /// Serve a model over a persistent OpenAI-compatible HTTP endpoint.
     Serve(ServeArgs),
+    /// Download a model into the local cache (alias, URL, or owner/repo:file.gguf).
+    Pull(PullArgs),
     /// Quantize a model to a target level (e.g. Q4_K_M).
     Quantize(QuantizeArgs),
     /// Start a training run (Tier 1/2 only; refused on Tier 3).
@@ -220,6 +224,17 @@ struct ServeArgs {
 }
 
 #[derive(clap::Args)]
+struct PullArgs {
+    /// Model to fetch: an alias, a https:// URL, or owner/repo:file.gguf.
+    /// Omit with --list to see available aliases and the cache contents.
+    #[arg(required_unless_present = "list")]
+    model: Option<String>,
+    /// List the built-in aliases and what is already cached, then exit.
+    #[arg(long)]
+    list: bool,
+}
+
+#[derive(clap::Args)]
 struct QuantizeArgs {
     /// Input model path.
     model: String,
@@ -260,6 +275,7 @@ fn run(cli: &Cli) -> Result<()> {
         Command::Plan(a) => cmd_plan(cli, a),
         Command::Run(a) => cmd_run(cli, a),
         Command::Serve(a) => cmd_serve(cli, a),
+        Command::Pull(a) => cmd_pull(cli, a),
         Command::Quantize(a) => cmd_quantize(cli, a),
         Command::Train(a) => cmd_train(cli, a),
         Command::Install => cmd_install(cli),
@@ -504,7 +520,10 @@ fn cmd_run(cli: &Cli, args: &RunArgs) -> Result<()> {
 
     let plan = make_plan(&topo, &assessments, &model, Task::Inference, &settings)
         .map_err(|e| plan_error(cli, e))?;
-    let spec = build_llama_run(&plan, &model, &args.model, binary_for(plan.backend));
+    // A dry run only prints the command, so keep the name as typed; a real run
+    // needs a file on disk, so resolve it (and fail with a pull hint if absent).
+    let model_path = resolve_model_path(cli, &args.model)?;
+    let spec = build_llama_run(&plan, &model, &model_path, binary_for(plan.backend));
     run_or_dry(cli, &plan, &spec)
 }
 
@@ -515,10 +534,11 @@ fn cmd_serve(cli: &Cli, args: &ServeArgs) -> Result<()> {
 
     let plan = make_plan(&topo, &assessments, &model, Task::Inference, &settings)
         .map_err(|e| plan_error(cli, e))?;
+    let model_path = resolve_model_path(cli, &args.model)?;
     let spec = build_llama_server(
         &plan,
         &model,
-        &args.model,
+        &model_path,
         SERVER_BINARY,
         &args.host,
         args.port,
@@ -530,6 +550,39 @@ fn cmd_serve(cli: &Cli, args: &ServeArgs) -> Result<()> {
         );
     }
     run_or_dry(cli, &plan, &spec)
+}
+
+/// Resolve a model name to a real path for execution. A real run must resolve
+/// to a `.gguf` on disk. A `--dry-run` still resolves when the file is present
+/// — so the printed command matches what would execute — but falls back to the
+/// name when it is absent, keeping dry-run usable as a planning aid pre-download.
+fn resolve_model_path(cli: &Cli, name: &str) -> Result<String> {
+    match models::resolve(name) {
+        Ok(path) => Ok(path),
+        Err(_) if cli.dry_run => Ok(name.to_string()),
+        Err(e) => Err(e),
+    }
+}
+
+fn cmd_pull(cli: &Cli, args: &PullArgs) -> Result<()> {
+    if args.list {
+        return models::list();
+    }
+    let spec = args
+        .model
+        .as_deref()
+        .expect("clap requires model unless --list");
+    let path = models::pull(spec)?;
+    if cli.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "pulled": spec,
+                "path": path.to_string_lossy(),
+            }))?
+        );
+    }
+    Ok(())
 }
 
 fn cmd_train(cli: &Cli, args: &TrainArgs) -> Result<()> {
