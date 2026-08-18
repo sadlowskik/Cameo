@@ -288,6 +288,77 @@ impl Supervisor {
             None => false,
         }
     }
+
+    /// The endpoint half of `/metrics`, in Prometheus text exposition format
+    /// (F11). Reaps first (so `up` and uptime are current), then emits each metric
+    /// family with its `HELP`/`TYPE` header followed by all its samples — the
+    /// order Prometheus requires. GPU-level metrics are appended by the caller,
+    /// which owns detection.
+    pub fn metrics(&self) -> String {
+        let mut map = self.endpoints.lock().unwrap();
+
+        let mut up = String::new();
+        let mut restarts = String::new();
+        let mut uptime = String::new();
+        for e in map.values_mut() {
+            e.refresh();
+            let running = if e.state() == "running" { 1 } else { 0 };
+            let labels = format!(
+                "id=\"{}\",model=\"{}\",port=\"{}\",backend=\"{}\",state=\"{}\"",
+                esc(&e.id),
+                esc(&e.model),
+                e.port,
+                esc(&e.backend),
+                e.state()
+            );
+            up.push_str(&format!("cameo_endpoint_up{{{labels}}} {running}\n"));
+            let id_label = format!("id=\"{}\"", esc(&e.id));
+            restarts.push_str(&format!(
+                "cameo_endpoint_restarts_total{{{id_label}}} {}\n",
+                e.restarts
+            ));
+            let secs = e.started_at.elapsed().map(|d| d.as_secs()).unwrap_or(0);
+            uptime.push_str(&format!(
+                "cameo_endpoint_uptime_seconds{{{id_label}}} {secs}\n"
+            ));
+        }
+
+        let mut out = String::new();
+        out.push_str("# HELP cameo_up 1 if the control-plane daemon is serving.\n");
+        out.push_str("# TYPE cameo_up gauge\ncameo_up 1\n");
+        out.push_str("# HELP cameo_endpoints Number of tracked model endpoints.\n");
+        out.push_str(&format!(
+            "# TYPE cameo_endpoints gauge\ncameo_endpoints {}\n",
+            map.len()
+        ));
+        out.push_str("# HELP cameo_endpoint_up 1 if the endpoint's process is running.\n");
+        out.push_str("# TYPE cameo_endpoint_up gauge\n");
+        out.push_str(&up);
+        out.push_str("# HELP cameo_endpoint_restarts_total Auto-restarts since creation.\n");
+        out.push_str("# TYPE cameo_endpoint_restarts_total counter\n");
+        out.push_str(&restarts);
+        out.push_str("# HELP cameo_endpoint_uptime_seconds Seconds since the current process started.\n");
+        out.push_str("# TYPE cameo_endpoint_uptime_seconds gauge\n");
+        out.push_str(&uptime);
+        out
+    }
+}
+
+/// Escape a Prometheus label value: backslash, double-quote, and newline are the
+/// only characters the exposition format requires escaping. Model ids can be
+/// arbitrary paths, so this is not optional. Shared with [`crate::app`]'s GPU
+/// metrics so both escape identically.
+pub(crate) fn esc(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            _ => out.push(c),
+        }
+    }
+    out
 }
 
 /// Derive the stable endpoint id from a model name and port. The port makes it
@@ -379,6 +450,27 @@ mod tests {
         let sup = Supervisor::new();
         sup.start(req("tinyllama", 8080)).unwrap();
         assert!(sup.start(req("tinyllama", 8080)).is_ok());
+    }
+
+    #[test]
+    fn metrics_emit_prometheus_families_for_each_endpoint() {
+        let sup = Supervisor::new();
+        sup.start(req("tinyllama", 8080)).unwrap();
+        let m = sup.metrics();
+        // Family headers present exactly once.
+        assert_eq!(m.matches("# TYPE cameo_endpoint_up gauge").count(), 1);
+        assert!(m.contains("cameo_up 1"));
+        assert!(m.contains("cameo_endpoints 1"));
+        // The endpoint sample carries its identifying labels.
+        assert!(m.contains(r#"cameo_endpoint_up{id="tinyllama-8080",model="tinyllama",port="8080""#));
+        assert!(m.contains(r#"cameo_endpoint_restarts_total{id="tinyllama-8080"} 0"#));
+    }
+
+    #[test]
+    fn label_values_are_escaped() {
+        assert_eq!(esc(r#"a"b\c"#), r#"a\"b\\c"#);
+        assert_eq!(esc("line\nbreak"), "line\\nbreak");
+        assert_eq!(esc("plain"), "plain");
     }
 
     #[test]

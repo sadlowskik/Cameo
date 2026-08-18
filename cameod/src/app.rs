@@ -124,6 +124,9 @@ pub fn route(state: &Arc<AppState>, req: &Request) -> Response {
                     Err(_) => Response::json(503, &json!({ "ready": false })),
                 };
             }
+            // Prometheus scrape (F11). Unauthenticated like the probes so any
+            // scraper reaches it; the console reads the same endpoint for tiles.
+            ["metrics"] => return metrics_response(state),
             _ => {}
         }
     }
@@ -207,6 +210,41 @@ fn api_gpus(state: &Arc<AppState>) -> Response {
         Ok(report) => Response::json(200, &report),
         Err(resp) => resp,
     }
+}
+
+/// `/metrics` (F11): the supervisor's endpoint metrics plus GPU-level gauges from
+/// a detection snapshot. GPU metrics are best-effort — if detection is
+/// unavailable (a non-Linux host with no fixtures), the endpoint metrics still
+/// scrape cleanly.
+fn metrics_response(state: &Arc<AppState>) -> Response {
+    use crate::supervisor::esc;
+    let mut body = state.sup.metrics();
+
+    if let Ok(topo) = detect_topology_or_cpu(&state.captures) {
+        let assessments = classify_topology(&topo, &OverrideDb::embedded());
+        body.push_str("# HELP cameo_gpu_count Number of detected GPUs.\n");
+        body.push_str(&format!(
+            "# TYPE cameo_gpu_count gauge\ncameo_gpu_count {}\n",
+            assessments.len()
+        ));
+        body.push_str("# HELP cameo_gpu_vram_megabytes VRAM per GPU in MiB.\n");
+        body.push_str("# TYPE cameo_gpu_vram_megabytes gauge\n");
+        for (i, a) in assessments.iter().enumerate() {
+            if let Some(vram) = a.gpu.vram_mb {
+                body.push_str(&format!(
+                    "cameo_gpu_vram_megabytes{{index=\"{i}\",model=\"{}\",tier=\"{}\"}} {vram}\n",
+                    esc(&a.gpu.model),
+                    a.tier.as_number(),
+                ));
+            }
+        }
+    }
+
+    Response::new(
+        200,
+        "text/plain; version=0.0.4; charset=utf-8",
+        body.into_bytes(),
+    )
 }
 
 fn api_models() -> Response {
