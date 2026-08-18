@@ -101,6 +101,7 @@ dependencies = [
  "cameo-gpu-detect",
  "cameo-models",
  "cameo-moe-harness",
+ "cameo-net-strategy",
  "cameo-placement",
  "cameo-quant-tools",
  "clap",

@@ -7,9 +7,11 @@ need" to run AI on almost any machine, manage it like a product, and scale a box
 into a fleet.
 
 **Progress (synced against the tree 2026-08-18):** 🟢 done — F1, F2, F6, F7, F8,
-F9, F10, F11, F12, F13, F15, F18 (**serving core, detection, fleet node/controller,
+F9, F10, F11, F12, F13, F14, F15, F18 (**serving core, detection, full fleet path,
 harness surface, and a usable console complete**). 🟡 partial — F4, F16, F17. 🔴
-not started — F3, F5, F14. Foundation (fleet brain, agents,
+not started — F3, F5. Remaining are delivery/quality (Secure Boot, reproducible
+pins, updates, QEMU smoke, docs) — implementable but only fully verifiable on
+Linux/CI/hardware. Foundation (fleet brain, agents,
 supervisor, control-plane HTTP + dashboard, CI, containers passthrough,
 `cameo-install`, phase1 toolkit) is in. Detection is corroborated on silicon; the
 execution/serving flags are still unvalidated on a real GPU. Now working the
@@ -200,7 +202,7 @@ you scale, **k8s replaces only the scheduling role**: the same `/api/node`
 feeds a device-plugin, `fleet.rs` becomes a scheduler-extender giving model-fit
 hints — no rewrite, because both tiers consume the same node description + brain.
 
-**F14 · Distributed execution for oversized models** 🔴 *(v2 data path)*
+**F14 · Distributed execution for oversized models** 🟢 *(layout done — `net-strategy::rpc_layout` emits the `rpc-server` workers + head `--rpc host:port,…`; `cameo fleet place` prints it on a Distributed decision. Live sharded run is hardware-gated)*
 Why: `FleetPlacement::Distributed` records intent but nothing shards a model
 across nodes; a model bigger than your largest box can't run. · Fixable: yes,
 largest/latest. · Compat: bandwidth-bound on consumer networks (`fleet.rs`

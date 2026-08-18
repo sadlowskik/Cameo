@@ -975,6 +975,7 @@ fn cmd_fleet(cli: &Cli, args: &FleetArgs) -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&plan)?);
             } else {
                 print_fleet_plan(&plan);
+                print_rpc_layout_if_distributed(&plan, &cluster);
             }
             Ok(())
         }
@@ -1004,6 +1005,35 @@ fn print_fleet_plan(plan: &cameo_placement::FleetPlan) {
     for n in &plan.notes {
         println!("  • {n}");
     }
+}
+
+/// When the planner chose distributed execution on a capable network, print the
+/// concrete llama.cpp RPC layout that stands it up (F14).
+fn print_rpc_layout_if_distributed(
+    plan: &cameo_placement::FleetPlan,
+    cluster: &cameo_placement::Cluster,
+) {
+    let cameo_placement::FleetPlacement::Distributed { nodes, .. } = &plan.chosen else {
+        return;
+    };
+    if !cluster.network.supports_distributed() {
+        return;
+    }
+    let addrs: Vec<String> = nodes
+        .iter()
+        .filter_map(|&i| cluster.nodes.get(i).map(|n| n.address.clone()))
+        .collect();
+    let Ok(layout) = cameo_net_strategy::rpc_layout(&addrs, 50052) else {
+        return;
+    };
+    println!("\nDistributed execution (llama.cpp RPC):");
+    for w in &layout.workers {
+        println!("  on {}: {}", w.host, w.command.join(" "));
+    }
+    println!(
+        "  head:  append `{}` to the llama command",
+        layout.head_rpc_args().join(" ")
+    );
 }
 
 fn cmd_install(cli: &Cli) -> Result<()> {
