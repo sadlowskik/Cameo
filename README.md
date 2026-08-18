@@ -75,6 +75,7 @@ Pure-logic crates build and test on any OS. Linux-only paths (Unix-socket daemon
 - [HTTP API reference](docs/api-reference.md) — the `cameod` control-plane surface.
 - [Harness integration](docs/harness-integration.md) — point Knossos at Cameo.
 - [Updating](docs/updating.md) — container / installed / ISO update paths.
+- [Secure Boot](docs/secure-boot.md) — the shim chain, and the fallback that works now.
 - [Architecture](docs/architecture.md) · [Tiers](docs/tiers.md) · [Road to v1](docs/remediation-plan.md)
 
 ## License

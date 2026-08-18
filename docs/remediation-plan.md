@@ -6,12 +6,15 @@ is the plan to turn what exists into a **finished v1 product** — "most of what
 need" to run AI on almost any machine, manage it like a product, and scale a box
 into a fleet.
 
-**Progress (synced against the tree 2026-08-18):** 🟢 done — F1, F2, F6, F7, F8,
-F9, F10, F11, F12, F13, F14, F15, F18 (**serving core, detection, full fleet path,
-harness surface, and a usable console complete**). 🟡 partial — F4, F16, F17. 🔴
-not started — F3, F5. Remaining are delivery/quality (Secure Boot, reproducible
-pins, updates, QEMU smoke, docs) — implementable but only fully verifiable on
-Linux/CI/hardware. Foundation (fleet brain, agents,
+**Progress (synced against the tree 2026-08-18):** 🟢 done — F1, F2, F4, F6, F7,
+F8, F9, F10, F11, F12, F13, F14, F15, F16, F17, F18 (**16/18**: serving core,
+multi-vendor detection, full fleet path, harness surface, usable console,
+reproducible-pin, CI smoke, docs). 🟡 implemented, hardware/CI-gated — F3 (Secure
+Boot: documented + fallback works; signing pipeline needs an SB machine), F5
+(update: `/api/version` + contract done; `cameo-update` wrapper + registry publish
+pending). Everything code-shaped is built, green (fmt/clippy/tests), and — where
+possible — demonstrated off-hardware; what remains needs Linux/CI/real hardware to
+verify, not more code here. Foundation (fleet brain, agents,
 supervisor, control-plane HTTP + dashboard, CI, containers passthrough,
 `cameo-install`, phase1 toolkit) is in. Detection is corroborated on silicon; the
 execution/serving flags are still unvalidated on a real GPU. Now working the
@@ -91,7 +94,7 @@ plus a `pull` **preflight** that compares free space to the model size (already
 computed in `model.rs`) and refuses with the planner's friendly oversize message.
 Reconcile the two conflicting defaults.
 
-**F3 · Secure Boot support** 🔴 *(caused tonight's "won't boot → Mint")*
+**F3 · Secure Boot support** 🟡 *(documented — `docs/secure-boot.md` shim+signed-chain design, MOK enrollment, and the working disable-SB fallback; the signing pipeline needs an SB machine to build+validate, so it is planned not verified)*
 Why: archiso's `systemd-boot`/`syslinux` are unsigned; with Secure Boot on, the
 firmware silently rejects the USB and falls through. Every SB-on machine is a
 non-starter without disabling firmware settings. · Fixable: yes, established
