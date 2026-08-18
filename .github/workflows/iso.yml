@@ -379,4 +379,3 @@ jobs:
             archiso/out/SHA256SUMS
           if-no-files-found: warn
           retention-days: 14
-          if-no-files-found: error
