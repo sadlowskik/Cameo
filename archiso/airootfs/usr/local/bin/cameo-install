@@ -190,9 +190,40 @@ printf '  Type the disk name (%s%s%s) to proceed: ' "$C_BOLD" "$base" "$C_OFF"
 read -r confirm
 [ "$confirm" = "$base" ] || die "confirmation did not match; aborting. Nothing was changed."
 
+# ---- network preflight (BEFORE we touch the disk) ---------------------------
+# pacstrap downloads the whole system from the Arch mirrors, so with no network
+# it fails partway — and if that happens *after* partitioning, the disk is wiped
+# with no OS on it. Prove connectivity first, and refuse (having changed nothing)
+# with guidance if it is missing. This is the single most common install failure
+# on a laptop with no ethernet: wifi is simply not associated yet.
+say "Checking network"
+reach() { curl -fsS --max-time 10 -o /dev/null "$1" 2>/dev/null; }
+if ! reach https://geo.mirror.pkgbuild.com/ && ! reach https://archlinux.org/ \
+   && ! reach https://mirror.rackspace.com/archlinux/; then
+  echo
+  warn "No internet connection — pacstrap cannot download the system."
+  info "Nothing has been changed on ${TARGET}. Connect a network, then re-run."
+  info "  Wired:  plug in ethernet (DHCP is automatic)."
+  info "  Wi-Fi:  ${C_BOLD}iwctl${C_OFF} → 'station wlan0 get-networks' →"
+  info "          'station wlan0 connect <SSID>'  (then re-run cameo-install --commit)."
+  info "  Verify: ${C_BOLD}ping -c1 archlinux.org${C_OFF}"
+  die "network required."
+fi
+info "Network OK."
+
 # ---- partition + format -----------------------------------------------------
 say "Partitioning $TARGET"
-wipefs -a "$TARGET"
+# Release the target before wiping it: a live environment (or a previous install)
+# may have auto-mounted its partitions or activated swap on them, which makes
+# `wipefs` fail with "Device or resource busy". Unmount every partition, disable
+# any swap, let udev settle, then force the wipe.
+while read -r part; do
+  [ -n "$part" ] || continue
+  swapoff "$part" 2>/dev/null || true
+  umount -f "$part" 2>/dev/null || true
+done < <(lsblk -lnpo NAME "$TARGET" | tail -n +2)
+udevadm settle 2>/dev/null || true
+wipefs -af "$TARGET"
 sgdisk --zap-all "$TARGET"
 if [ "$FIRMWARE" = "uefi" ]; then
   sgdisk -n1:0:+512M -t1:ef00 -c1:EFI "$TARGET"
