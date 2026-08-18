@@ -192,11 +192,7 @@ fn route_v1(state: &Arc<AppState>, req: &Request, rest: &[&str]) -> Response {
 fn gateway_proxy(state: &Arc<AppState>, req: &Request) -> Response {
     let model = serde_json::from_slice::<Value>(&req.body)
         .ok()
-        .and_then(|v| {
-            v.get("model")
-                .and_then(Value::as_str)
-                .map(str::to_string)
-        });
+        .and_then(|v| v.get("model").and_then(Value::as_str).map(str::to_string));
     let Some(model) = model else {
         return Response::error(400, "request body must be JSON with a \"model\" field");
     };

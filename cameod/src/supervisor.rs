@@ -93,7 +93,10 @@ fn admit(budget: u64, need: u64, residents: &mut [ResidentVram]) -> Admission {
     if need > budget {
         return Admission::Refuse;
     }
-    let used: u64 = residents.iter().map(|r| r.vram_bytes).fold(0, u64::saturating_add);
+    let used: u64 = residents
+        .iter()
+        .map(|r| r.vram_bytes)
+        .fold(0, u64::saturating_add);
     if used.saturating_add(need) <= budget {
         return Admission::Admit;
     }
@@ -480,7 +483,9 @@ impl Supervisor {
         out.push_str("# HELP cameo_endpoint_restarts_total Auto-restarts since creation.\n");
         out.push_str("# TYPE cameo_endpoint_restarts_total counter\n");
         out.push_str(&restarts);
-        out.push_str("# HELP cameo_endpoint_uptime_seconds Seconds since the current process started.\n");
+        out.push_str(
+            "# HELP cameo_endpoint_uptime_seconds Seconds since the current process started.\n",
+        );
         out.push_str("# TYPE cameo_endpoint_uptime_seconds gauge\n");
         out.push_str(&uptime);
         out.push_str("# HELP cameo_endpoint_vram_bytes Estimated VRAM the endpoint holds.\n");
@@ -656,7 +661,9 @@ mod tests {
         assert!(m.contains("cameo_up 1"));
         assert!(m.contains("cameo_endpoints 1"));
         // The endpoint sample carries its identifying labels.
-        assert!(m.contains(r#"cameo_endpoint_up{id="tinyllama-8080",model="tinyllama",port="8080""#));
+        assert!(
+            m.contains(r#"cameo_endpoint_up{id="tinyllama-8080",model="tinyllama",port="8080""#)
+        );
         assert!(m.contains(r#"cameo_endpoint_restarts_total{id="tinyllama-8080"} 0"#));
     }
 

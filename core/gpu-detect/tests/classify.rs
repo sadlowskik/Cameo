@@ -3,22 +3,35 @@
 //! Fixtures are illustrative captures; the first real Phase 1 run replaces them
 //! with ground truth from actual hardware.
 
-use cameo_gpu_detect::{classify, parse, GpuInfo, OverrideDb, Tier};
+use cameo_gpu_detect::{classify, parse, GpuInfo, OverrideDb, Tier, Vendor};
 
 #[test]
 fn rx6700xt_pipeline_yields_tier2() {
     let lspci = include_str!("fixtures/lspci_rx6700xt.txt");
     let rocminfo = include_str!("fixtures/rocminfo_gfx1030.txt");
 
-    let mut gpus = parse::parse_lspci(lspci);
+    let gpus = parse::parse_lspci(lspci);
+    // The fixture is an AMD dGPU + Intel iGPU box: both are detected now (F6).
     assert_eq!(
         gpus.len(),
-        1,
-        "should detect exactly one AMD display device"
+        2,
+        "the AMD dGPU and the Intel iGPU are both detected"
     );
 
-    let mut gpu = gpus.remove(0);
-    assert_eq!(gpu.pci_id, "1002:73df");
+    // The Intel iGPU has no ROCm path, so it classifies as a Vulkan target.
+    let intel = gpus
+        .iter()
+        .find(|g| g.vendor == Vendor::Intel)
+        .cloned()
+        .expect("intel igpu detected");
+    assert_eq!(classify(intel, &OverrideDb::embedded()).tier, Tier::Tier3);
+
+    // The AMD card drives the ROCm tiering pipeline.
+    let mut gpu = gpus
+        .into_iter()
+        .find(|g| g.pci_id == "1002:73df")
+        .expect("amd dgpu detected");
+    assert_eq!(gpu.vendor, Vendor::Amd);
     assert!(
         gpu.model.contains("Radeon RX 6700 XT"),
         "model was {:?}",

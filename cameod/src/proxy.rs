@@ -129,11 +129,8 @@ fn dechunk(mut data: &[u8]) -> Vec<u8> {
     while let Some(nl) = find_subslice(data, b"\r\n") {
         let size_line = String::from_utf8_lossy(&data[..nl]);
         // A chunk size may carry `;ext` extensions; the size is the hex before it.
-        let size = usize::from_str_radix(
-            size_line.split(';').next().unwrap_or("").trim(),
-            16,
-        )
-        .unwrap_or(0);
+        let size = usize::from_str_radix(size_line.split(';').next().unwrap_or("").trim(), 16)
+            .unwrap_or(0);
         data = &data[nl + 2..];
         if size == 0 {
             break;

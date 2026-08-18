@@ -1,6 +1,6 @@
 //! Pure parsers: text in, [`GpuInfo`] fields out. No I/O, testable anywhere.
 
-use crate::types::{GpuInfo, MemoryKind};
+use crate::types::{GpuInfo, MemoryKind, Vendor};
 use regex::Regex;
 use std::sync::OnceLock;
 
@@ -71,10 +71,14 @@ pub fn normalize_pci_addr(addr: &str) -> Option<String> {
     ))
 }
 
-/// Parse `lspci -nn` output into one [`GpuInfo`] per AMD display device.
+/// Parse `lspci -nn` output into one [`GpuInfo`] per display device from a known
+/// GPU vendor (AMD `1002`, NVIDIA `10de`, Intel `8086`).
 ///
-/// Only VGA / display / 3D-controller lines with AMD vendor id `1002` are kept,
-/// so the HDMI audio function that shares the card is ignored.
+/// Only VGA / display / 3D-controller lines are kept, and within a line the
+/// bracketed id chosen is the one whose vendor is a GPU vendor — so the HDMI audio
+/// function that shares the card (a different device id) is ignored, and non-GPU
+/// display devices are skipped. The [`Vendor`] is recorded so the classifier can
+/// route AMD to ROCm tiering and everyone else to the Vulkan path (F6).
 pub fn parse_lspci(output: &str) -> Vec<GpuInfo> {
     let mut gpus = Vec::new();
     for line in output.lines() {
@@ -85,10 +89,10 @@ pub fn parse_lspci(output: &str) -> Vec<GpuInfo> {
         if !is_display {
             continue;
         }
-        // The AMD device is the bracketed id whose vendor is 1002.
+        // The GPU is the bracketed id whose vendor is a known GPU vendor.
         let Some(cap) = pci_id_re()
             .captures_iter(line)
-            .find(|c| c[1].eq_ignore_ascii_case("1002"))
+            .find(|c| Vendor::from_pci_id(&c[1]).is_known_gpu())
         else {
             continue;
         };
@@ -101,16 +105,32 @@ pub fn parse_lspci(output: &str) -> Vec<GpuInfo> {
     gpus
 }
 
-/// Extract a readable model name from an `lspci` line: the text between the
-/// `[AMD/ATI]` vendor marker and the trailing `[1002:xxxx]` id.
+/// Extract a readable model name from an `lspci` line: the device description
+/// between the class bracket (`[0300]:`) and the trailing `[vendor:device]` id,
+/// with the vendor's company name stripped so what remains is just the device.
+///
+/// Working on the original string (never a `to_lowercase()` copy) and cutting at
+/// a regex match keeps this safe on non-ASCII input, where lowercasing can change
+/// byte length and push an offset off a char boundary — a past panic.
 fn extract_model(line: &str) -> Option<String> {
-    let after = line.split("[AMD/ATI]").nth(1)?;
-    // The AMD vendor id marker "[1002:" is pure ASCII, so search the original
-    // string directly. Slicing by an offset found in a `to_lowercase()` copy is a
-    // panic waiting to happen on non-ASCII input, where lowercasing can change the
-    // byte length and push the offset off a char boundary.
-    let end = after.find("[1002:").unwrap_or(after.len());
-    let model = after.get(..end)?.trim();
+    let after_class = line.split_once("]:").map(|(_, r)| r).unwrap_or(line);
+    let end = pci_id_re()
+        .find(after_class)
+        .map(|m| m.start())
+        .unwrap_or(after_class.len());
+    let mut model = after_class.get(..end)?.trim();
+    // Longest-first so "…Inc. [AMD/ATI]" wins over the bare "…Inc.".
+    for prefix in [
+        "Advanced Micro Devices, Inc. [AMD/ATI]",
+        "Advanced Micro Devices, Inc.",
+        "NVIDIA Corporation",
+        "Intel Corporation",
+    ] {
+        if let Some(rest) = model.strip_prefix(prefix) {
+            model = rest.trim_start();
+            break;
+        }
+    }
     if model.is_empty() {
         None
     } else {
@@ -358,8 +378,25 @@ mod tests {
     }
 
     #[test]
-    fn skips_non_amd_display() {
-        let txt = "01:00.0 VGA compatible controller [0300]: NVIDIA Corporation GA104 [1de:2484] (rev a1)";
+    fn detects_nvidia_and_intel_as_vulkan_targets() {
+        let txt = "\
+01:00.0 VGA compatible controller [0300]: NVIDIA Corporation GA104 [GeForce RTX 3070] [10de:2484] (rev a1)
+00:02.0 VGA compatible controller [0300]: Intel Corporation Alder Lake-P GT2 [Iris Xe Graphics] [8086:46a6]";
+        let gpus = parse_lspci(txt);
+        assert_eq!(gpus.len(), 2);
+        assert_eq!(gpus[0].vendor, Vendor::Nvidia);
+        assert_eq!(gpus[0].pci_id, "10de:2484");
+        assert!(gpus[0].model.contains("GeForce RTX 3070"));
+        assert!(!gpus[0].model.contains("NVIDIA Corporation"));
+        assert_eq!(gpus[1].vendor, Vendor::Intel);
+        assert!(gpus[1].model.contains("Iris Xe"));
+    }
+
+    #[test]
+    fn a_truly_unknown_vendor_display_is_skipped() {
+        // A display device from a non-GPU vendor (e.g. a management/VGA chip) has
+        // no GPU-vendor id, so nothing is kept.
+        let txt = "01:00.0 VGA compatible controller [0300]: Some Vendor XYZ [abcd:0001]";
         assert!(parse_lspci(txt).is_empty());
     }
 

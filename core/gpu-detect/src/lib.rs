@@ -30,4 +30,4 @@ pub use hostmem::{parse_meminfo, HostMemory};
 pub use memfacts::{apply_gpu_memory, parse_gpu_memory};
 pub use overrides::OverrideDb;
 pub use topology::{Link, LinkKind, Topology};
-pub use types::{GpuInfo, MemoryKind, Tier, TierAssessment};
+pub use types::{GpuInfo, MemoryKind, Tier, TierAssessment, Vendor};

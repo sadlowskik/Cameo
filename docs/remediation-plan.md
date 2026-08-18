@@ -6,9 +6,9 @@ is the plan to turn what exists into a **finished v1 product** — "most of what
 need" to run AI on almost any machine, manage it like a product, and scale a box
 into a fleet.
 
-**Progress (synced against the tree 2026-08-18):** 🟢 done — F1, F2, F7, F8, F9,
-F10, F11, F12 (**Phase B serving core complete**). 🟡 partial — F4, F13, F16, F17,
-F18. 🔴 not started — F3, F5, F6, F14, F15. Foundation (fleet brain, agents,
+**Progress (synced against the tree 2026-08-18):** 🟢 done — F1, F2, F6, F7, F8,
+F9, F10, F11, F12 (**Phase B serving core + Phase C detection complete**). 🟡
+partial — F4, F13, F16, F17, F18. 🔴 not started — F3, F5, F14, F15. Foundation (fleet brain, agents,
 supervisor, control-plane HTTP + dashboard, CI, containers passthrough,
 `cameo-install`, phase1 toolkit) is in. Detection is corroborated on silicon; the
 execution/serving flags are still unvalidated on a real GPU. Now working the
@@ -117,7 +117,7 @@ console can flag "update available".
 
 ### Area 2 — Hardware breadth
 
-**F6 · Multi-vendor detection + backends** 🔴 *(your stated #1 hardware goal)*
+**F6 · Multi-vendor detection + backends** 🟢 *(detection done — NVIDIA `10de` + Intel `8086` recognized and routed to the Vulkan path; per-vendor CUDA accel stays container-first)*
 Why: whole stack is AMD-only (one non-AMD mention in the tree); NVIDIA/Intel get
 "no AMD GPU detected". · Fixable: yes, layered; `gpu-detect` is cleanly
 structured and unit-testable with fixtures, **no hardware needed**. · Compat:

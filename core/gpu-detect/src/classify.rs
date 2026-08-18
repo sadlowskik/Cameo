@@ -2,7 +2,7 @@
 
 use crate::overrides::OverrideDb;
 use crate::topology::Topology;
-use crate::types::{GpuInfo, Tier, TierAssessment};
+use crate::types::{GpuInfo, Tier, TierAssessment, Vendor};
 
 /// Classify every GPU in a [`Topology`], preserving card order.
 pub fn classify_topology(topo: &Topology, db: &OverrideDb) -> Vec<TierAssessment> {
@@ -23,6 +23,33 @@ pub fn classify_topology(topo: &Topology, db: &OverrideDb) -> Vec<TierAssessment
 /// The conservative default matters: Cameo never silently claims a ROCm path it
 /// hasn't been told works. The user can always override in config.
 pub fn classify(gpu: GpuInfo, db: &OverrideDb) -> TierAssessment {
+    // Non-AMD GPUs have no ROCm path: Cameo runs them on the Vulkan universal
+    // backend (Tier 3-equivalent, inference-only). Recognising them by vendor
+    // makes an NVIDIA/Intel box a first-class Vulkan target rather than a "no GPU
+    // detected" failure (F6). Per-vendor acceleration (CUDA) is a container-first
+    // future; the bare-metal/ISO path stays AMD-validated.
+    if gpu.vendor != Vendor::Amd {
+        let rationale = match gpu.vendor {
+            Vendor::Nvidia => "NVIDIA GPU: running on the Vulkan universal backend \
+                 (no CUDA acceleration configured). Inference only; ROCm training is AMD-only."
+                .to_string(),
+            Vendor::Intel => "Intel GPU: running on the Vulkan universal backend. \
+                 Inference only."
+                .to_string(),
+            _ => format!(
+                "{} GPU: running on the Vulkan universal backend. Inference only.",
+                gpu.vendor.label()
+            ),
+        };
+        return TierAssessment {
+            tier: Tier::Tier3,
+            hsa_override: None,
+            training_supported: false,
+            rationale,
+            gpu,
+        };
+    }
+
     let Some(arch) = gpu.gfx_arch.clone() else {
         return TierAssessment {
             tier: Tier::Tier3,
