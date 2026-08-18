@@ -7,9 +7,9 @@ need" to run AI on almost any machine, manage it like a product, and scale a box
 into a fleet.
 
 **Progress (synced against the tree 2026-08-18):** 🟢 done — F1, F2, F6, F7, F8,
-F9, F10, F11, F12, F13 (**Phase B serving core, Phase C detection, and the fleet
-node/controller complete**). 🟡 partial — F4, F16, F17, F18. 🔴 not started — F3,
-F5, F14, F15. Foundation (fleet brain, agents,
+F9, F10, F11, F12, F13, F15 (**serving core, detection, fleet node/controller, and
+the harness surface complete**). 🟡 partial — F4, F16, F17, F18. 🔴 not started —
+F3, F5, F14. Foundation (fleet brain, agents,
 supervisor, control-plane HTTP + dashboard, CI, containers passthrough,
 `cameo-install`, phase1 toolkit) is in. Detection is corroborated on silicon; the
 execution/serving flags are still unvalidated on a real GPU. Now working the
@@ -211,7 +211,7 @@ already refuses to shard there — keep that). · **Best-of-both:** wire
 
 ### Area 5 — Platform hook (the north-star bridge)
 
-**F15 · Harness (Knossos) integration surface** 🟡
+**F15 · Harness (Knossos) integration surface** 🟢 *(done — `GET /api/engines` safe discovery surface + `docs/harness-integration.md` worked example; secret-bearing resolver stays server-side)*
 Why: `agents.rs` is literally built to point a harness's "engine slot" at Cameo-
 served compute, but there's no exposed, documented API + example to actually do
 it — the bridge to the AI-native-platform ambition is latent. · Fixable: yes,

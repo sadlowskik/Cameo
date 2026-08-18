@@ -241,6 +241,7 @@ fn route_api(state: &Arc<AppState>, req: &Request, rest: &[&str]) -> Response {
     match (req.method.as_str(), rest) {
         ("GET", ["gpus"]) => api_gpus(state),
         ("GET", ["node"]) => api_node(state),
+        ("GET", ["engines"]) => api_engines(state),
         ("GET", ["models"]) => api_models(),
         ("POST", ["plan"]) => api_plan(state, req),
         ("GET", ["servers"]) => Response::json(200, &json!({ "servers": state.sup.list() })),
@@ -371,6 +372,24 @@ fn metrics_response(state: &Arc<AppState>) -> Response {
         200,
         "text/plain; version=0.0.4; charset=utf-8",
         body.into_bytes(),
+    )
+}
+
+/// `GET /api/engines` (F15): the harness-facing engine descriptor. A harness
+/// (Knossos) points its engine slot at this box by combining the host it queried
+/// with `openai_base_path` and one of `models`, presenting the serve key when
+/// `auth_required`. This is deliberately the *non-secret* surface: the full
+/// agent-binding resolver (`agents::resolve_agents`) carries serve keys and stays
+/// server-side, consumed by the `cameo fleet` controller — never serialized here.
+fn api_engines(state: &Arc<AppState>) -> Response {
+    Response::json(
+        200,
+        &json!({
+            "node": node_name(),
+            "openai_base_path": "/v1",
+            "auth_required": state.settings.serve_api_key.is_some(),
+            "models": state.sup.served_models(),
+        }),
     )
 }
 
