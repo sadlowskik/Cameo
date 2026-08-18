@@ -62,6 +62,26 @@ rm -rf "$BUILD/work" "$BUILD/out"
 
 # 1. Pull the baseline boot files the Cameo profile intentionally doesn't vendor.
 [ -f "$BUILD/pacman.conf" ] || cp "$RELENG/pacman.conf" "$BUILD/"
+
+# 1·pin. Reproducibility (F4): when CAMEO_ARCH_SNAPSHOT is a YYYY/MM/DD date, pin
+# the *build* package source to the Arch Linux Archive snapshot for that day, so
+# the same commit + snapshot produces the same packages. Arch is rolling, so this
+# is the only way a build is truly reproducible. Unset (the default) keeps the
+# live mirrors and the previous behaviour. The same snapshot value pins the
+# container image (see containers/Containerfile), so ISO and container stay in
+# lockstep.
+if [ -n "${CAMEO_ARCH_SNAPSHOT:-}" ]; then
+  case "$CAMEO_ARCH_SNAPSHOT" in
+    [0-9][0-9][0-9][0-9]/[0-9][0-9]/[0-9][0-9]) : ;;
+    *) die "CAMEO_ARCH_SNAPSHOT must be YYYY/MM/DD (got '$CAMEO_ARCH_SNAPSHOT')." ;;
+  esac
+  ARCHIVE="https://archive.archlinux.org/repos/${CAMEO_ARCH_SNAPSHOT}"
+  printf 'Server=%s/$repo/os/$arch\n' "$ARCHIVE" > "$BUILD/mirrorlist.pinned"
+  # Point the build's pacman at the pinned mirrorlist instead of the rolling one.
+  sed -i 's#^Include = /etc/pacman.d/mirrorlist#Include = '"$BUILD"'/mirrorlist.pinned#' \
+    "$BUILD/pacman.conf" 2>/dev/null || true
+  log "Reproducible build: packages pinned to Arch archive ${CAMEO_ARCH_SNAPSHOT}"
+fi
 for d in efiboot syslinux grub; do
   [ -e "$BUILD/$d" ] || cp -r "$RELENG/$d" "$BUILD/" 2>/dev/null || true
 done

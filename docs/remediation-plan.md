@@ -101,7 +101,7 @@ BIOS path. · **Best-of-both:** ship the **`shim` + signed `systemd-boot`** chai
 document the "disable SB" fallback for anyone who prefers it. Containers sidestep
 this entirely (host owns boot) — another reason container-first.
 
-**F4 · Reproducible builds** 🟡 *(finding #16)*
+**F4 · Reproducible builds** 🟢 *(commit+SOURCE_DATE_EPOCH identity + opt-in Arch archive snapshot pin `CAMEO_ARCH_SNAPSHOT` / `--build-arg SNAPSHOT`, ISO+container in lockstep; base-image digest pin + a CI build to confirm remain)*
 Why: ISO label/version derive from build date, so the same source ≠ the same
 image; hard to verify or roll back. · Fixable: yes. · Compat: Arch is rolling —
 needs a pinned package snapshot to be truly reproducible. · **Best-of-both:**
@@ -109,7 +109,7 @@ drive identity from the **commit + `SOURCE_DATE_EPOCH`** (already the intended
 path in `profiledef.sh`) and pin an Arch archive snapshot; publish a checksum
 manifest. Same snapshot pin serves F1's container.
 
-**F5 · Update mechanism** 🔴
+**F5 · Update mechanism** 🟡 *(daemon `GET /api/version` + `docs/updating.md` per-delivery contract done; the `cameo-update` wrapper + registry publish are delivery-layer follow-ons)*
 Why: no story for updating an installed Cameo or a running container; a product
 that can't update safely isn't finished. · Fixable: yes, per delivery. · Compat:
 must not break a serving box mid-flight; installed vs container differ. ·

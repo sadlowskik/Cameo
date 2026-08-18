@@ -18,12 +18,21 @@
 # GPU passthrough at run time is the caller's job and is vendor-specific — for
 # AMD: --device /dev/kfd --device /dev/dri (see core/containers for the recipe).
 #
-# NOTE (F4, reproducibility): this pulls current Arch packages. Pinning an Arch
-# archive snapshot + a base image digest is a deliberate Phase-D follow-up.
+# Reproducibility (F4): pass --build-arg SNAPSHOT=YYYY/MM/DD to pin packages to the
+# Arch Linux Archive snapshot for that day (the same value as build-iso.sh's
+# CAMEO_ARCH_SNAPSHOT, so ISO and container stay in lockstep). Empty (the default)
+# tracks rolling Arch. Pinning the `archlinux` base-image *digest* per release is
+# the remaining half; do it at publish time.
+ARG SNAPSHOT=
 
 # ---- Builder: compile cameo (CLI) + cameod (daemon) on Arch, so the binaries
 #      link the same glibc the runtime stage ships. ----
 FROM docker.io/library/archlinux:base-devel AS builder
+ARG SNAPSHOT
+RUN if [ -n "$SNAPSHOT" ]; then \
+      printf 'Server=https://archive.archlinux.org/repos/%s/$repo/os/$arch\n' "$SNAPSHOT" \
+        > /etc/pacman.d/mirrorlist; \
+    fi
 RUN pacman -Syu --noconfirm --needed rust
 WORKDIR /src
 COPY . .
@@ -32,6 +41,11 @@ RUN cargo build --release --bin cameo --bin cameod
 # ---- Runtime: the shipped serving image. ----
 FROM docker.io/library/archlinux:latest AS runtime
 ARG EDITION=vulkan
+ARG SNAPSHOT
+RUN if [ -n "$SNAPSHOT" ]; then \
+      printf 'Server=https://archive.archlinux.org/repos/%s/$repo/os/$arch\n' "$SNAPSHOT" \
+        > /etc/pacman.d/mirrorlist; \
+    fi
 LABEL org.opencontainers.image.title="Cameo" \
       org.opencontainers.image.description="Portable LLM serving daemon — Vulkan-universal, AMD-accelerated." \
       org.opencontainers.image.source="https://github.com/korbin/cameo"
