@@ -1,0 +1,7 @@
+# Keep the build context small: the Containerfile only needs the source tree.
+.git/
+target/
+build/
+archiso/out/
+**/*.iso
+**/*.rs.bk

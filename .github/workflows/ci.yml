@@ -28,4 +28,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: ShellCheck scripts
-        run: shellcheck scripts/*.sh scripts/phase1/*.sh
+        run: shellcheck scripts/*.sh scripts/phase1/*.sh containers/*.sh
+
+  # Build the Vulkan container image (F1) and smoke it: the binaries must run and
+  # the serving dependencies must be present. Real GPU/serving is a Phase-1
+  # hardware step; here we prove the image assembles and links.
+  container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the Vulkan image
+        run: docker build -f containers/Containerfile -t cameo:vulkan .
+      - name: Smoke — binaries run and serving deps are present
+        run: |
+          docker run --rm cameo:vulkan cameo pull --list
+          docker run --rm cameo:vulkan cameod --help
+          docker run --rm cameo:vulkan sh -c 'command -v llama-server && command -v vulkaninfo'

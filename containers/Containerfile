@@ -1,0 +1,66 @@
+# syntax=docker/dockerfile:1
+#
+# Cameo container image — the portable, hardware-agnostic serving daemon (F1).
+#
+# One file, two variants:
+#   * EDITION=vulkan (default) — the universal base. llama.cpp's Vulkan backend
+#     runs on any GPU (AMD/NVIDIA/Intel) that exposes an ICD to the container,
+#     and falls back to CPU. This is the "runs anywhere" artifact.
+#   * EDITION=rocm — adds the ROCm/HIP accelerator for AMD Tier 1/2 cards.
+#
+# Build from the repo root:
+#   podman build -f containers/Containerfile -t cameo:vulkan .
+#   podman build -f containers/Containerfile --build-arg EDITION=rocm -t cameo:rocm .
+#
+# Run (console reachable + auto-keyed; the entrypoint prints the bearer key):
+#   podman run --rm -p 9090:9090 -v cameo-models:/var/lib/cameo/models cameo:vulkan
+#
+# GPU passthrough at run time is the caller's job and is vendor-specific — for
+# AMD: --device /dev/kfd --device /dev/dri (see core/containers for the recipe).
+#
+# NOTE (F4, reproducibility): this pulls current Arch packages. Pinning an Arch
+# archive snapshot + a base image digest is a deliberate Phase-D follow-up.
+
+# ---- Builder: compile cameo (CLI) + cameod (daemon) on Arch, so the binaries
+#      link the same glibc the runtime stage ships. ----
+FROM docker.io/library/archlinux:base-devel AS builder
+RUN pacman -Syu --noconfirm --needed rust
+WORKDIR /src
+COPY . .
+RUN cargo build --release --bin cameo --bin cameod
+
+# ---- Runtime: the shipped serving image. ----
+FROM docker.io/library/archlinux:latest AS runtime
+ARG EDITION=vulkan
+LABEL org.opencontainers.image.title="Cameo" \
+      org.opencontainers.image.description="Portable LLM serving daemon — Vulkan-universal, AMD-accelerated." \
+      org.opencontainers.image.source="https://github.com/korbin/cameo"
+
+# Universal Vulkan serving baseline; the ROCm accelerator is layered only for the
+# rocm edition. `curl` is what cameo_models shells out to for pulls.
+RUN pacman -Syu --noconfirm --needed \
+      mesa vulkan-icd-loader vulkan-radeon vulkan-tools \
+      llama-cpp ggml-vulkan \
+      curl ca-certificates \
+ && if [ "$EDITION" = "rocm" ]; then \
+      pacman -S --noconfirm --needed rocm-hip-runtime rocminfo ggml-hip; \
+    fi \
+ && pacman -Scc --noconfirm \
+ && rm -rf /var/cache/pacman/pkg/*
+
+COPY --from=builder /src/target/release/cameo  /usr/local/bin/cameo
+COPY --from=builder /src/target/release/cameod /usr/local/bin/cameod
+COPY containers/entrypoint.sh /usr/local/bin/cameo-entrypoint
+RUN chmod +x /usr/local/bin/cameo-entrypoint \
+ && install -d -m 0755 /var/lib/cameo/models
+
+# Models persist on a mounted volume; the path matches cameo_config and
+# cameo_models::models_dir (F2), so `cameo pull` inside the container lands here.
+ENV CAMEO_MODELS_DIR=/var/lib/cameo/models
+VOLUME /var/lib/cameo/models
+
+# 9090: the control-plane console (auto-keyed by the entrypoint).
+# 8080: llama-server's OpenAI-compatible port, once a model is served.
+EXPOSE 9090 8080
+
+ENTRYPOINT ["/usr/local/bin/cameo-entrypoint"]
