@@ -23,7 +23,7 @@ A bootable Arch respin that turns any AMD box into a **GPU-aware home console**:
 ## Verified (on any OS, including the Windows dev box)
 
 - `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -D warnings`,
-  `cargo test --workspace` — **all green, 110 tests**.
+  `cargo test --workspace` — **all green, 159 tests**.
 - The daemon was driven end-to-end in a browser against the APU+dGPU fixture:
   GPU/tier report, plan preview, and the full endpoint lifecycle (start → list →
   stop). On a non-Linux host the final spawn reports "Linux only" — correct; on
@@ -43,11 +43,17 @@ Windows/macOS box.
    sudo ./scripts/build-iso.sh                     # full (ROCm + Vulkan)
    sudo CAMEO_EDITION=lite ./scripts/build-iso.sh  # Vulkan-only, small
    ```
-   The `cameod` binary and its two units are staged into the airootfs by the same
+   The `cameod` binary and its units are staged into the airootfs by the same
    pipeline that already produced a booting image with the CLI, so this is a
    low-risk extension of a known-good build — but it has not been re-run since
    these changes, so **run it and confirm the ISO builds and boots before
-   shipping.**
+   shipping.** In particular, this round added boot-surface changes that only a
+   real `mkarchiso` build + boot can confirm: the new `cameo-storage-init` and
+   `cameo-installer` units, and the **"Install Cameo to disk" boot entry** that
+   `build-iso.sh` clones into systemd-boot/syslinux/GRUB (the cloning logic was
+   validated against releng-style fixtures, but the live entries were not). Boot
+   the built ISO, pick that entry, and confirm the guided installer starts on
+   tty1.
 
 2. **Phase 1 hardware validation** (`scripts/phase1/` on a real AMD box). Until
    `known-good-combo.json` exists, these remain *starting points*, not validated
@@ -70,8 +76,14 @@ project's own plan requires before Phase 2 backend work.
 - **No local desktop/browser.** The image is a headless appliance administered
   remotely (the Proxmox model). A local desktop environment is a deliberate,
   separate size/scope decision, not shipped here.
-- **Live ISO, no persistence.** Accounts, models, and config do not survive a
-  reboot yet; install-to-disk is the next OS-level increment.
+- **Install to disk is shipped.** A boot-menu "Install Cameo to disk" entry runs
+  the guided installer (`cameo-install`): it partitions, pacstraps the tier-aware
+  stack, installs GRUB (UEFI/BIOS), creates the admin account, and writes a
+  persistent console key. After install, accounts/models/config persist normally.
+- **Live-medium persistence.** On the *live USB* the model cache is a RAM overlay
+  by default; `cameo-persist-cache` points it at a `CAMEO_DATA` disk that
+  `cameo-storage-init` remounts each boot. Accounts/config on a pure live boot
+  still reset (that is what install-to-disk is for).
 - **Containers/Kubernetes console is not built.** The AMD GPU-passthrough recipe
   exists and is tested (`core/containers`), but the Podman/k3s adapters and their
   dashboard tabs — the wider "manage all your deployments" vision — are the next

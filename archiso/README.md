@@ -33,7 +33,20 @@ sudo dd if=archiso/out/cameo-*.iso of=/dev/sdX bs=4M status=progress oflag=sync
   `/etc/motd` greets with the tagline and the key commands.
 - **First boot** — `cameo-firstboot.service` runs `cameo gpu-status`, so the very
   first thing you see is your GPU's support tier, in colour — followed by the
-  web-console URL.
+  web-console URL. It also reports whether the model cache is on RAM or a disk.
+- **Install to disk** — the boot menu carries an **"Install Cameo to disk"** entry
+  (every bootloader: systemd-boot, syslinux, GRUB). It boots the same kernel with
+  `cameo.install` on the command line; `cameo-installer.service` sees that marker
+  and launches the guided installer (`cameo-install-guided` → `cameo-install`) on
+  tty1. A normal live boot lacks the marker and is unaffected. You can also just
+  run `cameo-install` from any live shell.
+- **Persistent model cache** — on the live medium the cache is a RAM overlay, so
+  a pulled model is lost on reboot (and a large one can exhaust memory).
+  `cameo-persist-cache /dev/sdXN --format` prepares a disk (labelled `CAMEO_DATA`)
+  and mounts it at `/var/lib/cameo/models`, where both the daemon and the CLI look;
+  `cameo-storage-init.service` remounts that disk on every later boot, so the
+  setup is a one-time step. Never formats without `--format`, and refuses the
+  live-USB and root disks.
 - **The CLI** — `cameo` is on `PATH` in the image, wordmark and all.
 - **The console** — `cameod.service` starts the browser control plane on boot.
   `cameo-console-init` generates a random key and binds all interfaces each boot,

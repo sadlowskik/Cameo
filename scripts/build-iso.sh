@@ -176,6 +176,14 @@ ln -sf /etc/systemd/system/cameo-firstboot.service "$WANTS/cameo-firstboot.servi
 # console-init generates a key + LAN bind each boot (ordered Before cameod); the
 # operator can override either in /etc/cameo/cameod.env.
 ln -sf /etc/systemd/system/cameo-console-init.service "$WANTS/cameo-console-init.service"
+# Mounts a prepared CAMEO_DATA disk at the model-cache path before cameod starts,
+# so persistence set up via cameo-persist-cache survives reboots (F2). A no-op
+# when no such disk exists, so it is always safe to enable.
+ln -sf /etc/systemd/system/cameo-storage-init.service "$WANTS/cameo-storage-init.service"
+# The guided disk installer. Gated by ConditionKernelCommandLine=cameo.install, so
+# it activates only for the "Install Cameo to disk" boot entry and is inert on a
+# normal live boot. Enabling it here is therefore always safe.
+ln -sf /etc/systemd/system/cameo-installer.service "$WANTS/cameo-installer.service"
 ln -sf /etc/systemd/system/cameod.service "$WANTS/cameod.service"
 # networkd and resolved ship inside systemd itself, so these can never dangle.
 ln -sf /usr/lib/systemd/system/systemd-networkd.service "$WANTS/systemd-networkd.service"
@@ -186,7 +194,7 @@ ln -sf /usr/lib/systemd/system/systemd-resolved.service "$WANTS/systemd-resolved
 ln -sf /etc/systemd/system/pacman-init.service "$WANTS/pacman-init.service"
 # Wireless association. Package is in packages.x86_64, so this cannot dangle.
 ln -sf /usr/lib/systemd/system/iwd.service "$WANTS/iwd.service"
-log "Enabled cameo-firstboot, cameo-console-init, cameod, networkd, resolved, pacman-init, iwd"
+log "Enabled cameo-firstboot, cameo-console-init, cameo-storage-init, cameo-installer, cameod, networkd, resolved, pacman-init, iwd"
 
 # Clock. A laptop with a flat CMOS battery boots with a wrong time, which
 # breaks TLS on model downloads and pacman signature validity before anything
@@ -291,6 +299,80 @@ while IFS= read -r -d '' f; do
 done < <(find "$BUILD/syslinux" "$BUILD/efiboot" "$BUILD/grub" \
            -type f \( -name '*.cfg' -o -name '*.conf' \) -print0 2>/dev/null)
 log "Rebranded $branded boot config file(s)"
+
+# 1e-bis. Add an "Install Cameo to disk" boot entry to every bootloader.
+#
+# The entry boots the *same* kernel + initramfs as the live entry, but adds
+# `cameo.install` to the kernel command line. On the running system,
+# cameo-installer.service keys off that word (ConditionKernelCommandLine) and
+# launches the guided installer on tty1; a normal live boot lacks the word and is
+# unaffected. Each format is handled by CLONING the working default entry and
+# appending the marker, so this is purely additive — it never edits the live entry
+# that is known to boot, and a format that is absent is simply skipped.
+log "Adding the 'Install Cameo to disk' boot entry"
+installer_entries=0
+
+# systemd-boot (primary UEFI path): clone the first entry that has an `options`
+# line into a new .conf, retitle it, drop it to the end of the menu, and append
+# the marker to its options.
+for e in "$BUILD"/efiboot/loader/entries/*.conf; do
+  [ -e "$e" ] || continue
+  grep -q '^options ' "$e" || continue
+  new="$BUILD/efiboot/loader/entries/zz-cameo-install-$(basename "$e")"
+  [ -e "$new" ] && continue
+  sed -e 's/^\(title .*\)$/\1 — Install to disk/' \
+      -e 's/^\(sort-key\).*/\1 zz-install/' \
+      -e 's/^\(options .*\)$/\1 cameo.install/' \
+      "$e" >"$new"
+  installer_entries=$((installer_entries + 1))
+  break
+done
+
+# syslinux (BIOS path): append a new LABEL block built from the working entry's
+# own LINUX/INITRD/APPEND lines, with the marker on APPEND.
+for f in "$BUILD"/syslinux/*.cfg; do
+  [ -e "$f" ] || continue
+  grep -qE '^[[:space:]]*APPEND ' "$f" || continue
+  grep -q '^LABEL cameo_install$' "$f" && continue
+  linux_line="$(grep -m1 -E '^[[:space:]]*(LINUX|KERNEL) ' "$f" || true)"
+  initrd_line="$(grep -m1 -E '^[[:space:]]*INITRD ' "$f" || true)"
+  append_line="$(grep -m1 -E '^[[:space:]]*APPEND ' "$f" || true)"
+  sysappend_line="$(grep -m1 -E '^[[:space:]]*SYSAPPEND ' "$f" || true)"
+  [ -n "$append_line" ] || continue
+  {
+    printf '\n'
+    printf 'LABEL cameo_install\n'
+    printf 'MENU LABEL Install Cameo to disk\n'
+    [ -n "$linux_line" ] && printf '%s\n' "$linux_line"
+    [ -n "$initrd_line" ] && printf '%s\n' "$initrd_line"
+    printf '%s cameo.install\n' "$append_line"
+    [ -n "$sysappend_line" ] && printf '%s\n' "$sysappend_line"
+  } >>"$f"
+  installer_entries=$((installer_entries + 1))
+  break
+done
+
+# GRUB (secondary UEFI/loopback path): append a menuentry built from the working
+# entry's own `linux`/`initrd` lines, marker on the linux line. Additive, so no
+# brace-parsing of the existing menu is needed.
+for g in "$BUILD"/grub/grub.cfg "$BUILD"/grub/loopback.cfg; do
+  [ -f "$g" ] || continue
+  grep -q 'cameo.install' "$g" && continue
+  linux_line="$(grep -m1 -E '^[[:space:]]*linux ' "$g" || true)"
+  initrd_line="$(grep -m1 -E '^[[:space:]]*initrd ' "$g" || true)"
+  [ -n "$linux_line" ] || continue
+  {
+    printf '\n'
+    printf 'menuentry "Install Cameo to disk" {\n'
+    printf '    set gfxpayload=keep\n'
+    printf '%s cameo.install\n' "$linux_line"
+    [ -n "$initrd_line" ] && printf '%s\n' "$initrd_line"
+    printf '}\n'
+  } >>"$g"
+  installer_entries=$((installer_entries + 1))
+done
+
+log "Added $installer_entries install boot entr(ies) (systemd-boot/syslinux/grub)"
 
 # 1f. Render the Cameo mark into the syslinux menu background. releng's
 # archiso_head.cfg points MENU BACKGROUND at splash.png, so overwriting that

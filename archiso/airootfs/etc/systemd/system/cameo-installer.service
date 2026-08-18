@@ -1,0 +1,32 @@
+[Unit]
+Description=Cameo guided disk installer (boot-menu entry)
+Documentation=https://github.com/sadlowskik/Cameo
+# Fires ONLY when the kernel command line carries `cameo.install` — which only the
+# "Install Cameo to disk" boot entry adds. A normal live boot lacks it, this unit
+# is skipped, and getty@tty1 runs as usual. No network dependency on purpose: the
+# installer runs its own network preflight and guides Wi-Fi association, so a box
+# whose Wi-Fi is not yet associated still reaches the installer (rather than this
+# unit blocking forever on network-online.target).
+ConditionKernelCommandLine=cameo.install
+After=cameo-console-init.service systemd-user-sessions.service
+Conflicts=getty@tty1.service
+Before=getty@tty1.service
+
+[Service]
+# idle: wait for other startup jobs so the installer owns a quiet console.
+Type=idle
+ExecStart=/usr/local/bin/cameo-install-guided
+# Take tty1 for an interactive session.
+StandardInput=tty-force
+StandardOutput=tty
+StandardError=tty
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+Restart=no
+# When the installer session ends (installed, or the user chose a shell), hand
+# tty1 back to a normal autologin so the box is never left at a dead console.
+ExecStopPost=-/usr/bin/systemctl start getty@tty1.service
+
+[Install]
+WantedBy=multi-user.target

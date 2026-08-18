@@ -19,9 +19,21 @@ scripts shellchecked in CI; all pre-existing findings fixed), E4 (5 s detection
 cache for `/readyz` + `/metrics`). Also landed: release binaries stripped
 (storage), plain-HTTP pulls refused with guidance, `model rm` rejects
 path-shaped names, dashboard escaping made attribute-safe + CPU backend option,
-installer timezone fallback actually fires. Still open: E1 (streaming gateway),
-E2 (Phase-1 calibration — hardware-gated), E3 (live-medium data-partition
-prompt), C3 (`core/containers` consumer).
+installer timezone fallback actually fires.
+
+**Batch 5 (2026-08-18):** E1, E3, and C3 are now landed and green (fmt · clippy
+`-D warnings` · 154 tests · shellcheck across every airootfs script). E1: the
+`/v1` gateway streams — `proxy::forward_streaming` relays the upstream SSE body
+verbatim (flushing per chunk) via a new `http::Response::streaming` socket-pump
+path, taken when the request body carries `stream: true`. E3: live-medium cache
+persistence — `cameo-persist-cache` prepares a disk (labels it `CAMEO_DATA`,
+refuses the live-USB/root disks, formats only on `--format`) and mounts it at the
+canonical `/var/lib/cameo/models` so the daemon and CLI agree; `cameo-storage-init`
+(ordered before cameod) remounts it every boot; `cameo-firstboot` reports whether
+the cache is on RAM or disk. C3: `core/containers` is surfaced by
+`cameo containers run-args`, which prints the `podman`/`docker run` command for
+AMD passthrough. **Still open: E2 only** (Phase-1 calibration of constants and
+spawn flags — blocked on real hardware; the code is centralized for exactly this).
 
 ## What Cameo is (audit summary)
 
@@ -129,10 +141,12 @@ models crate uses the `CAMEO_MODELS_DIR` env, not this field. *Fix:* either dele
 the field or make `models_dir()` honor it (which would also give a config-file way
 to set the cache path, complementing A1).
 
-**C3 — `core/containers` is linked by no binary.**
-The passthrough recipe (189 loc + tests) is a library nobody consumes. *Fix:*
-surface it (a `cameo containers …` helper or doc-generation) or label it explicitly
-as a reference library so its "tested, unused" status is intentional, not drift.
+**C3 — `core/containers` is linked by no binary. — RESOLVED (2026-08-18).**
+The passthrough recipe (189 loc + tests) was a library nobody consumed. Fixed by
+surfacing it: `cameo containers run-args <image>` maps CLI flags to the pure
+`GpuPassthrough`/`RunOpts` recipe and prints the `podman`/`docker run` command
+(with `--json`), so the tested code is now reachable. Spawning a container remains
+the Linux-gated boundary the daemon owns; this helper only builds the command.
 
 ### D. Repo hygiene / CI
 
@@ -147,10 +161,12 @@ systemd units say `github.com/sadlowskik/Cameo`. Pick one.
 
 ### E. Product / roadmap gaps (acknowledged, but load-bearing)
 
-**E1 — `/v1` gateway does not stream.** The proxy buffers the whole upstream
-response (`proxy.rs`), so `stream: true` chat completions arrive as one blob at the
-end — SSE clients see nothing until completion. Roadmap-noted; needs a streaming
-passthrough path.
+**E1 — `/v1` gateway does not stream. — RESOLVED (2026-08-18).** The proxy
+buffered the whole upstream response, so `stream: true` chat completions arrived
+as one blob. Fixed: `proxy::forward_streaming` relays the upstream response
+verbatim to the client socket, flushing per chunk; the gateway takes this path
+when the request body has `stream: true`, via a new `http::Response::streaming`
+that hands the connection to a pump closure. Buffered path unchanged.
 
 **E2 — Placeholder constants and flag names are unverified.** `bits_per_weight`,
 `KV_BYTES_PER_LAYER_PER_TOKEN`, `TRAINING_FOOTPRINT_MULT`, and every llama.cpp /
@@ -158,9 +174,16 @@ PyTorch / `rpc-server` flag are best-effort placeholders pending a real Phase-1 
 (`model.rs`, `command.rs`, `net-strategy`). This is the single biggest unknown: the
 planner's numbers and the actual spawn flags could be wrong on hardware.
 
-**E3 — F2's live-medium "prompt once for a data partition" is not implemented.**
-Only `cameo-install` (to disk) handles persistence; a running live USB has no
-first-boot flow to point the cache at real storage. Related to A1.
+**E3 — F2's live-medium data-partition flow is not implemented. — RESOLVED
+(2026-08-18).** A running live USB had no way to point the cache at real storage.
+Fixed with an opt-in helper + boot-time auto-mount (first-boot is a non-interactive
+oneshot, so a literal prompt is impossible): `cameo-persist-cache /dev/sdXN
+--format` labels a disk `CAMEO_DATA` and mounts it at the canonical
+`/var/lib/cameo/models` (so daemon and CLI agree with no env drift), refusing the
+live-USB and root disks and never formatting without `--format`;
+`cameo-storage-init` (ordered before cameod) remounts that disk on every boot; and
+`cameo-firstboot` now reports whether the cache is volatile or persistent and how
+to fix it. Related to A1.
 
 **E4 — `/readyz` re-runs full detection per probe.** It shells out to
 `lspci`/`rocminfo`/`rocm-smi` on every call (`app.rs:122-128` → `detect_report`).

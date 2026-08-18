@@ -40,8 +40,24 @@ else
   echo "Web console (cameod) is not running — start it with: systemctl start cameod"
 fi
 # Only meaningful while running from the live medium: on an installed system
-# there is nothing left to install.
+# there is nothing left to install and the cache is already persistent.
 if [ -d /run/archiso ]; then
+  echo "---------------------------------------------------------"
+  # Report where pulled models land. cameo-storage-init (ordered before cameod)
+  # mounts a prepared CAMEO_DATA disk at the cache path, so by now the state is
+  # settled: a non-volatile filesystem there means persistence is active.
+  cache_fs="$(findmnt -n -o FSTYPE --target /var/lib/cameo/models 2>/dev/null | tail -n1)"
+  case "$cache_fs" in
+    overlay | tmpfs | ramfs | "")
+      echo "Model cache is on RAM (nothing pulled here survives a reboot, and a"
+      echo "large model can exhaust memory). To store models on a real disk:"
+      echo "  cameo-persist-cache --list                 (show available disks)"
+      echo "  cameo-persist-cache /dev/sdXN --format     (use one — erases it)"
+      ;;
+    *)
+      echo "Model cache is on persistent storage ($cache_fs) — pulls survive reboots."
+      ;;
+  esac
   echo "---------------------------------------------------------"
   echo "Running from USB. To install Cameo to this machine's disk:"
   echo "  cameo-install            (dry run — shows the plan first)"

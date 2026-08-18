@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# Cameo storage bootstrap (F2, live medium).
+#
+# On the live ISO every writable path is a RAM overlay, so a model pulled from
+# the console lands in RAM and is lost on reboot — and, worse, can exhaust it.
+# The persistent answer is a real disk: `cameo-persist-cache` prepares one and
+# stamps it with the filesystem label CAMEO_DATA. This oneshot, ordered *before*
+# cameod, finds that disk on each boot and mounts it at the model cache path, so
+# the persistence a user set up once survives reboots without re-running anything.
+#
+# It mounts the disk directly at /var/lib/cameo/models — the path both the daemon
+# and the `cameo` CLI already resolve to (models_dir() precedence). That is why no
+# environment variable is needed and the two front ends can never drift apart: the
+# canonical directory simply is the disk.
+#
+# It is deliberately conservative: it only ever *mounts* a partition that already
+# carries our own CAMEO_DATA label, and never formats or repartitions anything. A
+# boot with no such disk is a no-op (the RAM fallback still works).
+set -euo pipefail
+
+LABEL="CAMEO_DATA"
+MODELS="/var/lib/cameo/models"
+
+# Only meaningful on the live medium. An installed system already has a real,
+# persistent /var/lib/cameo on its root filesystem; auto-mounting a labelled disk
+# over the operator's setup there would be surprising.
+if [ ! -d /run/archiso ]; then
+  exit 0
+fi
+
+# Locate a partition carrying our label. blkid prints nothing (and exits non-zero)
+# when none exists; that is the common "user has not set up a disk yet" case, not
+# an error, so it must not trip `set -e`.
+dev="$(blkid -L "$LABEL" 2>/dev/null || true)"
+if [ -z "$dev" ]; then
+  echo "cameo-storage-init: no $LABEL disk found; model cache stays on the RAM overlay."
+  echo "cameo-storage-init: run 'cameo-persist-cache' to set up persistent storage."
+  exit 0
+fi
+
+mkdir -p "$MODELS"
+# Already mounted (a re-run): trust it rather than stacking another mount.
+if mountpoint -q "$MODELS"; then
+  echo "cameo-storage-init: $MODELS already mounted; leaving it."
+  exit 0
+fi
+if ! mount "$dev" "$MODELS"; then
+  echo "cameo-storage-init: found $dev ($LABEL) but could not mount it; staying on RAM." >&2
+  exit 0
+fi
+
+echo "cameo-storage-init: model cache -> $dev ($LABEL), mounted at $MODELS."

@@ -1,0 +1,20 @@
+[Unit]
+Description=Cameo persistent model-cache mount (live medium)
+Documentation=https://github.com/sadlowskik/Cameo
+# Ordered before cameod so the cache directory is already pointed at a real disk
+# (via /run/cameo/storage.env, which the cameod unit reads) by the time the
+# daemon and its ExecStartPre create /var/lib/cameo/models. local-fs guarantees
+# blkid can see partitions.
+After=local-fs.target
+Before=cameod.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# A missing or unmountable CAMEO_DATA disk is a no-op, not a failure: the RAM
+# overlay still works, so a bad exit here must never block cameod.
+ExecStart=/usr/local/bin/cameo-storage-init
+StandardOutput=journal+console
+
+[Install]
+WantedBy=multi-user.target

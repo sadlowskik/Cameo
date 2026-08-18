@@ -332,6 +332,35 @@ jobs:
           fi
           echo "OK: no dead boot-menu entries"
 
+      - name: Verify the "Install Cameo to disk" boot entry
+        run: |
+          # build-iso.sh clones the live entry into an install entry carrying
+          # `cameo.install` on the kernel cmdline (which cameo-installer.service
+          # keys off). Assert it landed in every bootloader present, so a broken
+          # clone is caught here rather than at boot-select time. QEMU boots the
+          # default entry, so this static check is the only automated proof the
+          # install entry exists.
+          missing=0
+          for d in syslinux efiboot grub; do
+            dir="build/profile/$d"
+            [ -d "$dir" ] || continue
+            if grep -rqi 'cameo.install' "$dir" 2>/dev/null; then
+              echo "OK: $d carries the install entry"
+            else
+              echo "FAIL: $d has no 'cameo.install' entry"
+              missing=1
+            fi
+          done
+          # The installer's launcher unit must ship and be enabled, or the entry
+          # boots to a normal shell instead of the guided installer.
+          A=$(sudo find build/tmp -maxdepth 3 -type d -name airootfs | head -1)
+          sudo test -x "$A/usr/local/bin/cameo-install-guided" \
+            || { echo "FAIL: cameo-install-guided not staged"; missing=1; }
+          sudo test -L "$A/etc/systemd/system/multi-user.target.wants/cameo-installer.service" \
+            || { echo "FAIL: cameo-installer.service not enabled"; missing=1; }
+          [ "$missing" -eq 0 ] || exit 1
+          echo "OK: install entry present in all bootloaders and launcher enabled"
+
       - name: "DIAG log size and tail"
         if: always()
         run: |

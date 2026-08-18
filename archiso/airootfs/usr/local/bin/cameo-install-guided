@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# cameo-install-guided — the friendly front end for the "Install Cameo to disk"
+# boot-menu entry.
+#
+# It is launched on tty1 by cameo-installer.service, which fires only when the
+# kernel command line carries `cameo.install` (the install boot entry adds it).
+# All it does is frame the install, hand off to the real installer
+# (`cameo-install --commit` — the full interactive flow: pick a disk, set the
+# admin account, review the plan, type the disk name to confirm), and — however
+# that ends — leave the console usable rather than dead.
+#
+# You can also run it by hand from a normal live shell; it works the same way.
+set -u
+
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+  C_ACCENT=$'\033[1;38;5;209m'
+  C_BOLD=$'\033[1m'
+  C_OFF=$'\033[0m'
+else
+  C_ACCENT=""
+  C_BOLD=""
+  C_OFF=""
+fi
+
+printf '\n%s========================  Install Cameo  ========================%s\n' \
+  "$C_ACCENT" "$C_OFF"
+echo "This installs Cameo permanently onto a disk in this machine, so you boot"
+echo "from the disk and never need the USB again. A whole disk is erased — but"
+echo "nothing is touched until you pick a disk, review the plan, and type the"
+echo "disk's name to confirm."
+echo
+printf '  %sPress Enter to begin%s, or type %sshell%s for a command prompt: ' \
+  "$C_BOLD" "$C_OFF" "$C_BOLD" "$C_OFF"
+read -r answer || answer="shell"
+echo
+
+case "$answer" in
+  shell | s | SHELL)
+    echo "Skipping the installer — dropping to a shell."
+    echo "Run 'cameo-install-guided' anytime to start again."
+    exit 0
+    ;;
+esac
+
+# The real installer. It owns all the safety (dry-run-style plan, typed disk
+# confirmation, network preflight, refusing the boot device). A non-zero exit is
+# an abort or a handled error, not a crash — either way we fall through to a shell.
+if cameo-install --commit; then
+  echo
+  printf '%sCameo is installed.%s Remove the USB, then type %sreboot%s.\n' \
+    "$C_ACCENT" "$C_OFF" "$C_BOLD" "$C_OFF"
+else
+  echo
+  echo "The installer did not complete (it may have changed nothing)."
+  echo "Type 'cameo-install-guided' to try again, or 'cameo-install' to inspect."
+fi
+echo
+exit 0

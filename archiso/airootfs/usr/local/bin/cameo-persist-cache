@@ -1,0 +1,187 @@
+#!/usr/bin/env bash
+# Cameo persistent-cache setup (F2, live medium).
+#
+# On the live ISO the model cache lives on a RAM overlay: anything pulled is lost
+# on reboot and, if large, can exhaust memory. This helper points the cache at a
+# real disk instead. It is the interactive, opt-in counterpart to the boot-time
+# cameo-storage-init: you run it once, it prepares a disk (labelling it
+# CAMEO_DATA), mounts it, repoints the running daemon at it, and from then on
+# cameo-storage-init remounts that disk automatically on every boot.
+#
+# Two forms:
+#   cameo-persist-cache --list              # show candidate disks
+#   cameo-persist-cache /dev/sdX [--format] # use a whole partition/disk
+#   cameo-persist-cache --dir /some/path    # use an already-mounted directory
+#
+# Safety: it refuses the live-USB device and the running root, and it never
+# creates a filesystem unless you pass --format (which erases that device). The
+# flag is the confirmation — there is no second prompt, matching cameo-install.
+set -euo pipefail
+
+LABEL="CAMEO_DATA"
+MODELS="/var/lib/cameo/models"
+
+die() {
+  echo "cameo-persist-cache: $*" >&2
+  exit 1
+}
+
+usage() {
+  sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
+  exit "${1:-0}"
+}
+
+# Whole-disk name backing a device (or the device's own basename if it is already
+# a whole disk). Used to compare a target against the live medium / root.
+base_disk() {
+  local pk
+  pk="$(lsblk -n -o PKNAME "$1" 2>/dev/null | grep -v '^[[:space:]]*$' | head -n1 || true)"
+  if [ -n "$pk" ]; then echo "$pk"; else basename "$1"; fi
+}
+
+# Device backing the live medium and the running root, so we can refuse them.
+protected_disks() {
+  local src
+  for m in /run/archiso/bootmnt /run/archiso/cowspace /; do
+    src="$(findmnt -n -o SOURCE --target "$m" 2>/dev/null | head -n1 || true)"
+    case "$src" in
+      /dev/*) base_disk "$src" ;;
+    esac
+  done
+}
+
+list_disks() {
+  echo "Candidate storage (exclude the row backing this live USB):"
+  # ROM/loop devices are the ISO itself; never useful as a data disk.
+  lsblk -o NAME,SIZE,TYPE,FSTYPE,LABEL,MOUNTPOINT -e 7,11
+  echo
+  echo "Use one with:  cameo-persist-cache /dev/sdXN --format   (erases that device)"
+}
+
+# Mount the persistent store at the canonical /var/lib/cameo/models — the path the
+# daemon and CLI already resolve to — then restart cameod so it takes effect now.
+# Trailing args are the argv that puts real storage there (a device or a bind
+# mount). Anything already cached on the RAM overlay is staged aside first and
+# copied back onto the store, so a model pulled before setup is not left hidden
+# under the new mount.
+apply_models_dir() {
+  local dev="$1"
+  shift
+  mkdir -p "$MODELS"
+  if mountpoint -q "$MODELS"; then
+    umount "$MODELS" || die "$MODELS is already a mount and could not be released."
+  fi
+
+  local stage=""
+  if [ -n "$(find "$MODELS" -mindepth 1 2>/dev/null | head -n1)" ]; then
+    stage="$(mktemp -d)"
+    echo "Staging already-cached models before mounting..."
+    cp -a "$MODELS/." "$stage/" || die "could not stage existing models."
+  fi
+
+  "$@" || die "could not mount the persistent store at $MODELS."
+
+  if [ -n "$stage" ]; then
+    echo "Migrating staged models onto the store..."
+    cp -a "$stage/." "$MODELS/" || echo "warning: some staged models did not copy." >&2
+    rm -rf "$stage"
+  fi
+
+  echo "Model cache -> $MODELS${dev:+  (on $dev)}"
+  if systemctl restart cameod 2>/dev/null; then
+    echo "Restarted cameod; it now reads and writes models here."
+  else
+    echo "Note: cameod is not running under systemd here; it will use this path on next start."
+  fi
+  if [ -n "$dev" ]; then
+    echo "Persistent across reboots: cameo-storage-init remounts the $LABEL disk on boot."
+  fi
+}
+
+use_directory() {
+  local path="$1"
+  [ -d "$path" ] || die "'$path' is not a directory."
+  # Refuse a volatile filesystem — the whole point is to leave the RAM overlay.
+  local fstype
+  fstype="$(findmnt -n -o FSTYPE --target "$path" 2>/dev/null | head -n1 || true)"
+  case "$fstype" in
+    overlay | tmpfs | ramfs | "")
+      die "'$path' is on a volatile filesystem ($fstype); pick a path on a real disk."
+      ;;
+  esac
+  [ -w "$path" ] || die "'$path' is not writable."
+  local dest="$path/cameo-models"
+  mkdir -p "$dest"
+  # A directory has no CAMEO_DATA label for boot-time auto-mount, so this binding
+  # lasts only for the session; note that to the user via the empty dev argument.
+  apply_models_dir "" mount --bind "$dest" "$MODELS"
+  echo "Note: a --dir store is not auto-remounted on reboot (no $LABEL disk label)."
+  echo "      Re-run this after reboot, or prepare a disk with --format for persistence."
+}
+
+use_device() {
+  local dev="$1" do_format="$2"
+  [ -b "$dev" ] || die "'$dev' is not a block device. Try: cameo-persist-cache --list"
+
+  local target_disk protected
+  target_disk="$(base_disk "$dev")"
+  protected="$(protected_disks)"
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    if [ "$p" = "$target_disk" ]; then
+      die "'$dev' is on disk /dev/$p, which backs the live USB or the running system. Refusing."
+    fi
+  done <<<"$protected"
+
+  # Never write to a device that is currently mounted.
+  if findmnt -n -S "$dev" >/dev/null 2>&1; then
+    die "'$dev' is currently mounted. Unmount it first."
+  fi
+
+  local existing
+  existing="$(blkid -o value -s LABEL "$dev" 2>/dev/null || true)"
+
+  if [ "$do_format" = "yes" ]; then
+    echo "Formatting $dev as ext4 (label $LABEL) — this ERASES everything on $dev."
+    mkfs.ext4 -q -F -L "$LABEL" "$dev" || die "mkfs.ext4 failed on $dev."
+  elif [ "$existing" = "$LABEL" ]; then
+    echo "$dev already carries the $LABEL label; mounting it as-is."
+  else
+    local fstype
+    fstype="$(blkid -o value -s TYPE "$dev" 2>/dev/null || true)"
+    if [ -z "$fstype" ]; then
+      die "$dev has no filesystem. Pass --format to create one (this erases $dev)."
+    fi
+    die "$dev holds a $fstype filesystem without the $LABEL label. Pass --format to reuse it (erases $dev), or pick another device."
+  fi
+
+  apply_models_dir "$dev" mount "$dev" "$MODELS"
+}
+
+main() {
+  [ "$(id -u)" -eq 0 ] || die "must run as root (it mounts and may format a disk)."
+
+  local dev="" dir="" do_format="no"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --list) list_disks; exit 0 ;;
+      --dir) dir="${2:-}"; shift 2 || die "--dir needs a path." ; continue ;;
+      --format) do_format="yes" ;;
+      -h | --help) usage 0 ;;
+      -*) die "unknown option '$1' (see --help)." ;;
+      *) dev="$1" ;;
+    esac
+    shift
+  done
+
+  if [ -n "$dir" ]; then
+    [ -z "$dev" ] || die "give either a device or --dir, not both."
+    use_directory "$dir"
+  elif [ -n "$dev" ]; then
+    use_device "$dev" "$do_format"
+  else
+    usage 1
+  fi
+}
+
+main "$@"
