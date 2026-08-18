@@ -355,18 +355,28 @@ jobs:
           path: build.log
           if-no-files-found: warn
 
+      # Publish the ISO whenever one was built, even if a later verification step
+      # (e.g. a cosmetic boot-menu lint) failed. Throwing away a good, minutes-long
+      # image over a non-build check helps no one: the job still goes red to flag
+      # the issue, but the artifact stays downloadable.
       - name: Collect output
+        if: ${{ !cancelled() }}
         run: |
+          if ! ls archiso/out/*.iso >/dev/null 2>&1; then
+            echo "no ISO produced — nothing to collect"; exit 0
+          fi
           sudo chown -R "$(id -u):$(id -g)" archiso/out
           cd archiso/out
           sha256sum ./*.iso > SHA256SUMS
           ls -lh
 
       - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
         with:
           name: cameo-iso-${{ github.event.inputs.edition || 'lite' }}
           path: |
             archiso/out/*.iso
             archiso/out/SHA256SUMS
+          if-no-files-found: warn
           retention-days: 14
           if-no-files-found: error

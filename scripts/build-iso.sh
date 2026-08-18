@@ -193,7 +193,21 @@ for e in "$BUILD"/efiboot/loader/entries/*.conf; do
 done
 for f in "$BUILD"/syslinux/*.cfg; do
   [ -e "$f" ] || continue
-  awk '/^LABEL /{drop=($2=="memtest"||$2=="hdt")} !drop' "$f" >"$f.new"
+  # Drop a whole LABEL block if it is a memtest, hdt, or accessibility/speech
+  # entry — matched anywhere in the block, not just by the LABEL's name. The old
+  # exact `$2=="memtest"` missed the accessibility entry entirely: its label is
+  # `arch64_accessibility`, its APPEND carries `accessibility=on` and its MENU
+  # LABEL says "with speech". The verify step greps for exactly those strings, so
+  # the strip must be at least as broad or it leaves a menu item pointing at a
+  # speech-synthesis payload the image does not ship.
+  awk '
+    BEGIN { IGNORECASE = 1 }
+    function flush() { if (block != "" && !bad) printf "%s", block; block = ""; bad = 0 }
+    /^LABEL /                                          { flush() }
+    /memtest|with speech|accessibility=on|^LABEL hdt/  { bad = 1 }
+    { block = block $0 ORS }
+    END { flush() }
+  ' "$f" >"$f.new"
   mv "$f.new" "$f"
 done
 if [ -f "$BUILD/grub/grub.cfg" ]; then
