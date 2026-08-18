@@ -100,6 +100,77 @@ pub fn cached_models() -> Vec<String> {
     names
 }
 
+/// Cached `.gguf` files with their byte sizes, sorted by name. The management
+/// surface (`cameo model ls/du/rm/gc`) is built on these pure `*_in` helpers,
+/// which take an explicit directory so they test without touching the
+/// environment; the public wrappers bind them to [`models_dir`].
+fn model_sizes_in(dir: &Path) -> Vec<(String, u64)> {
+    let mut out: Vec<(String, u64)> = match std::fs::read_dir(dir) {
+        Ok(entries) => entries
+            .flatten()
+            .filter(|e| e.path().extension().is_some_and(|x| x == "gguf"))
+            .map(|e| {
+                let size = e.metadata().map(|m| m.len()).unwrap_or(0);
+                (e.file_name().to_string_lossy().into_owned(), size)
+            })
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
+}
+
+/// Cached models and their sizes in bytes, for `cameo model ls`.
+pub fn model_sizes() -> Vec<(String, u64)> {
+    model_sizes_in(&models_dir())
+}
+
+/// Total bytes the model cache occupies, for `cameo model du`.
+pub fn cache_bytes() -> u64 {
+    model_sizes().iter().map(|(_, s)| s).sum()
+}
+
+fn remove_in(dir: &Path, name: &str) -> Result<PathBuf> {
+    // An alias saves as `<alias>.gguf`; a user may pass the bare name or the
+    // filename. Try both, never a path outside the cache dir.
+    for cand in [dir.join(name), dir.join(format!("{name}.gguf"))] {
+        if cand.is_file() {
+            std::fs::remove_file(&cand).map_err(|e| anyhow!("removing {}: {e}", cand.display()))?;
+            return Ok(cand);
+        }
+    }
+    Err(anyhow!(
+        "no cached model matches '{name}'. See `cameo model ls` for what is cached."
+    ))
+}
+
+/// Remove a cached model by name/alias/filename, returning the path removed.
+pub fn remove(name: &str) -> Result<PathBuf> {
+    remove_in(&models_dir(), name)
+}
+
+fn gc_partials_in(dir: &Path) -> Result<Vec<String>> {
+    let mut cleaned = Vec::new();
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Ok(cleaned);
+    };
+    for e in entries.flatten() {
+        let p = e.path();
+        if p.extension().is_some_and(|x| x == "part") {
+            std::fs::remove_file(&p).map_err(|err| anyhow!("removing {}: {err}", p.display()))?;
+            cleaned.push(e.file_name().to_string_lossy().into_owned());
+        }
+    }
+    cleaned.sort();
+    Ok(cleaned)
+}
+
+/// Remove interrupted `.part` downloads, returning the filenames cleaned, for
+/// `cameo model gc`.
+pub fn gc_partials() -> Result<Vec<String>> {
+    gc_partials_in(&models_dir())
+}
+
 /// Resolve a model argument to a path to hand `llama.cpp` `-m`.
 ///
 /// - An existing file, or anything that looks like a path (has a separator or a
@@ -438,5 +509,64 @@ mod tests {
         let d = Path::new("/tmp");
         assert!(space_verdict(Some(n), Some(n), d, "x").is_err());
         assert!(space_verdict(Some((n as f64 * 1.2) as u64), Some(n), d, "x").is_ok());
+    }
+
+    fn fresh_dir() -> PathBuf {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        static N: AtomicU32 = AtomicU32::new(0);
+        let d = std::env::temp_dir().join(format!(
+            "cameo-models-test-{}-{}",
+            std::process::id(),
+            N.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn touch(dir: &Path, name: &str, bytes: usize) {
+        std::fs::write(dir.join(name), vec![0u8; bytes]).unwrap();
+    }
+
+    #[test]
+    fn model_sizes_lists_gguf_with_sizes_sorted() {
+        let d = fresh_dir();
+        touch(&d, "b.gguf", 200);
+        touch(&d, "a.gguf", 100);
+        touch(&d, "notes.txt", 999); // ignored
+        assert_eq!(
+            model_sizes_in(&d),
+            vec![("a.gguf".into(), 100), ("b.gguf".into(), 200)]
+        );
+    }
+
+    #[test]
+    fn remove_matches_bare_name_and_filename() {
+        let d = fresh_dir();
+        touch(&d, "tinyllama.gguf", 10);
+        assert!(remove_in(&d, "tinyllama").is_ok()); // bare name → <name>.gguf
+        assert!(!d.join("tinyllama.gguf").exists());
+        touch(&d, "foo.gguf", 10);
+        assert!(remove_in(&d, "foo.gguf").is_ok()); // explicit filename
+    }
+
+    #[test]
+    fn remove_missing_names_the_fix() {
+        let d = fresh_dir();
+        let err = remove_in(&d, "ghost").unwrap_err().to_string();
+        assert!(err.contains("cameo model ls"), "got: {err}");
+    }
+
+    #[test]
+    fn gc_removes_only_partials() {
+        let d = fresh_dir();
+        touch(&d, "keep.gguf", 5);
+        touch(&d, "x.gguf.part", 5);
+        touch(&d, "y.gguf.part", 5);
+        assert_eq!(
+            gc_partials_in(&d).unwrap(),
+            vec!["x.gguf.part".to_string(), "y.gguf.part".to_string()]
+        );
+        assert!(d.join("keep.gguf").exists());
+        assert!(!d.join("x.gguf.part").exists());
     }
 }

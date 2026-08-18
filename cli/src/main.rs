@@ -170,6 +170,8 @@ enum Command {
     Quantize(QuantizeArgs),
     /// Start a training run (Tier 1/2 only; refused on Tier 3).
     Train(TrainArgs),
+    /// Manage the local model cache: list, disk usage, remove, clean.
+    Model(ModelArgs),
     /// Print the install plan Cameo would apply for the detected hardware.
     Install,
 }
@@ -271,6 +273,27 @@ struct PullArgs {
 }
 
 #[derive(clap::Args)]
+struct ModelArgs {
+    #[command(subcommand)]
+    action: ModelAction,
+}
+
+#[derive(Subcommand)]
+enum ModelAction {
+    /// List cached models with their sizes.
+    Ls,
+    /// Total disk used by the model cache.
+    Du,
+    /// Remove a cached model by name, alias, or filename.
+    Rm {
+        /// Model to remove (as shown by `cameo model ls`).
+        name: String,
+    },
+    /// Remove interrupted `.part` downloads left by a cancelled pull.
+    Gc,
+}
+
+#[derive(clap::Args)]
 struct QuantizeArgs {
     /// Input model path.
     model: String,
@@ -318,6 +341,7 @@ fn run(cli: &Cli) -> Result<()> {
         Command::Pull(a) => cmd_pull(cli, a),
         Command::Quantize(a) => cmd_quantize(cli, a),
         Command::Train(a) => cmd_train(cli, a),
+        Command::Model(a) => cmd_model(cli, a),
         Command::Install => cmd_install(cli),
     }
 }
@@ -694,6 +718,96 @@ fn list_models() -> Result<()> {
     } else {
         for name in cached {
             println!("  {name}");
+        }
+    }
+    Ok(())
+}
+
+/// Bytes as a human-readable size (B / KiB / MiB / GiB).
+fn human_bytes(n: u64) -> String {
+    const UNITS: [&str; 4] = ["B", "KiB", "MiB", "GiB"];
+    let mut v = n as f64;
+    let mut i = 0;
+    while v >= 1024.0 && i < UNITS.len() - 1 {
+        v /= 1024.0;
+        i += 1;
+    }
+    if i == 0 {
+        format!("{n} B")
+    } else {
+        format!("{v:.1} {}", UNITS[i])
+    }
+}
+
+/// `cameo model ls|du|rm|gc` — the local model-cache management surface (F12).
+fn cmd_model(cli: &Cli, args: &ModelArgs) -> Result<()> {
+    match &args.action {
+        ModelAction::Ls => {
+            let sizes = cameo_models::model_sizes();
+            if cli.json {
+                let models: Vec<_> = sizes
+                    .iter()
+                    .map(|(n, s)| serde_json::json!({ "name": n, "bytes": s }))
+                    .collect();
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "dir": cameo_models::models_dir().to_string_lossy(),
+                        "models": models,
+                    }))?
+                );
+            } else {
+                println!("Cache: {}", cameo_models::models_dir().display());
+                if sizes.is_empty() {
+                    println!("  (empty)");
+                }
+                for (name, bytes) in &sizes {
+                    println!("  {:<40} {}", name, human_bytes(*bytes));
+                }
+            }
+        }
+        ModelAction::Du => {
+            let total = cameo_models::cache_bytes();
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({ "bytes": total }))?
+                );
+            } else {
+                println!(
+                    "{} in {}",
+                    human_bytes(total),
+                    cameo_models::models_dir().display()
+                );
+            }
+        }
+        ModelAction::Rm { name } => {
+            let path = cameo_models::remove(name)?;
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(
+                        &serde_json::json!({ "removed": path.to_string_lossy() })
+                    )?
+                );
+            } else {
+                eprintln!("cameo: removed {}", path.display());
+            }
+        }
+        ModelAction::Gc => {
+            let cleaned = cameo_models::gc_partials()?;
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({ "cleaned": cleaned }))?
+                );
+            } else if cleaned.is_empty() {
+                println!("nothing to clean");
+            } else {
+                for c in &cleaned {
+                    println!("removed {c}");
+                }
+            }
         }
     }
     Ok(())

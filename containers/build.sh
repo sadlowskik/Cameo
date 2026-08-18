@@ -6,7 +6,7 @@
 #
 # Honours $CONTAINER_ENGINE (podman or docker); auto-detects otherwise.
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 
 engine="${CONTAINER_ENGINE:-}"
 if [ -z "$engine" ]; then
