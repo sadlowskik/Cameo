@@ -243,6 +243,15 @@ fn route_api(state: &Arc<AppState>, req: &Request, rest: &[&str]) -> Response {
         ("GET", ["node"]) => api_node(state),
         ("GET", ["engines"]) => api_engines(state),
         ("GET", ["models"]) => api_models(),
+        // Model-cache management (F12) surfaced for the console (F18).
+        ("POST", ["models", "gc"]) => match cameo_models::gc_partials() {
+            Ok(cleaned) => Response::json(200, &json!({ "cleaned": cleaned })),
+            Err(e) => Response::error(500, e.to_string()),
+        },
+        ("DELETE", ["models", name]) => match cameo_models::remove(name) {
+            Ok(path) => Response::json(200, &json!({ "removed": path.to_string_lossy() })),
+            Err(e) => Response::error(404, e.to_string()),
+        },
         ("POST", ["plan"]) => api_plan(state, req),
         ("GET", ["servers"]) => Response::json(200, &json!({ "servers": state.sup.list() })),
         ("POST", ["servers"]) => api_start_server(state, req),

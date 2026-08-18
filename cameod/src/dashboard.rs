@@ -118,6 +118,19 @@ pub const INDEX_HTML: &str = r##"<!doctype html>
   </section>
 
   <section>
+    <h2>Playground</h2>
+    <div class="body">
+      <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+        <select id="pg-model" style="max-width:280px"></select>
+        <input id="pg-input" placeholder="Ask a running model something…" style="flex:1;min-width:180px"
+          onkeydown="if(event.key==='Enter')pgSend()">
+        <button onclick="pgSend()">Send</button>
+      </div>
+      <div id="pg-out" class="muted" style="white-space:pre-wrap;min-height:1.5em">Start an endpoint, then chat with it here through the /v1 gateway.</div>
+    </div>
+  </section>
+
+  <section>
     <h2>Model cache</h2>
     <div class="body"><div id="models"><div class="empty">loading…</div></div></div>
   </section>
@@ -195,9 +208,46 @@ async function loadModels(){
   el.innerHTML=`<div class="kv" style="grid-template-columns:auto 1fr">
       <span>cache dir</span><b>${esc(d.models_dir||'')}</b></div>
     <p style="margin:12px 0 4px" class="muted">Cached (${cached.length}):</p>
-    ${cached.length?'<div class="kv">'+cached.map(f=>`<span>•</span><b>${esc(f)}</b>`).join('')+'</div>':'<div class="empty">none — pull one with the CLI: <code>cameo pull tinyllama</code></div>'}
+    ${cached.length?cached.map(f=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:3px 0">
+        <b>${esc(f)}</b><button class="stop del" data-name="${esc(f)}">Delete</button></div>`).join('')
+      :'<div class="empty">none — pull one with the CLI: <code>cameo pull tinyllama</code></div>'}
     <p style="margin:14px 0 4px" class="muted">Aliases:</p>
     <div class="kv">${(d.aliases||[]).map(a=>`<span>${esc(a.name)}</span><b class="muted">${esc(a.repo)}</b>`).join('')}</div>`;
+  el.querySelectorAll('button.del').forEach(b=>b.onclick=()=>delModel(b.dataset.name));
+}
+
+async function delModel(name){
+  if(!confirm('Delete cached model '+name+'?'))return;
+  const r=await api('/api/models/'+encodeURIComponent(name),{method:'DELETE'});
+  if(r.ok){flash('ok','Deleted '+name);}else{const e=await r.json().catch(()=>({}));flash('err',e.error||'delete failed');}
+  loadModels();
+}
+
+async function loadPlayground(){
+  const r=await api('/v1/models'); if(!r.ok)return;
+  const d=await r.json(); const models=(d.data||[]).map(m=>m.id);
+  const sel=document.getElementById('pg-model');
+  const prev=sel.value;
+  sel.innerHTML=models.length?models.map(m=>`<option>${esc(m)}</option>`).join('')
+    :'<option value="">(no running endpoint)</option>';
+  if(models.includes(prev))sel.value=prev;
+}
+
+async function pgSend(){
+  const model=document.getElementById('pg-model').value;
+  const input=document.getElementById('pg-input');
+  const out=document.getElementById('pg-out');
+  if(!model){out.textContent='Start an endpoint first, then pick its model here.';return;}
+  const text=input.value.trim(); if(!text)return;
+  out.textContent='…'; input.value='';
+  try{
+    const r=await api('/v1/chat/completions',{method:'POST',
+      body:JSON.stringify({model,messages:[{role:'user',content:text}]})});
+    const d=await r.json().catch(()=>({}));
+    out.textContent=r.ok
+      ?((d.choices&&d.choices[0]&&d.choices[0].message&&d.choices[0].message.content)||JSON.stringify(d))
+      :('Error: '+(d.error||r.status));
+  }catch(e){out.textContent='Error: '+e;}
 }
 
 function uptime(s){if(s<60)return s+'s'; if(s<3600)return Math.floor(s/60)+'m'; return Math.floor(s/3600)+'h'+Math.floor((s%3600)/60)+'m';}
@@ -251,9 +301,9 @@ document.getElementById('start-form').addEventListener('submit',async ev=>{
   loadServers();
 });
 
-function refresh(){loadGpus();loadServers();}
+function refresh(){loadGpus();loadServers();loadPlayground();}
 loadModels(); refresh();
-setInterval(loadServers,4000);
+setInterval(()=>{loadServers();loadPlayground();},4000);
 </script>
 </body>
 </html>

@@ -7,9 +7,9 @@ need" to run AI on almost any machine, manage it like a product, and scale a box
 into a fleet.
 
 **Progress (synced against the tree 2026-08-18):** 🟢 done — F1, F2, F6, F7, F8,
-F9, F10, F11, F12, F13, F15 (**serving core, detection, fleet node/controller, and
-the harness surface complete**). 🟡 partial — F4, F16, F17, F18. 🔴 not started —
-F3, F5, F14. Foundation (fleet brain, agents,
+F9, F10, F11, F12, F13, F15, F18 (**serving core, detection, fleet node/controller,
+harness surface, and a usable console complete**). 🟡 partial — F4, F16, F17. 🔴
+not started — F3, F5, F14. Foundation (fleet brain, agents,
 supervisor, control-plane HTTP + dashboard, CI, containers passthrough,
 `cameo-install`, phase1 toolkit) is in. Detection is corroborated on silicon; the
 execution/serving flags are still unvalidated on a real GPU. Now working the
@@ -237,7 +237,7 @@ the architecture doc to name both hardware boundaries (execution *and* detection
 add a task-oriented quickstart + API reference generated from `core/api` types so
 docs can't drift from the contract.
 
-**F18 · Console/UX to a real management surface** 🟡
+**F18 · Console/UX to a real management surface** 🟢 *(done — chat playground over `/v1`, model delete/GC, GPU/tier + endpoint lifecycle; live metric tiles + fleet view are optional polish)*
 Why: `dashboard.rs` lists GPUs/models/servers; v1 wants the `CAMEO_PROJECT_PLAN`
 GUI scope — chat playground, model management, VRAM/throughput tiles, fleet view.
 · Fixable: yes, incremental over the existing dashboard + F8/F11 endpoints. ·
