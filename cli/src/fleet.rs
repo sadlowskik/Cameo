@@ -61,6 +61,90 @@ fn fetch_node(address: &str, key: Option<&str>) -> Result<NodeInfo> {
     node_from_json(address, &out.stdout)
 }
 
+/// GET/POST/DELETE a cameod `/api` route. Same curl pattern as [`fetch_node`].
+fn api(
+    method: &str,
+    address: &str,
+    path: &str,
+    key: Option<&str>,
+    body: Option<&str>,
+) -> Result<Vec<u8>> {
+    let url = format!("http://{address}{path}");
+    let mut cmd = Command::new("curl");
+    cmd.args(["-s", "--fail", "--max-time", "30", "-X", method]);
+    if let Some(k) = key {
+        cmd.arg("-H").arg(format!("Authorization: Bearer {k}"));
+    }
+    if let Some(b) = body {
+        cmd.args(["-H", "Content-Type: application/json", "-d", b]);
+    }
+    cmd.arg(&url);
+    let out = cmd
+        .output()
+        .map_err(|e| anyhow!("could not run curl (is it installed?): {e}"))?;
+    if !out.status.success() {
+        bail!(
+            "{method} {url} failed (curl exit {:?}). Is cameod running, and is the console key set?",
+            out.status.code()
+        );
+    }
+    Ok(out.stdout)
+}
+
+/// Whether an `/api/engines` body lists `model` among its loaded models. Pure, so
+/// the model-match logic is unit-tested without a live node.
+fn engines_lists_model(body: &[u8], model: &str) -> Result<bool> {
+    let v: serde_json::Value =
+        serde_json::from_slice(body).map_err(|e| anyhow!("parsing /api/engines: {e}"))?;
+    Ok(v.get("models")
+        .and_then(|m| m.as_array())
+        .is_some_and(|arr| arr.iter().any(|x| x.as_str() == Some(model))))
+}
+
+/// Whether this node already has `model` loaded (one serve, many sessions).
+pub fn node_serves(address: &str, key: Option<&str>, model: &str) -> Result<bool> {
+    let body = api("GET", address, "/api/engines", key, None)?;
+    engines_lists_model(&body, model)
+        .map_err(|e| anyhow!("parsing /api/engines from {address}: {e}"))
+}
+
+/// Start a serve on `address` unless that model is already warm.
+pub fn start_model(address: &str, key: Option<&str>, model: &str) -> Result<String> {
+    if node_serves(address, key, model)? {
+        return Ok(format!(
+            "{address} already serves {model} — reusing the resident /v1 (no second llama-server)"
+        ));
+    }
+    let payload = serde_json::json!({ "model": model }).to_string();
+    let body = api("POST", address, "/api/servers", key, Some(&payload))?;
+    Ok(String::from_utf8_lossy(&body).into_owned())
+}
+
+/// Id of the first running endpoint serving `model` in an `/api/servers` body, or
+/// `None` if none matches. Pure, so the (occasionally fiddly) nested lookup is
+/// unit-tested without a live node.
+fn server_id_for_model(body: &[u8], model: &str) -> Result<Option<String>> {
+    let v: serde_json::Value =
+        serde_json::from_slice(body).map_err(|e| anyhow!("parsing /api/servers: {e}"))?;
+    Ok(v.get("servers")
+        .and_then(|s| s.as_array())
+        .into_iter()
+        .flatten()
+        .find(|e| e.get("model").and_then(|m| m.as_str()) == Some(model))
+        .and_then(|e| e.get("id").and_then(|i| i.as_str()))
+        .map(str::to_string))
+}
+
+/// Stop the first running endpoint whose model name matches.
+pub fn stop_model(address: &str, key: Option<&str>, model: &str) -> Result<String> {
+    let body = api("GET", address, "/api/servers", key, None)?;
+    let id = server_id_for_model(&body, model)
+        .map_err(|e| anyhow!("parsing /api/servers from {address}: {e}"))?
+        .ok_or_else(|| anyhow!("no running server for model {model} on {address}"))?;
+    api("DELETE", address, &format!("/api/servers/{id}"), key, None)?;
+    Ok(format!("stopped {id} ({model}) on {address}"))
+}
+
 /// Poll every node address and assemble the [`Cluster`] the placement brain reads.
 pub fn build_cluster(
     addresses: &[String],
@@ -137,6 +221,31 @@ mod tests {
         }],
         "endpoints": []
     }"#;
+
+    #[test]
+    fn engines_body_membership() {
+        let body = br#"{"models":["qwen2.5-7b","tinyllama"]}"#;
+        assert!(engines_lists_model(body, "qwen2.5-7b").unwrap());
+        assert!(!engines_lists_model(body, "not-loaded").unwrap());
+        // A body with no models array is simply "serves nothing", not an error.
+        assert!(!engines_lists_model(br#"{}"#, "qwen2.5-7b").unwrap());
+        assert!(engines_lists_model(b"not json", "x").is_err());
+    }
+
+    #[test]
+    fn picks_the_server_id_for_a_model() {
+        let body = br#"{"servers":[
+            {"id":"qwen2.5-7b-8080","model":"qwen2.5-7b"},
+            {"id":"tiny-8081","model":"tinyllama"}
+        ]}"#;
+        assert_eq!(
+            server_id_for_model(body, "tinyllama").unwrap().as_deref(),
+            Some("tiny-8081")
+        );
+        // No matching model → None, which the caller turns into a clean error.
+        assert_eq!(server_id_for_model(body, "absent").unwrap(), None);
+        assert_eq!(server_id_for_model(br#"{"servers":[]}"#, "x").unwrap(), None);
+    }
 
     #[test]
     fn rebuilds_a_node_from_its_description() {

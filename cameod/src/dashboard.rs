@@ -68,6 +68,31 @@ pub const INDEX_HTML: &str = r##"<!doctype html>
   .flash.err{display:block;background:var(--accent-dim);color:var(--accent);border:1px solid var(--accent)}
   .flash.ok{display:block;background:rgba(63,185,80,.1);color:var(--t1);border:1px solid var(--t1)}
   .empty{color:var(--muted);font-style:italic;padding:8px 0}
+  nav.tabs{display:flex;gap:4px;padding:0 28px;background:var(--panel);border-bottom:1px solid var(--border)}
+  nav.tabs button{background:transparent;color:var(--muted);border:none;border-bottom:2px solid transparent;
+    border-radius:0;padding:10px 14px;font-weight:600}
+  nav.tabs button.on{color:var(--ink);border-bottom-color:var(--accent)}
+  #view-deck{display:none;height:calc(100vh - 110px);grid-template-columns:260px 1fr 280px;gap:0}
+  #view-deck.show{display:grid}
+  #view-console.hide{display:none}
+  .rail{background:var(--panel);border-right:1px solid var(--border);overflow:auto;padding:14px}
+  .rail.r{border-right:none;border-left:1px solid var(--border)}
+  .rail h3{margin:0 0 10px;font-size:11px;letter-spacing:.6px;text-transform:uppercase;color:var(--muted)}
+  #field{position:relative;background:
+    radial-gradient(ellipse at 50% 30%, #1a222c 0%, var(--bg) 70%);
+    overflow:hidden}
+  #field .unit,#field .res{
+    position:absolute;min-width:88px;padding:8px 10px;border-radius:8px;
+    border:1px solid var(--border);background:var(--panel);cursor:pointer;
+    font-size:12px;box-shadow:0 2px 8px #0006}
+  #field .unit{border-color:var(--accent)}
+  #field .unit.write{box-shadow:0 0 0 1px var(--accent)}
+  #field .unit.stale{opacity:.45}
+  #field .res{border-color:#3a6}
+  #field .unit:hover,#field .res:hover{filter:brightness(1.1)}
+  .meter{height:4px;background:#0005;border-radius:2px;margin-top:6px;overflow:hidden}
+  .meter>i{display:block;height:100%;background:var(--accent);width:0}
+  #detail .kv{margin-top:8px}
 </style>
 </head>
 <body>
@@ -76,7 +101,26 @@ pub const INDEX_HTML: &str = r##"<!doctype html>
   <span class="tagline">any AMD card → a working LLM box</span>
   <span class="status" id="status"><span class="dot" id="dot"></span><span id="status-text">connecting…</span></span>
 </header>
-<main>
+<nav class="tabs">
+  <button class="on" id="tab-deck" onclick="showView('deck')">Deck</button>
+  <button id="tab-console" onclick="showView('console')">Console</button>
+</nav>
+<div id="view-deck" class="show">
+  <aside class="rail">
+    <h3>Cameo · compute</h3>
+    <div id="deck-gpus"></div>
+    <h3 style="margin-top:18px">Resident models</h3>
+    <div id="deck-models"></div>
+  </aside>
+  <div id="field" title="Select a unit or a card"></div>
+  <aside class="rail r">
+    <h3>Selected</h3>
+    <div id="detail"><div class="empty">Click a soldier or a GPU.</div></div>
+    <h3 style="margin-top:18px">Knossos · soldiers</h3>
+    <div id="deck-sessions" class="muted">No harness heartbeats yet.</div>
+  </aside>
+</div>
+<main id="view-console">
   <section>
     <h2>GPUs &amp; tiers</h2>
     <div class="body"><div id="gpus" class="grid"><div class="empty">loading…</div></div>
@@ -307,9 +351,127 @@ document.getElementById('start-form').addEventListener('submit',async ev=>{
   loadServers();
 });
 
-function refresh(){loadGpus();loadServers();loadPlayground();}
+function showView(name){
+  document.getElementById('view-deck').classList.toggle('show', name==='deck');
+  document.getElementById('view-console').classList.toggle('hide', name==='deck');
+  document.getElementById('tab-deck').classList.toggle('on', name==='deck');
+  document.getElementById('tab-console').classList.toggle('on', name==='console');
+}
+
+/* Two plugins, one map. Neither calls the other — they only emit entities. */
+const plugins={
+  cameo:{
+    async snapshot(){
+      const out=[];
+      try{
+        const r=await api('/api/gpus');
+        if(r.ok){
+          const d=await r.json();
+          (d.gpus||[]).forEach((a,i)=>{
+            const g=a.gpu||{};
+            out.push({plugin:'cameo',kind:'gpu',id:'gpu-'+i,label:g.model||'GPU',
+              vram:g.vram_mb,tier:tierNum(a.tier),rationale:a.rationale||'',
+              training:!!a.training_supported});
+          });
+        }
+      }catch(e){}
+      try{
+        const r=await api('/api/servers');
+        if(r.ok){
+          const d=await r.json();
+          (d.servers||[]).forEach(s=>{
+            out.push({plugin:'cameo',kind:'model',id:s.id,label:s.model,
+              state:s.state,endpoint:s.endpoint,backend:s.backend,fits:s.fits_vram});
+          });
+        }
+      }catch(e){}
+      return out;
+    }
+  },
+  knossos:{
+    async snapshot(){
+      try{
+        const r=await api('/api/sessions');
+        if(!r.ok) return [];
+        const d=await r.json();
+        return (d.sessions||[]).map(s=>({
+          plugin:'knossos',kind:'session',id:s.id,label:s.name||s.id,
+          role:s.role,mode:s.mode,state:s.state,model:s.model,halt:s.halt,
+          files:s.files||[],summary:s.summary||'',stale:!!s.stale
+        }));
+      }catch(e){return [];}
+    }
+  }
+};
+
+let selected=null;
+function pick(ent){
+  selected=ent;
+  const el=document.getElementById('detail');
+  if(!ent){el.innerHTML='<div class="empty">Click a soldier or a GPU.</div>';return;}
+  const rows=[];
+  for(const [k,v] of Object.entries(ent)){
+    if(k==='plugin'||v==null||v==='') continue;
+    rows.push(`<span>${esc(k)}</span><b>${esc(Array.isArray(v)?v.join(', '):v)}</b>`);
+  }
+  el.innerHTML=`<div class="muted">${esc(ent.plugin)} · ${esc(ent.kind)}</div>
+    <h3 style="margin:6px 0">${esc(ent.label)}</h3><div class="kv">${rows.join('')}</div>`;
+}
+
+function layout(ents){
+  const field=document.getElementById('field');
+  const gpus=ents.filter(e=>e.kind==='gpu');
+  const models=ents.filter(e=>e.kind==='model');
+  const units=ents.filter(e=>e.kind==='session');
+  const W=field.clientWidth||800, H=field.clientHeight||400;
+  const html=[];
+  gpus.forEach((e,i)=>{
+    const x=40+i*160, y=H*0.18;
+    html.push(`<div class="res" data-i="${ents.indexOf(e)}" style="left:${x}px;top:${y}px">
+      <b>${esc(e.label)}</b><div class="muted">Tier ${esc(e.tier)} · ${esc(e.vram||'?')} MiB</div>
+      <div class="meter"><i style="width:${Math.min(100,(e.vram||0)/256)}%"></i></div></div>`);
+  });
+  models.forEach((e,i)=>{
+    html.push(`<div class="res" data-i="${ents.indexOf(e)}" style="left:${40+i*150}px;top:${H*0.48}px">
+      <b>${esc(e.label)}</b><div class="muted">${esc(e.state)} · ${esc(e.backend||'')}</div></div>`);
+  });
+  units.forEach((e,i)=>{
+    const x=60+(i%6)*130, y=H*0.72;
+    html.push(`<div class="unit ${esc(e.mode||'')} ${e.stale?'stale':''}" data-i="${ents.indexOf(e)}"
+      style="left:${x}px;top:${y}px">
+      <b>${esc(e.label)}</b><div class="muted">${esc(e.mode)} · ${esc(e.model||'no model')}</div></div>`);
+  });
+  if(!html.length) html.push('<div class="empty" style="padding:24px">No compute and no soldiers yet. Load a model on Console, or point Knossos at this node.</div>');
+  field.innerHTML=html.join('');
+  field.querySelectorAll('[data-i]').forEach(n=>{
+    n.onclick=()=>pick(ents[Number(n.dataset.i)]);
+  });
+
+  const gEl=document.getElementById('deck-gpus');
+  gEl.innerHTML=gpus.length?gpus.map(g=>`<div class="card" style="margin-bottom:8px"><b>${esc(g.label)}</b>
+    <div class="muted">Tier ${esc(g.tier)} · ${esc(g.vram||'?')} MiB</div></div>`).join('')
+    :'<div class="empty">no GPU (or detection offline)</div>';
+  const mEl=document.getElementById('deck-models');
+  mEl.innerHTML=models.length?models.map(m=>`<div>${esc(m.label)} <span class="badge st-${esc(m.state)}">${esc(m.state)}</span></div>`).join('')
+    :'<div class="empty">none loaded</div>';
+  const sEl=document.getElementById('deck-sessions');
+  sEl.innerHTML=units.length?units.map(u=>`<div>${esc(u.label)} <span class="muted">${esc(u.mode)}</span></div>`).join('')
+    :'<div class="empty">No harness heartbeats yet. Run <code>daedalus</code> with --engine cameo.</div>';
+}
+
+async function tickDeck(){
+  const ents=[];
+  for(const p of Object.values(plugins)) ents.push(...await p.snapshot());
+  layout(ents);
+  if(selected){
+    const again=ents.find(e=>e.id===selected.id&&e.kind===selected.kind);
+    if(again) pick(again);
+  }
+}
+
+function refresh(){loadGpus();loadServers();loadPlayground();tickDeck();}
 loadModels(); refresh();
-setInterval(()=>{loadServers();loadPlayground();},4000);
+setInterval(()=>{loadServers();loadPlayground();tickDeck();},4000);
 </script>
 </body>
 </html>

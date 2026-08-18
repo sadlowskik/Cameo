@@ -21,6 +21,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::http::{Request, Response};
+use crate::sessions::{Board, Session};
 use crate::supervisor::{StartError, StartRequest, Supervisor};
 
 /// llama.cpp's HTTP server binary. As in the CLI, the backend selects the build,
@@ -45,6 +46,8 @@ pub struct AppState {
     /// seconds turns that from per-probe subprocess churn into one run per
     /// window. Human-driven routes keep live detection.
     pub detect_cache: Mutex<Option<DetectSnapshot>>,
+    /// Live harness sessions (Knossos soldiers) for the deck.
+    pub board: Board,
 }
 
 /// A cached detection result: when it was taken, and what it saw.
@@ -331,6 +334,15 @@ fn route_api(state: &Arc<AppState>, req: &Request, rest: &[&str]) -> Response {
             Err(e) => Response::error(404, e.to_string()),
         },
         ("POST", ["plan"]) => api_plan(state, req),
+        ("GET", ["sessions"]) => Response::json(200, &json!({ "sessions": state.board.list() })),
+        ("POST", ["sessions"]) => api_upsert_session(state, req),
+        ("DELETE", ["sessions", id]) => {
+            if state.board.remove(id) {
+                Response::json(200, &json!({ "removed": id }))
+            } else {
+                Response::error(404, "no such session")
+            }
+        }
         ("GET", ["servers"]) => Response::json(200, &json!({ "servers": state.sup.list() })),
         ("POST", ["servers"]) => api_start_server(state, req),
         ("GET", ["servers", id]) => match state.sup.get(id) {
@@ -567,6 +579,16 @@ fn api_plan(state: &Arc<AppState>, req: &Request) -> Response {
             }),
         ),
         Err(resp) => resp,
+    }
+}
+
+fn api_upsert_session(state: &Arc<AppState>, req: &Request) -> Response {
+    match serde_json::from_slice::<Session>(&req.body) {
+        Ok(s) => {
+            let saved = state.board.upsert(s);
+            Response::json(200, &serde_json::to_value(saved).unwrap_or(json!({})))
+        }
+        Err(e) => Response::error(400, format!("invalid session: {e}")),
     }
 }
 

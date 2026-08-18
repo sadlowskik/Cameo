@@ -23,12 +23,14 @@ use cameo_config::Settings;
 use cameo_gpu_detect::Captures;
 
 use crate::app::AppState;
+use crate::sessions::Board;
 use crate::supervisor::Supervisor;
 
 mod app;
 mod dashboard;
 mod http;
 mod proxy;
+mod sessions;
 mod supervisor;
 
 #[derive(Parser)]
@@ -135,6 +137,7 @@ fn run(args: Args) -> Result<()> {
         settings,
         console_key: args.console_key.clone(),
         detect_cache: std::sync::Mutex::new(None),
+        board: Board::new(),
     });
 
     let listener = TcpListener::bind((args.host.as_str(), args.port))

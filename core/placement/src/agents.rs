@@ -219,24 +219,70 @@ pub fn resolve_agent(
     }
 }
 
-/// Resolve a fleet of agents at once, assigning a distinct port to each local
-/// agent. Where several local agents land on the same node they share its VRAM —
-/// `cameod`'s residency manager arbitrates that at runtime.
+/// Resolve a fleet of agents at once.
+///
+/// A new listen port is allocated only for a **new** (node, model path).
+/// Two agents that land on the same node with the same GGUF share one
+/// `llama-server` — they share VRAM because they share the process, not
+/// because a later residency pass will magically merge them.
 pub fn resolve_agents(
     specs: &[AgentSpec],
     cluster: &Cluster,
     settings: &Settings,
 ) -> Vec<Result<AgentRunPlan, Error>> {
     let mut port: u16 = 8100;
+    let mut resident: std::collections::BTreeMap<(String, String), AgentRunPlan> =
+        std::collections::BTreeMap::new();
     let mut out = Vec::with_capacity(specs.len());
     for spec in specs {
+        let path = match &spec.engine {
+            EngineBinding::Local { path, .. } => Some(path.clone()),
+            EngineBinding::Cloud { .. } => None,
+        };
         let resolved = resolve_agent(spec, cluster, settings, port);
-        if matches!(resolved, Ok(AgentRunPlan::Local { .. })) {
-            port += 1;
+        match (&resolved, path) {
+            (Ok(AgentRunPlan::Local { node_name, .. }), Some(path)) => {
+                let key = (node_name.clone(), path);
+                if let Some(existing) = resident.get(&key) {
+                    out.push(Ok(reuse_local(spec, existing)));
+                    continue;
+                }
+                if let Ok(plan) = &resolved {
+                    resident.insert(key, plan.clone());
+                }
+                port = port.saturating_add(1);
+                out.push(resolved);
+            }
+            (Ok(AgentRunPlan::Local { .. }), None) => out.push(resolved),
+            _ => out.push(resolved),
         }
-        out.push(resolved);
     }
     out
+}
+
+/// Same serve, different agent name/role — the process is already paid for.
+fn reuse_local(spec: &AgentSpec, existing: &AgentRunPlan) -> AgentRunPlan {
+    match existing {
+        AgentRunPlan::Local {
+            node,
+            node_name,
+            endpoint,
+            bind,
+            authenticated,
+            serve,
+            ..
+        } => AgentRunPlan::Local {
+            name: spec.name.clone(),
+            role: spec.role.clone(),
+            node: *node,
+            node_name: node_name.clone(),
+            endpoint: endpoint.clone(),
+            bind: bind.clone(),
+            authenticated: *authenticated,
+            serve: serve.clone(),
+        },
+        other => other.clone(),
+    }
 }
 
 #[cfg(test)]
@@ -408,6 +454,32 @@ mod tests {
             })
             .collect();
         assert_eq!(ports, vec![8100, 8101]);
+    }
+
+    #[test]
+    fn two_agents_same_model_same_node_share_one_serve() {
+        let specs = vec![
+            local_spec("hands1", PlacementTarget::Node("beefy".into())),
+            local_spec("hands2", PlacementTarget::Node("beefy".into())),
+        ];
+        let plans: Vec<_> = resolve_agents(&specs, &cluster(), &keyed())
+            .into_iter()
+            .map(|r| r.unwrap())
+            .collect();
+        let ends: Vec<&str> = plans
+            .iter()
+            .map(|p| match p {
+                AgentRunPlan::Local { endpoint, name, .. } => {
+                    assert!(name.starts_with("hands"));
+                    endpoint.as_str()
+                }
+                _ => panic!("expected local"),
+            })
+            .collect();
+        assert_eq!(
+            ends[0], ends[1],
+            "same GGUF on one node is one llama-server"
+        );
     }
 
     // ---- serving is fail-closed --------------------------------------------

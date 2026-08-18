@@ -251,6 +251,21 @@ enum FleetAction {
         #[command(flatten)]
         common: FleetCommon,
     },
+    /// Start a model on a node (or on the node `place` would pick).
+    ///
+    /// If that node already serves the model, this is a no-op — sessions
+    /// share one llama-server. Needs the node's console key.
+    Start {
+        model: String,
+        #[command(flatten)]
+        common: FleetCommon,
+    },
+    /// Stop the resident serve for a model on each given node.
+    Stop {
+        model: String,
+        #[command(flatten)]
+        common: FleetCommon,
+    },
 }
 
 /// Node-list options shared by the fleet subcommands.
@@ -1041,6 +1056,59 @@ fn cmd_fleet(cli: &Cli, args: &FleetArgs) -> Result<()> {
             } else {
                 print_fleet_plan(&plan);
                 print_rpc_layout_if_distributed(&plan, &cluster);
+            }
+            Ok(())
+        }
+        FleetAction::Start { model, common } => {
+            let cluster = fleet::build_cluster(
+                &common.nodes,
+                common.key.as_deref(),
+                fleet::network_class(&common.network),
+            )?;
+            let addr = if common.nodes.len() == 1 {
+                common.nodes[0].clone()
+            } else {
+                let settings = settings_from(cli, None)?;
+                // Coarse size is enough to pick a node; the node planner
+                // re-reads the GGUF when it actually starts.
+                let meta = ModelMeta::dense(model, 7.0, QuantLevel::Q4_K_M);
+                let plan =
+                    cameo_placement::place_on_fleet(&cluster, &meta, Task::Inference, &settings)
+                        .map_err(|e| plan_error(cli, e))?;
+                match &plan.chosen {
+                    cameo_placement::FleetPlacement::SingleNode { node_name, .. } => cluster
+                        .nodes
+                        .iter()
+                        .find(|n| n.name == *node_name)
+                        .map(|n| n.address.clone())
+                        .ok_or_else(|| {
+                            anyhow!("placed on {node_name} but that node has no address")
+                        })?,
+                    cameo_placement::FleetPlacement::Distributed { .. } => {
+                        anyhow::bail!(
+                            "model does not fit one node; start is single-node only. \
+                             Load it from that node's dashboard (http://<ip>:9090/)."
+                        );
+                    }
+                }
+            };
+            if common.key.is_none() {
+                eprintln!(
+                    "no --key / CAMEO_CONSOLE_KEY; if this fails, open http://{addr}/ \
+                     and start the model there."
+                );
+            }
+            let msg = fleet::start_model(&addr, common.key.as_deref(), model)?;
+            println!("{msg}");
+            println!("inference: http://{addr}/v1   dashboard: http://{addr}/");
+            Ok(())
+        }
+        FleetAction::Stop { model, common } => {
+            for addr in &common.nodes {
+                match fleet::stop_model(addr, common.key.as_deref(), model) {
+                    Ok(msg) => println!("{msg}"),
+                    Err(e) => eprintln!("{addr}: {e}"),
+                }
             }
             Ok(())
         }
