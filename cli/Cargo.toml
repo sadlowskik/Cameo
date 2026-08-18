@@ -16,11 +16,9 @@ cameo-gpu-detect.workspace = true
 cameo-config.workspace = true
 cameo-placement.workspace = true
 cameo-models.workspace = true
-cameo-api.workspace = true
 cameo-backend-vulkan.workspace = true
 cameo-backend-rocm.workspace = true
 cameo-quant-tools.workspace = true
-cameo-moe-harness.workspace = true
 cameo-net-strategy.workspace = true
 
 clap.workspace = true

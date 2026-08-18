@@ -4,6 +4,9 @@
 # Every value here is a PLACEHOLDER to confirm on real hardware. Override any of
 # them via the CAMEO_* environment variables (the plan's "auto but overridable"
 # rule applies to this runbook too).
+# This file is a sourced library: the variables below are consumed by the
+# scripts that source it, which standalone shellcheck cannot see.
+# shellcheck disable=SC2034
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

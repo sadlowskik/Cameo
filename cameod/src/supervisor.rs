@@ -27,6 +27,12 @@ const MAX_RESTARTS: u32 = 5;
 /// Minimum gap between restart attempts, so a fast crash-loop backs off instead
 /// of respawning on every dashboard poll.
 const RESTART_BACKOFF: Duration = Duration::from_secs(2);
+/// A child that served at least this long before exiting was working, not
+/// crash-looping — its exit resets the restart budget. Without this the cap is
+/// lifetime: a server that hiccups once every few days eventually exhausts its
+/// five restarts and is parked `failed` for good, which punishes exactly the
+/// endpoints that were healthy.
+const STABLE_UPTIME_RESET: Duration = Duration::from_secs(300);
 
 /// What to do with an endpoint whose child process is gone. Kept as a pure
 /// decision so the timing and counting are unit-tested without spawning.
@@ -40,6 +46,17 @@ enum Restart {
     Attempt,
     /// Exhausted the restart budget — park as failed.
     Exhausted,
+}
+
+/// The restart budget carried forward after a child exits: an exit after a
+/// stable stretch of service wipes the slate, a quick crash keeps the count.
+/// Pure, so the windowing policy is unit-tested without clocks or spawning.
+fn restarts_after_exit(restarts: u32, uptime: Duration) -> u32 {
+    if uptime >= STABLE_UPTIME_RESET {
+        0
+    } else {
+        restarts
+    }
 }
 
 fn restart_decision(
@@ -163,6 +180,9 @@ impl Endpoint {
                     self.exit_code = status.code();
                     self.child = None;
                     self.last_exit_at = Some(SystemTime::now());
+                    // A long, healthy run earns back the restart budget.
+                    let uptime = self.started_at.elapsed().unwrap_or(Duration::ZERO);
+                    self.restarts = restarts_after_exit(self.restarts, uptime);
                 }
                 Ok(None) => {}
                 Err(e) => {
@@ -294,6 +314,21 @@ impl Supervisor {
             if existing.state() == "running" {
                 return Err(StartError::PortInUse(id));
             }
+        }
+
+        // The id is `<model>-<port>`, so a *different* model on the same port has
+        // a different id and slips past the check above — the newcomer would then
+        // fail to bind and burn its restart budget with a generic crash message.
+        // Refuse up front, naming the endpoint that holds the port.
+        if let Some(holder) = map
+            .values_mut()
+            .filter(|e| e.id != id && e.port == req.port)
+            .find_map(|e| {
+                e.refresh();
+                (e.state() == "running").then(|| e.id.clone())
+            })
+        {
+            return Err(StartError::PortInUse(holder));
         }
 
         // Residency admission (F10): only when we actually know the VRAM budget.
@@ -672,6 +707,27 @@ mod tests {
         assert_eq!(esc(r#"a"b\c"#), r#"a\"b\\c"#);
         assert_eq!(esc("line\nbreak"), "line\\nbreak");
         assert_eq!(esc("plain"), "plain");
+    }
+
+    #[test]
+    fn a_stable_run_earns_back_the_restart_budget() {
+        // Quick crash: the count is kept. Long healthy run: the slate is wiped.
+        assert_eq!(restarts_after_exit(3, Duration::from_secs(5)), 3);
+        assert_eq!(restarts_after_exit(3, STABLE_UPTIME_RESET), 0);
+        assert_eq!(
+            restarts_after_exit(MAX_RESTARTS, Duration::from_secs(3600)),
+            0
+        );
+    }
+
+    #[test]
+    fn a_failed_holder_does_not_block_a_different_model_on_its_port() {
+        // On this dev host every spawn fails, so the first endpoint is `failed`,
+        // not `running` — a second model on the same port must be admitted (the
+        // port check only guards against a *live* holder).
+        let sup = Supervisor::new();
+        sup.start(req("tinyllama", 8080)).unwrap();
+        assert!(sup.start(req("qwen", 8080)).is_ok());
     }
 
     #[test]

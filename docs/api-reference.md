@@ -18,8 +18,22 @@ Errors are JSON: `{ "error": "…", "status": <code> }`.
 | `GET /healthz` | `{ "status": "ok" }` — process is up (F9). |
 | `GET /readyz` | `{ "ready": true }` / `503` — can detect + plan (F9). |
 | `GET /version` | `{ "name": "cameod", "version": "…" }` (F5). |
-| `GET /metrics` | Prometheus text: daemon/endpoint/GPU gauges (F11). |
 | `GET /` | The dashboard (HTML). |
+
+`GET /metrics` (Prometheus text: daemon/endpoint/GPU gauges, F11) requires the
+**console key** when one is configured — the default ISO/container bind is
+all-interfaces, and an open `/metrics` there hands any network peer the model
+names and GPU inventory. Point Prometheus at it with its standard bearer-token
+scrape config:
+
+```yaml
+scrape_configs:
+  - job_name: cameo
+    authorization: { credentials: <console key> }
+    static_configs: [{ targets: ["<box>:9090"] }]
+```
+
+A keyless daemon (loopback dev) serves `/metrics` openly, like every other route.
 
 ## Console API (`/api`, console key)
 

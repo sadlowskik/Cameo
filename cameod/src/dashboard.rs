@@ -110,7 +110,8 @@ pub const INDEX_HTML: &str = r##"<!doctype html>
             <option>Q8_0</option><option>Q4_0</option><option>F16</option></select></div>
         <div><label for="f-backend">Backend</label>
           <select id="f-backend"><option value="auto">auto (by tier)</option>
-            <option value="vulkan">vulkan</option><option value="rocm">rocm</option></select></div>
+            <option value="vulkan">vulkan</option><option value="rocm">rocm</option>
+            <option value="cpu">cpu (system RAM)</option></select></div>
         <div class="check"><input id="f-moe" type="checkbox"><label for="f-moe" style="margin:0">Mixture-of-Experts</label></div>
         <div><button type="submit">Start endpoint</button></div>
       </form>
@@ -160,7 +161,12 @@ function flash(kind,msg){
   f.className='flash '+kind; f.textContent=msg;
   if(kind==='ok') setTimeout(()=>{f.className='flash';},4000);
 }
-function esc(s){const d=document.createElement('div');d.textContent=s==null?'':String(s);return d.innerHTML;}
+/* Attribute-safe escaping. The old innerHTML trick escaped &<> but NOT quotes,
+   so a value interpolated into data-name="…" could break out of the attribute
+   (model filenames derive from pull URLs, i.e. not fully trusted). */
+function esc(s){return String(s==null?'':s)
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+  .replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
 
 function tierNum(t){return t?Number(String(t).replace('Tier','')):3;}
 
@@ -246,7 +252,7 @@ async function pgSend(){
     const d=await r.json().catch(()=>({}));
     out.textContent=r.ok
       ?((d.choices&&d.choices[0]&&d.choices[0].message&&d.choices[0].message.content)||JSON.stringify(d))
-      :('Error: '+(d.error||r.status));
+      :('Error: '+((d.error&&(d.error.message||d.error))||r.status));
   }catch(e){out.textContent='Error: '+e;}
 }
 

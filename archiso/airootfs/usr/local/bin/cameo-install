@@ -22,10 +22,10 @@ set -euo pipefail
 
 # ---- presentation -----------------------------------------------------------
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
-  C_ACCENT=$'\033[1;38;5;209m'; C_BOLD=$'\033[1m'; C_DIM=$'\033[2m'
-  C_WARN=$'\033[1;33m'; C_ERR=$'\033[1;31m'; C_OK=$'\033[1;32m'; C_OFF=$'\033[0m'
+  C_ACCENT=$'\033[1;38;5;209m'; C_BOLD=$'\033[1m'
+  C_WARN=$'\033[1;33m'; C_ERR=$'\033[1;31m'; C_OFF=$'\033[0m'
 else
-  C_ACCENT=""; C_BOLD=""; C_DIM=""; C_WARN=""; C_ERR=""; C_OK=""; C_OFF=""
+  C_ACCENT=""; C_BOLD=""; C_WARN=""; C_ERR=""; C_OFF=""
 fi
 say()  { printf '%s%s%s\n' "$C_ACCENT" "$*" "$C_OFF"; }
 info() { printf '  %s\n' "$*"; }
@@ -94,8 +94,9 @@ if [ -z "$TARGET" ]; then
   list_disks | nl -w2 -s'. ' | sed 's/^/  /'
   printf '  %sPick a disk number: %s' "$C_BOLD" "$C_OFF"
   read -r pick
-  [[ "$pick" =~ ^[0-9]+$ ]] && [ "$pick" -ge 1 ] && [ "$pick" -le "${#DISKS[@]}" ] \
-    || die "not a listed choice."
+  if ! [[ "$pick" =~ ^[0-9]+$ ]] || [ "$pick" -lt 1 ] || [ "$pick" -gt "${#DISKS[@]}" ]; then
+    die "not a listed choice."
+  fi
   TARGET="${DISKS[$((pick - 1))]}"
 fi
 
@@ -276,8 +277,15 @@ umask 022
 
 # ---- configure the installed system -----------------------------------------
 say "Configuring the system"
-ln -sf "/usr/share/zoneinfo/${TIMEZONE_VAL}" /mnt/etc/localtime 2>/dev/null || \
+# `ln -sf` to a nonexistent target still succeeds (it happily creates a dangling
+# symlink), so an unknown timezone must be caught by checking the zoneinfo file
+# in the *target* system — the fallback branch never fired otherwise.
+if [ -e "/mnt/usr/share/zoneinfo/${TIMEZONE_VAL}" ]; then
+  ln -sf "/usr/share/zoneinfo/${TIMEZONE_VAL}" /mnt/etc/localtime
+else
+  warn "unknown timezone '${TIMEZONE_VAL}' — defaulting to UTC."
   ln -sf /usr/share/zoneinfo/UTC /mnt/etc/localtime
+fi
 echo "en_US.UTF-8 UTF-8" >> /mnt/etc/locale.gen
 echo "LANG=en_US.UTF-8" > /mnt/etc/locale.conf
 echo "$HOSTNAME_VAL" > /mnt/etc/hostname
@@ -304,6 +312,11 @@ install -Dm440 /dev/stdin /mnt/etc/sudoers.d/10-wheel <<< '%wheel ALL=(ALL:ALL) 
 
 arch-chroot /mnt hwclock --systohc 2>/dev/null || true
 arch-chroot /mnt locale-gen
+# The shared model cache. cameod.service's ExecStartPre would create it root-only
+# on first boot; making it setgid + wheel-writable here means the admin's own
+# `cameo pull` and the root daemon share one persistent cache instead of the CLI
+# failing with EACCES (or silently splitting off into ~/.cache).
+arch-chroot /mnt install -d -m 2775 -g wheel /var/lib/cameo/models
 # Admin account with sudo; root shares the same password so a fresh install is
 # never locked out at the console.
 arch-chroot /mnt useradd -m -G wheel -s /bin/bash "$USERNAME_VAL"

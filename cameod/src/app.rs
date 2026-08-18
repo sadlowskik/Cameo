@@ -8,7 +8,8 @@
 //! HTTP plumbing lives in [`crate::http`]; this module only decides what each
 //! route means.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use cameo_config::{Backend, Settings};
 use cameo_gpu_detect::{
@@ -38,7 +39,20 @@ pub struct AppState {
     /// If set, every `/api/*` request must present this as a bearer token. The
     /// dashboard at `/` is always reachable so it can prompt for the key.
     pub console_key: Option<String>,
+    /// Short-lived detection snapshot for the machine-driven routes (`/readyz`,
+    /// `/metrics`). Probes and scrapers fire on a cadence, and each live
+    /// detection shells out to `lspci`/`rocminfo`/`rocm-smi` — caching for a few
+    /// seconds turns that from per-probe subprocess churn into one run per
+    /// window. Human-driven routes keep live detection.
+    pub detect_cache: Mutex<Option<DetectSnapshot>>,
 }
+
+/// A cached detection result: when it was taken, and what it saw.
+pub type DetectSnapshot = (Instant, (Topology, Vec<TierAssessment>));
+
+/// How long a cached detection snapshot may serve the probe/scrape routes.
+/// Hardware does not change on this timescale; probe cadences do.
+const DETECT_CACHE_TTL: Duration = Duration::from_secs(5);
 
 /// The submitted description of a model to plan or serve. Sizing fields carry the
 /// same defaults as the CLI's `ModelOpts`, so an omitted field means the same
@@ -121,14 +135,25 @@ pub fn route(state: &Arc<AppState>, req: &Request) -> Response {
             ["healthz"] => return Response::json(200, &json!({ "status": "ok" })),
             ["readyz"] => {
                 // Ready = the node can actually detect hardware and plan work.
-                return match detect_report(state) {
+                // Served from the short-lived cache: k8s probes on a cadence,
+                // and readiness does not need a fresh subprocess sweep each time.
+                return match detect_cached(state) {
                     Ok(_) => Response::json(200, &json!({ "ready": true })),
                     Err(_) => Response::json(503, &json!({ "ready": false })),
                 };
             }
-            // Prometheus scrape (F11). Unauthenticated like the probes so any
-            // scraper reaches it; the console reads the same endpoint for tiles.
-            ["metrics"] => return metrics_response(state),
+            // Prometheus scrape (F11). Gated by the console key when one is
+            // configured: the default ISO/container bind is all-interfaces, and
+            // an open /metrics there hands any LAN peer the model names, GPU
+            // inventory and VRAM figures. Prometheus presents the key via its
+            // standard `authorization` scrape config; a keyless dev daemon
+            // stays open, mirroring every other route's rule.
+            ["metrics"] => {
+                if let Some(denied) = check_auth(state, req) {
+                    return denied;
+                }
+                return metrics_response(state);
+            }
             // Version, for the console's "update available?" check (F5).
             ["version"] => {
                 return Response::json(
@@ -161,6 +186,19 @@ pub fn route(state: &Arc<AppState>, req: &Request) -> Response {
     Response::error(404, "not found")
 }
 
+/// Compare a presented credential against the configured one in constant time.
+/// A plain `==` short-circuits at the first differing byte, which leaks how much
+/// of a guessed key matched through response timing. Only the length is
+/// observable here, and that is not a secret.
+fn key_matches(presented: Option<&str>, key: &str) -> bool {
+    let Some(p) = presented else { return false };
+    p.len() == key.len()
+        && p.bytes()
+            .zip(key.bytes())
+            .fold(0u8, |acc, (a, b)| acc | (a ^ b))
+            == 0
+}
+
 /// Authenticate a `/v1` request against the serve key. `None` = allowed. No serve
 /// key configured means the gateway is open (loopback dev), mirroring the
 /// per-endpoint serving rule.
@@ -170,7 +208,7 @@ fn check_serve_auth(state: &Arc<AppState>, req: &Request) -> Option<Response> {
         .header("authorization")
         .and_then(|h| h.strip_prefix("Bearer "))
         .map(str::trim);
-    if presented == Some(key) {
+    if key_matches(presented, key) {
         None
     } else {
         Some(Response::error(401, "missing or invalid api key"))
@@ -237,7 +275,7 @@ fn check_auth(state: &Arc<AppState>, req: &Request) -> Option<Response> {
         .header("authorization")
         .and_then(|h| h.strip_prefix("Bearer "))
         .map(str::trim);
-    if presented == Some(key) {
+    if key_matches(presented, key) {
         None
     } else {
         Some(Response::error(401, "missing or invalid console key"))
@@ -298,6 +336,23 @@ fn detect(state: &Arc<AppState>) -> Result<(Topology, Vec<TierAssessment>), Resp
     let topo = detect_topology_or_cpu(&state.captures).map_err(map_detect_err)?;
     let assessments = classify_topology(&topo, &OverrideDb::embedded());
     Ok((topo, assessments))
+}
+
+/// [`detect`] behind the short-lived snapshot for the probe/scrape routes.
+/// Failures are never cached — a box that becomes detectable is seen on the very
+/// next probe, and a flapping one keeps reporting honestly.
+fn detect_cached(state: &Arc<AppState>) -> Result<(Topology, Vec<TierAssessment>), Response> {
+    {
+        let cache = state.detect_cache.lock().unwrap();
+        if let Some((at, snapshot)) = cache.as_ref() {
+            if at.elapsed() < DETECT_CACHE_TTL {
+                return Ok(snapshot.clone());
+            }
+        }
+    }
+    let fresh = detect(state)?;
+    *state.detect_cache.lock().unwrap() = Some((Instant::now(), fresh.clone()));
+    Ok(fresh)
 }
 
 /// The GPU report the dashboard renders (its specific shape).
@@ -364,8 +419,7 @@ fn metrics_response(state: &Arc<AppState>) -> Response {
     use crate::supervisor::esc;
     let mut body = state.sup.metrics();
 
-    if let Ok(topo) = detect_topology_or_cpu(&state.captures) {
-        let assessments = classify_topology(&topo, &OverrideDb::embedded());
+    if let Ok((_topo, assessments)) = detect_cached(state) {
         body.push_str("# HELP cameo_gpu_count Number of detected GPUs.\n");
         body.push_str(&format!(
             "# TYPE cameo_gpu_count gauge\ncameo_gpu_count {}\n",

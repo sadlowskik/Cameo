@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Phase 1, step 3: benchmark each built backend with llama-bench on a reference
 # model. Writes per-backend JSON to artifacts/bench-<backend>.json.
+# shellcheck source-path=SCRIPTDIR
 source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
 
 [ -f "$ARTIFACTS/build.env" ] || die "run build-llama.sh first (no build.env)"
@@ -16,8 +17,14 @@ if [ -z "$MODEL_PATH" ] && [ -n "$MODEL_URL" ]; then
     curl -fL --proto '=https' --tlsv1.2 "$MODEL_URL" -o "$MODEL_PATH"
   fi
 fi
-[ -n "$MODEL_PATH" ] && [ -f "$MODEL_PATH" ] \
-  || die "set CAMEO_MODEL_PATH (local GGUF) or CAMEO_MODEL_URL (download) first"
+if [ -z "$MODEL_PATH" ] || [ ! -f "$MODEL_PATH" ]; then
+  die "set CAMEO_MODEL_PATH (local GGUF) or CAMEO_MODEL_URL (download) first"
+fi
+
+# build.env is generated at runtime by build-llama.sh; validate what it must
+# define (and default what is optional) so a stale/partial file fails loudly.
+vulkan_build="${vulkan_build:?build.env did not define vulkan_build — re-run build-llama.sh}"
+rocm_build="${rocm_build:-}"
 
 # Verify integrity before feeding an untrusted blob to llama.cpp's parser.
 if [ -n "${MODEL_SHA256:-}" ]; then

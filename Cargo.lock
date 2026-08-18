@@ -94,13 +94,11 @@ name = "cameo-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "cameo-api",
  "cameo-backend-rocm",
  "cameo-backend-vulkan",
  "cameo-config",
  "cameo-gpu-detect",
  "cameo-models",
- "cameo-moe-harness",
  "cameo-net-strategy",
  "cameo-placement",
  "cameo-quant-tools",

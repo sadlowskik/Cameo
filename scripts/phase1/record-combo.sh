@@ -2,12 +2,13 @@
 # Phase 1, step 4: assemble the first "known-good combination" record from the
 # provision/build/benchmark artifacts. This JSON is the deliverable of Phase 1 —
 # it seeds the compatibility matrix and core/gpu-detect/data/overrides.toml.
+# shellcheck source-path=SCRIPTDIR
 source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
 
 # shellcheck disable=SC1091
-[ -f "$ARTIFACTS/provision.env" ] && source "$ARTIFACTS/provision.env" || true
+if [ -f "$ARTIFACTS/provision.env" ]; then source "$ARTIFACTS/provision.env"; fi
 # shellcheck disable=SC1091
-[ -f "$ARTIFACTS/build.env" ] && source "$ARTIFACTS/build.env" || true
+if [ -f "$ARTIFACTS/build.env" ]; then source "$ARTIFACTS/build.env"; fi
 
 # Best-effort: pull the max avg_ts from a llama-bench JSON, else null.
 extract_ts() {

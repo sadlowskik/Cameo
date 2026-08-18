@@ -21,9 +21,22 @@ use std::time::Duration;
 /// a big body, and an unbounded read is a trivial memory-exhaustion vector.
 const MAX_BODY: usize = 1024 * 1024;
 
+/// Ceiling on the request line + headers combined. `MAX_BODY` bounds the body,
+/// but header lines were read with no limit — a client streaming an endless
+/// header (or one gigantic line) grew memory without ever tripping the body cap.
+/// 32 KiB is far beyond anything a browser or curl sends.
+const MAX_HEAD: u64 = 32 * 1024;
+
 /// How long a single connection may dawdle before we drop it, so a stalled or
 /// half-open client cannot pin a worker thread forever.
 const IO_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Ceiling on concurrently served connections. One thread per connection is the
+/// right simplicity for a control plane, but without a cap a connection flood
+/// converts directly into unbounded threads and memory. Past the cap new
+/// connections are dropped immediately (cheaper and safer under overload than
+/// composing a 503 for an abuser); a handful of real clients never get near it.
+const MAX_CONNECTIONS: usize = 64;
 
 /// A parsed HTTP request. Header keys are lowercased; the path is already split
 /// from the query string.
@@ -114,12 +127,25 @@ pub fn serve<F>(listener: TcpListener, handler: F)
 where
     F: Fn(&Request) -> Response + Send + Sync + 'static,
 {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     let handler = Arc::new(handler);
+    let in_flight = Arc::new(AtomicUsize::new(0));
     for stream in listener.incoming() {
         let Ok(stream) = stream else { continue };
+        // Over the cap, drop the connection on the floor: the accept loop stays
+        // fast and no thread is spent on the excess. (The check-then-add is
+        // benignly racy — the cap is a shed point, not an exact quota.)
+        if in_flight.load(Ordering::Relaxed) >= MAX_CONNECTIONS {
+            drop(stream);
+            continue;
+        }
+        in_flight.fetch_add(1, Ordering::Relaxed);
         let handler = Arc::clone(&handler);
+        let in_flight = Arc::clone(&in_flight);
         std::thread::spawn(move || {
             let _ = handle_connection(stream, handler.as_ref());
+            in_flight.fetch_sub(1, Ordering::Relaxed);
         });
     }
 }
@@ -161,8 +187,13 @@ impl From<std::io::Error> for ParseError {
 /// Parse a request from any buffered reader. Generic over the reader so it can be
 /// unit-tested against an in-memory cursor with no socket.
 fn parse_request<R: BufRead>(reader: &mut R) -> Result<Request, ParseError> {
+    // The request line + headers are read through a hard byte budget
+    // (`MAX_HEAD`): without it, a client streaming endless headers — or one
+    // endless line — grows memory without ever touching the body cap.
+    let mut head = std::io::Read::take(&mut *reader, MAX_HEAD);
+
     let mut line = String::new();
-    if reader.read_line(&mut line)? == 0 {
+    if head.read_line(&mut line)? == 0 {
         return Err(ParseError::Empty);
     }
     let mut parts = line.split_whitespace();
@@ -174,20 +205,32 @@ fn parse_request<R: BufRead>(reader: &mut R) -> Result<Request, ParseError> {
     let (path, query) = split_target(&target);
 
     let mut headers = HashMap::new();
+    let mut head_complete = false;
     loop {
         let mut h = String::new();
-        if reader.read_line(&mut h)? == 0 {
+        if head.read_line(&mut h)? == 0 {
             break;
         }
         let trimmed = h.trim_end_matches(['\r', '\n']);
         if trimmed.is_empty() {
+            head_complete = true;
             break;
         }
         if let Some((k, v)) = trimmed.split_once(':') {
             headers.insert(k.trim().to_ascii_lowercase(), v.trim().to_string());
         }
     }
-
+    if !head_complete {
+        // The blank line ending the head never arrived: budget exhausted means
+        // an oversized head; a stream that just stopped is malformed.
+        return Err(if head.limit() == 0 {
+            ParseError::TooLarge
+        } else {
+            ParseError::Malformed
+        });
+    }
+    // `head`'s borrow of the reader ends here; the body is read from the raw
+    // reader under its own `MAX_BODY` check below.
     let body = match headers.get("content-length") {
         Some(len) => {
             let len: usize = len.parse().map_err(|_| ParseError::Malformed)?;
@@ -338,6 +381,25 @@ mod tests {
     fn segments_ignore_empty() {
         let req = parse("DELETE /api/servers/abc123/ HTTP/1.1\r\n\r\n").unwrap();
         assert_eq!(req.segments(), vec!["api", "servers", "abc123"]);
+    }
+
+    #[test]
+    fn oversized_head_is_rejected() {
+        // One endless header line: must trip the head budget, not grow memory.
+        let raw = format!(
+            "GET / HTTP/1.1\r\nX-Junk: {}\r\n\r\n",
+            "a".repeat(MAX_HEAD as usize)
+        );
+        assert!(matches!(parse(&raw), Err(ParseError::TooLarge)));
+    }
+
+    #[test]
+    fn truncated_head_is_malformed_not_served() {
+        // The stream ends before the blank line that terminates the head.
+        assert!(matches!(
+            parse("GET / HTTP/1.1\r\nHost: x\r\n"),
+            Err(ParseError::Malformed)
+        ));
     }
 
     #[test]

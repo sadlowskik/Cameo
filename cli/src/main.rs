@@ -369,6 +369,21 @@ fn main() {
         .init();
 
     let cli = Cli::parse();
+
+    // Honour the config file's `model_dir` by exporting it as the env var the
+    // models crate treats as authoritative — an env var the user set themselves
+    // still wins. Done in main before any other work (and any threads), where
+    // `set_var` is safe; commands that never touch the cache are unaffected.
+    if std::env::var_os("CAMEO_MODELS_DIR").is_none() {
+        if let Some(path) = &cli.config {
+            if let Ok(file) = Settings::load_file(path) {
+                if let Some(dir) = file.model_dir {
+                    std::env::set_var("CAMEO_MODELS_DIR", dir);
+                }
+            }
+        }
+    }
+
     if let Err(e) = run(&cli) {
         fail(cli.json, "error", &e.to_string());
     }

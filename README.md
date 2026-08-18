@@ -35,7 +35,7 @@ core/                 Rust — all real logic
   placement/          the brain: (topology × model × task) → plan → command
   models/             model cache + acquisition (cameo pull), shared by CLI + daemon
   containers/         AMD GPU passthrough recipe for Podman/Docker
-  api/                stable internal JSON-RPC API surface (CLI + GUI bind to this)
+  api/                versioned JSON-RPC message types (the contract; transport is Phase 2)
   backend-vulkan/     llama.cpp Vulkan executor (universal baseline)
   backend-rocm/       llama.cpp ROCm + PyTorch training executor (Tier 1/2)
   quant-tools/        GGUF quantization (wraps llama-quantize)

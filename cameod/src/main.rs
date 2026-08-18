@@ -119,11 +119,22 @@ fn run(args: Args) -> Result<()> {
     };
     let settings = cameo_config::resolve(Settings::default(), file_settings, Settings::default());
 
+    // Honour the config file's `model_dir` by exporting it as the env var the
+    // models crate already treats as authoritative. An env var the operator set
+    // themselves still wins — config must not silently override an explicit
+    // environment. Done here, before any thread spawns, so `set_var` is safe.
+    if let Some(dir) = &settings.model_dir {
+        if std::env::var_os("CAMEO_MODELS_DIR").is_none() {
+            std::env::set_var("CAMEO_MODELS_DIR", dir);
+        }
+    }
+
     let state = Arc::new(AppState {
         sup: Supervisor::new(),
         captures,
         settings,
         console_key: args.console_key.clone(),
+        detect_cache: std::sync::Mutex::new(None),
     });
 
     let listener = TcpListener::bind((args.host.as_str(), args.port))

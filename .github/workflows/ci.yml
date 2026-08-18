@@ -28,7 +28,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: ShellCheck scripts
-        run: shellcheck scripts/*.sh scripts/phase1/*.sh containers/*.sh
+        # -x follows sourced files (phase1's _common.sh). The airootfs scripts
+        # are the highest-stakes shell in the repo — cameo-install wipes disks —
+        # so they are linted like everything else.
+        run: |
+          shellcheck -x scripts/*.sh scripts/phase1/*.sh containers/*.sh \
+            archiso/airootfs/usr/local/bin/cameo-install \
+            archiso/airootfs/usr/local/bin/cameo-firstboot \
+            archiso/airootfs/usr/local/bin/cameo-console-init
 
   # Build the Vulkan container image (F1) and smoke it: the binaries must run and
   # the serving dependencies must be present. Real GPU/serving is a Phase-1

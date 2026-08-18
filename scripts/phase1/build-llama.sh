@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Phase 1, step 2: build llama.cpp's Vulkan backend (always) and ROCm/HIP backend
 # (when rocminfo is present). Records the exact build inputs to artifacts/build.env.
+# shellcheck source-path=SCRIPTDIR
 source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
 
 need git

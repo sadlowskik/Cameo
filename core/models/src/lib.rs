@@ -59,8 +59,10 @@ pub fn aliases() -> Vec<Alias> {
 }
 
 /// Where pulled models live, in precedence order:
-/// 1. `$CAMEO_MODELS_DIR` — set by first-boot when the user picks a data disk, or
-///    by anyone who wants an explicit location. Always wins.
+/// 1. `$CAMEO_MODELS_DIR` — set by first-boot when the user picks a data disk,
+///    by anyone who wants an explicit location, or by the front ends when the
+///    config file sets `model_dir` (they export it here at startup; a var the
+///    user set themselves is never overridden). Always wins.
 /// 2. `/var/lib/cameo/models` when it exists — the shared, persistent location an
 ///    installed system, a container volume, or first-boot provides. Matches
 ///    `cameo_config`'s default so the CLI and daemon never disagree.
@@ -131,6 +133,13 @@ pub fn cache_bytes() -> u64 {
 }
 
 fn remove_in(dir: &Path, name: &str) -> Result<PathBuf> {
+    // Deletion is by name/alias/filename only — never a path. `Path::join` with
+    // a separator-carrying (or absolute) name can resolve outside the cache
+    // dir, and this function is reachable from the daemon's DELETE route, so
+    // the claim "never a path outside the cache dir" is enforced, not assumed.
+    if name.contains(['/', '\\']) || name == "." || name == ".." {
+        bail!("model names may not contain path separators; see `cameo model ls` for names.");
+    }
     // An alias saves as `<alias>.gguf`; a user may pass the bare name or the
     // filename. Try both, never a path outside the cache dir.
     for cand in [dir.join(name), dir.join(format!("{name}.gguf"))] {
@@ -210,7 +219,13 @@ fn spec_to_url(spec: &str) -> Result<(String, String)> {
         return Ok((url, format!("{spec}.gguf")));
     }
 
-    if spec.starts_with("https://") || spec.starts_with("http://") {
+    // Downloads enforce TLS (`curl --proto =https`), so accepting an `http://`
+    // spec here just deferred the failure into an opaque curl error — and a
+    // multi-GiB binary fetched in the clear is not something to quietly allow.
+    if spec.starts_with("http://") {
+        bail!("plain-HTTP model URLs are not supported (downloads require TLS); use https://");
+    }
+    if spec.starts_with("https://") {
         let file = spec
             .rsplit('/')
             .next()
@@ -547,6 +562,25 @@ mod tests {
         assert!(!d.join("tinyllama.gguf").exists());
         touch(&d, "foo.gguf", 10);
         assert!(remove_in(&d, "foo.gguf").is_ok()); // explicit filename
+    }
+
+    #[test]
+    fn remove_rejects_path_shaped_names() {
+        let d = fresh_dir();
+        touch(&d, "real.gguf", 10);
+        for bad in ["../real", "..", "a/b", "a\\b", "/etc/passwd", "."] {
+            let err = remove_in(&d, bad).unwrap_err().to_string();
+            assert!(err.contains("path separators"), "'{bad}' got: {err}");
+        }
+        assert!(d.join("real.gguf").exists());
+    }
+
+    #[test]
+    fn plain_http_specs_are_refused_with_guidance() {
+        let err = spec_to_url("http://example.com/model.gguf")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("https://"), "got: {err}");
     }
 
     #[test]

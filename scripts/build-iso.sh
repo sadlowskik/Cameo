@@ -76,6 +76,8 @@ if [ -n "${CAMEO_ARCH_SNAPSHOT:-}" ]; then
     *) die "CAMEO_ARCH_SNAPSHOT must be YYYY/MM/DD (got '$CAMEO_ARCH_SNAPSHOT')." ;;
   esac
   ARCHIVE="https://archive.archlinux.org/repos/${CAMEO_ARCH_SNAPSHOT}"
+  # Single quotes are deliberate: $repo/$arch are pacman's own placeholders.
+  # shellcheck disable=SC2016
   printf 'Server=%s/$repo/os/$arch\n' "$ARCHIVE" > "$BUILD/mirrorlist.pinned"
   # Point the build's pacman at the pinned mirrorlist instead of the rolling one.
   sed -i 's#^Include = /etc/pacman.d/mirrorlist#Include = '"$BUILD"'/mirrorlist.pinned#' \

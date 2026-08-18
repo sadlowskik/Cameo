@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Phase 1, step 1: install build tools, Vulkan userspace, and (best-effort) ROCm
 # on a fresh Arch instance. Records installed versions to artifacts/provision.env.
+# shellcheck source-path=SCRIPTDIR
 source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
 
 need pacman  # Arch Linux only

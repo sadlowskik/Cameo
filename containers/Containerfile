@@ -48,7 +48,7 @@ RUN if [ -n "$SNAPSHOT" ]; then \
     fi
 LABEL org.opencontainers.image.title="Cameo" \
       org.opencontainers.image.description="Portable LLM serving daemon — Vulkan-universal, AMD-accelerated." \
-      org.opencontainers.image.source="https://github.com/korbin/cameo"
+      org.opencontainers.image.source="https://github.com/sadlowskik/Cameo"
 
 # Universal Vulkan serving baseline; the ROCm accelerator is layered only for the
 # rocm edition. `curl` is what cameo_models shells out to for pulls.

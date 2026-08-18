@@ -21,7 +21,7 @@ version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
 authors = ["Korbin Sadlowski"]
-repository = "https://github.com/korbin/cameo"
+repository = "https://github.com/sadlowskik/Cameo"
 rust-version = "1.85"
 
 [workspace.dependencies]
@@ -50,3 +50,6 @@ cameo-net-strategy = { path = "core/net-strategy" }
 
 [profile.release]
 lto = "thin"
+# Debug symbols are dead weight in shipped binaries: stripping shrinks
+# cameo/cameod several-fold in the ISO, container, and bare install alike.
+strip = true

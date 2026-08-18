@@ -16,9 +16,14 @@ Type=simple
 # Both optional ('-'): with neither, cameod falls back to a safe loopback bind.
 EnvironmentFile=-/run/cameo/cameod.env
 EnvironmentFile=-/etc/cameo/cameod.env
-# Match where `cameo pull` (run as root on the live image) caches models, so the
-# console's model list and the CLI agree on one cache.
-Environment=CAMEO_MODELS_DIR=/root/.cache/cameo/models
+# One shared, persistent cache for the daemon AND the CLI: models_dir() prefers
+# /var/lib/cameo/models whenever it exists, so creating it here makes every
+# front end agree on it. (The old CAMEO_MODELS_DIR=/root/.cache override pinned
+# an installed system's models to root's home — and, because this unit is copied
+# to disk by cameo-install, defeated F2's persistent default there.) `mkdir -p`
+# rather than `install -d` so an existing directory's mode/group — the installer
+# makes it wheel-writable — is never clobbered.
+ExecStartPre=/usr/bin/mkdir -p /var/lib/cameo/models
 ExecStart=/usr/local/bin/cameod
 # A crashed daemon takes its supervised endpoints with it (PR_SET_PDEATHSIG), so
 # restarting is clean — no orphaned llama-server holding VRAM.
