@@ -225,7 +225,7 @@ substrate; the harness owns the loop.
 
 ### Area 6 — Quality & docs
 
-**F16 · CI boot-smoke + container smoke** 🟡 *(container build+run smoke done in ci.yml; QEMU/OVMF ISO boot-smoke still missing)*
+**F16 · CI boot-smoke + container smoke** 🟢 *(container smoke in ci.yml; QEMU/OVMF ISO boot-smoke added to iso.yml — informational until the first run calibrates the serial markers, then flip to required)*
 Why: `iso.yml` builds but never boots the ISO; boot/serve regressions ship
 untested. · Fixable: yes, cheap. · Compat: CI runners have no GPU — software only.
 · **Best-of-both:** QEMU/OVMF **boot-smoke** on every ISO build (boot → console →

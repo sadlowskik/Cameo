@@ -130,6 +130,40 @@ jobs:
         if: always()
         run: df -h /
 
+      # QEMU/OVMF boot-smoke (F16). CI runners have no GPU, so this proves the
+      # image *boots to userspace* under UEFI — the regression class that shipped
+      # "won't boot" surprises — not that it serves on a GPU (that stays the gated
+      # scripts/phase1 checklist). Informational until the first real run
+      # calibrates the serial markers: `continue-on-error` so a miscalibrated
+      # assertion never discards a good ISO. Flip it to required once green.
+      - name: QEMU boot-smoke (informational)
+        continue-on-error: true
+        run: |
+          docker exec arch bash -euo pipefail -c '
+            pacman -Sy --noconfirm --needed qemu-system-x86 edk2-ovmf || \
+              pacman -Sy --noconfirm --needed qemu-base edk2-ovmf
+            ISO=$(ls /repo/archiso/out/*.iso | head -1)
+            OVMF=$(ls /usr/share/edk2/x64/OVMF_CODE.4m.fd \
+                      /usr/share/edk2/x64/OVMF.4m.fd \
+                      /usr/share/ovmf/x64/OVMF.fd 2>/dev/null | head -1)
+            echo "booting $ISO with firmware $OVMF"
+            ( timeout 240 qemu-system-x86_64 \
+                -m 2560 -smp 2 -nographic -no-reboot \
+                -drive if=pflash,format=raw,readonly=on,file="$OVMF" \
+                -cdrom "$ISO" -boot d \
+                -serial file:/repo/boot-serial.log >/dev/null 2>&1 || true ) &
+            sleep 210
+            pkill -f qemu-system-x86_64 || true
+            echo "=== serial tail ==="
+            tail -c 6000 /repo/boot-serial.log 2>/dev/null || echo "(no serial output captured)"
+            if grep -qiE "cameo|reached target|Welcome to|login:" /repo/boot-serial.log 2>/dev/null; then
+              echo "BOOT-SMOKE: reached userspace"
+            else
+              echo "BOOT-SMOKE: no boot markers yet — the ISO may need console=ttyS0 on the"
+              echo "kernel cmdline for serial capture; calibrate on this first run."
+            fi
+          '
+
       # Boot-screen text is otherwise only verifiable by booting the ISO, so
       # assert it against the staged profile instead.
       - name: Verify boot menu branding
