@@ -58,11 +58,25 @@ pub fn aliases() -> Vec<Alias> {
         .collect()
 }
 
-/// Where pulled models live: `$CAMEO_MODELS_DIR`, else `$HOME/.cache/cameo/models`.
-/// On the live image root's home is `/root`, so `/root/.cache/cameo/models`.
+/// Where pulled models live, in precedence order:
+/// 1. `$CAMEO_MODELS_DIR` — set by first-boot when the user picks a data disk, or
+///    by anyone who wants an explicit location. Always wins.
+/// 2. `/var/lib/cameo/models` when it exists — the shared, persistent location an
+///    installed system, a container volume, or first-boot provides. Matches
+///    `cameo_config`'s default so the CLI and daemon never disagree.
+/// 3. `$HOME/.cache/cameo/models` — the per-user fallback for an unprivileged dev
+///    box where the system dir is absent.
+///
+/// The ordering deliberately prefers persistent storage: on a live image a bare
+/// `$HOME` is `/root` on a RAM overlay, so defaulting there is exactly what let a
+/// pull silently fill memory. See F2 in `docs/remediation-plan.md`.
 pub fn models_dir() -> PathBuf {
     if let Some(d) = std::env::var_os("CAMEO_MODELS_DIR") {
         return PathBuf::from(d);
+    }
+    let system = PathBuf::from("/var/lib/cameo/models");
+    if system.is_dir() {
+        return system;
     }
     let home = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
@@ -148,6 +162,99 @@ fn spec_to_url(spec: &str) -> Result<(String, String)> {
     )
 }
 
+/// GiB from a byte count, for human-facing sizes.
+fn gib(bytes: u64) -> f64 {
+    bytes as f64 / (1024.0 * 1024.0 * 1024.0)
+}
+
+/// Extra room a download needs beyond the model's own size: the `.part` sidecar
+/// plus filesystem overhead. 15% is generous enough to never refuse a pull that
+/// would actually have fit.
+const PULL_SPACE_MARGIN: f64 = 1.15;
+
+/// Available bytes at `dir`, via POSIX `df -Pk`. `None` when `df` is missing or
+/// unparseable — the preflight then skips the check rather than false-refusing.
+fn available_bytes(dir: &Path) -> Option<u64> {
+    let out = Command::new("df").arg("-Pk").arg(dir).output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    parse_df_available_kib(&String::from_utf8_lossy(&out.stdout))
+        .map(|kib| kib.saturating_mul(1024))
+}
+
+/// Parse the Available column (4th field of the data row) from `df -Pk` output.
+/// `-P` guarantees one physical line per filesystem, so the fields sit at fixed
+/// positions: Filesystem, 1024-blocks, Used, Available, Capacity, Mounted-on.
+fn parse_df_available_kib(df_output: &str) -> Option<u64> {
+    df_output
+        .lines()
+        .nth(1)?
+        .split_whitespace()
+        .nth(3)?
+        .parse()
+        .ok()
+}
+
+/// The remote size of the download, via a `curl` HEAD that follows redirects to
+/// the CDN. Best-effort: `None` when the server omits `Content-Length`.
+fn remote_size_bytes(url: &str) -> Option<u64> {
+    let out = Command::new("curl")
+        .args([
+            "--fail",
+            "--location",
+            "--silent",
+            "--head",
+            "--proto",
+            "=https",
+            "--tlsv1.2",
+        ])
+        .arg(url)
+        .output()
+        .ok()?;
+    parse_content_length(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// The last `Content-Length` in an HTTP header dump. A redirect chain emits one
+/// header block per hop; the final block describes the real payload, so the last
+/// value is the one that counts.
+fn parse_content_length(headers: &str) -> Option<u64> {
+    headers.lines().rev().find_map(|line| {
+        let (k, v) = line.split_once(':')?;
+        k.trim()
+            .eq_ignore_ascii_case("content-length")
+            .then(|| v.trim().parse().ok())
+            .flatten()
+    })
+}
+
+/// Decide whether a pull may proceed given free space and remote size. Pure, so
+/// the policy is unit-tested; the impure gathering lives in [`preflight_space`].
+/// A `None` on either input means "unknown" — never block on missing data.
+fn space_verdict(avail: Option<u64>, need: Option<u64>, dir: &Path, spec: &str) -> Result<()> {
+    let (Some(avail), Some(need)) = (avail, need) else {
+        return Ok(());
+    };
+    if avail >= (need as f64 * PULL_SPACE_MARGIN) as u64 {
+        return Ok(());
+    }
+    bail!(
+        "not enough space to pull '{spec}': it needs ~{:.1} GiB but {} has only ~{:.1} GiB free.\n  \
+         On a live USB this usually means models are landing in RAM. Point Cameo at a real disk:\n    \
+         export CAMEO_MODELS_DIR=/path/on/a/disk\n  \
+         or free space, or choose a smaller model (see `cameo pull --list`).",
+        gib(need),
+        dir.display(),
+        gib(avail)
+    )
+}
+
+/// Refuse a pull that cannot fit at `dir`, with actionable guidance. A no-op when
+/// either the free space or the remote size cannot be determined.
+fn preflight_space(dir: &Path, url: &str, spec: &str) -> Result<()> {
+    space_verdict(available_bytes(dir), remote_size_bytes(url), dir, spec)
+}
+
 /// A progress line emitted during a pull, so a caller can surface it however it
 /// likes (the CLI prints it; the daemon could log it) without this crate
 /// choosing an output stream.
@@ -169,6 +276,10 @@ pub fn pull(spec: &str, report: &mut Progress<'_>) -> Result<PathBuf> {
         return Ok(dest);
     }
     let part = dir.join(format!("{filename}.part"));
+
+    // Refuse before downloading if the target cannot hold the model — otherwise a
+    // live-USB pull silently fills the RAM overlay (F2, docs/remediation-plan.md).
+    preflight_space(&dir, &url, spec)?;
 
     report(&format!(
         "pulling {spec}\n  from {url}\n  to   {}",
@@ -259,5 +370,73 @@ mod tests {
         let a = aliases();
         assert!(a.iter().any(|x| x.name == "tinyllama"));
         assert!(a.iter().all(|x| x.file.ends_with(".gguf")));
+    }
+
+    #[test]
+    fn df_available_column_is_parsed() {
+        let out = "Filesystem 1024-blocks Used Available Capacity Mounted on\n\
+                   /dev/sda1 100000000 40000000 60000000 40% /\n";
+        assert_eq!(parse_df_available_kib(out), Some(60_000_000));
+    }
+
+    #[test]
+    fn df_garbage_is_none() {
+        assert_eq!(parse_df_available_kib("nonsense"), None);
+        assert_eq!(parse_df_available_kib(""), None);
+    }
+
+    #[test]
+    fn content_length_takes_the_last_block() {
+        // A 301 redirect (length 0) then the real 200 with the payload size.
+        let headers = "HTTP/1.1 301 Moved\r\ncontent-length: 0\r\n\r\n\
+                       HTTP/2 200\r\nContent-Length: 4096\r\ncontent-type: application/octet-stream\r\n";
+        assert_eq!(parse_content_length(headers), Some(4096));
+    }
+
+    #[test]
+    fn content_length_absent_is_none() {
+        assert_eq!(
+            parse_content_length("HTTP/2 200\r\ncontent-type: x\r\n"),
+            None
+        );
+    }
+
+    #[test]
+    fn space_verdict_refuses_when_too_small_with_guidance() {
+        let need = 4 * 1024 * 1024 * 1024; // 4 GiB
+        let avail = 1024 * 1024 * 1024; // 1 GiB
+        let err = space_verdict(
+            Some(avail),
+            Some(need),
+            Path::new("/var/lib/cameo/models"),
+            "big",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("CAMEO_MODELS_DIR"), "got: {err}");
+    }
+
+    #[test]
+    fn space_verdict_allows_when_it_fits() {
+        let need = 1024 * 1024 * 1024;
+        let avail = 4 * 1024 * 1024 * 1024;
+        assert!(space_verdict(Some(avail), Some(need), Path::new("/tmp"), "small").is_ok());
+    }
+
+    #[test]
+    fn space_verdict_skips_on_unknowns() {
+        let d = Path::new("/tmp");
+        assert!(space_verdict(None, Some(999), d, "x").is_ok());
+        assert!(space_verdict(Some(10), None, d, "x").is_ok());
+        assert!(space_verdict(None, None, d, "x").is_ok());
+    }
+
+    #[test]
+    fn space_verdict_honours_the_margin() {
+        // avail == need but not the 15% headroom → refuse; comfortably over → allow.
+        let n = 1_000_000_000u64;
+        let d = Path::new("/tmp");
+        assert!(space_verdict(Some(n), Some(n), d, "x").is_err());
+        assert!(space_verdict(Some((n as f64 * 1.2) as u64), Some(n), d, "x").is_ok());
     }
 }
