@@ -7,9 +7,10 @@
 
 use crate::hostmem::HostMemory;
 use crate::types::GpuInfo;
+use serde::{Deserialize, Serialize};
 
 /// How two GPUs are connected, fastest to slowest.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LinkKind {
     /// AMD Infinity Fabric (XGMI) — fast, coherent, direct.
     Xgmi,
@@ -31,7 +32,7 @@ impl LinkKind {
 }
 
 /// A link between two GPUs (by their index in [`Topology::gpus`]).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Link {
     pub a: usize,
     pub b: usize,
@@ -39,7 +40,7 @@ pub struct Link {
 }
 
 /// The set of GPUs and the links between them.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Topology {
     pub gpus: Vec<GpuInfo>,
     pub links: Vec<Link>,

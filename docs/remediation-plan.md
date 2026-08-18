@@ -7,8 +7,9 @@ need" to run AI on almost any machine, manage it like a product, and scale a box
 into a fleet.
 
 **Progress (synced against the tree 2026-08-18):** 🟢 done — F1, F2, F6, F7, F8,
-F9, F10, F11, F12 (**Phase B serving core + Phase C detection complete**). 🟡
-partial — F4, F13, F16, F17, F18. 🔴 not started — F3, F5, F14, F15. Foundation (fleet brain, agents,
+F9, F10, F11, F12, F13 (**Phase B serving core, Phase C detection, and the fleet
+node/controller complete**). 🟡 partial — F4, F16, F17, F18. 🔴 not started — F3,
+F5, F14, F15. Foundation (fleet brain, agents,
 supervisor, control-plane HTTP + dashboard, CI, containers passthrough,
 `cameo-install`, phase1 toolkit) is in. Detection is corroborated on silicon; the
 execution/serving flags are still unvalidated on a real GPU. Now working the
@@ -183,8 +184,7 @@ as a "quantize to fit this box" action driven by the planner's fit math.
 
 ### Area 4 — Cluster (scale a box into a fleet)
 
-**F13 · Node self-description + thin composing controller** 🟡 *(node ~80% built,
-cluster ~20%)*
+**F13 · Node self-description + thin composing controller** 🟢 *(done — authenticated `GET /api/node` + `cameo fleet status|place` that polls nodes, rebuilds the `Cluster`, and runs `place_on_fleet`)*
 Why: `fleet.rs` (placement) and `agents.rs` (binding) are real and tested, but
 `Cluster`/`NodeInfo` are hand-built structs — **no discovery, no network
 transport, no front door**. The brain has no senses. · Fixable: yes; small

@@ -24,6 +24,8 @@ use cameo_placement::command::{
 };
 use cameo_placement::{plan as make_plan, CommandSpec, ModelMeta, PlacementPlan, QuantLevel, Task};
 
+mod fleet;
+
 /// Terminal styling. Zero-dependency ANSI, auto-off when piped, on a dumb
 /// terminal, or when `NO_COLOR` / `CAMEO_NO_COLOR` is set. Cameo's signature
 /// accent is a warm coral (the carved-shell namesake); tiers are colour-coded
@@ -172,8 +174,48 @@ enum Command {
     Train(TrainArgs),
     /// Manage the local model cache: list, disk usage, remove, clean.
     Model(ModelArgs),
+    /// Front several cameod nodes as one fleet (poll /api/node, place a model).
+    Fleet(FleetArgs),
     /// Print the install plan Cameo would apply for the detected hardware.
     Install,
+}
+
+#[derive(clap::Args)]
+struct FleetArgs {
+    #[command(subcommand)]
+    action: FleetAction,
+}
+
+#[derive(Subcommand)]
+enum FleetAction {
+    /// Show the fleet: each node's GPUs, tiers, and the network class.
+    Status(FleetCommon),
+    /// Ask the fleet planner which node should run a model.
+    Place {
+        /// Model name (for sizing and labeling the plan).
+        model: String,
+        /// Plan for training instead of inference.
+        #[arg(long)]
+        train: bool,
+        #[command(flatten)]
+        model_opts: ModelOpts,
+        #[command(flatten)]
+        common: FleetCommon,
+    },
+}
+
+/// Node-list options shared by the fleet subcommands.
+#[derive(clap::Args)]
+struct FleetCommon {
+    /// A cameod node address (`host:port`). Repeat for each node.
+    #[arg(long = "node", value_name = "HOST:PORT", required = true)]
+    nodes: Vec<String>,
+    /// Console key the nodes require (or set `CAMEO_CONSOLE_KEY`).
+    #[arg(long, env = "CAMEO_CONSOLE_KEY")]
+    key: Option<String>,
+    /// Network class between nodes: `consumer` (default), `fast`, or `infiniband`.
+    #[arg(long, default_value = "consumer")]
+    network: String,
 }
 
 /// Shared model-description flags. Until GGUF metadata parsing exists, these let
@@ -342,6 +384,7 @@ fn run(cli: &Cli) -> Result<()> {
         Command::Quantize(a) => cmd_quantize(cli, a),
         Command::Train(a) => cmd_train(cli, a),
         Command::Model(a) => cmd_model(cli, a),
+        Command::Fleet(a) => cmd_fleet(cli, a),
         Command::Install => cmd_install(cli),
     }
 }
@@ -875,6 +918,91 @@ fn cmd_quantize(cli: &Cli, args: &QuantizeArgs) -> Result<()> {
     match cameo_quant_tools::quantize(&args.model, &args.out, &args.level) {
         Ok(()) => Ok(()),
         Err(e) => fail(cli.json, "exec_error", &e.to_string()),
+    }
+}
+
+fn cmd_fleet(cli: &Cli, args: &FleetArgs) -> Result<()> {
+    match &args.action {
+        FleetAction::Status(common) => {
+            let cluster = fleet::build_cluster(
+                &common.nodes,
+                common.key.as_deref(),
+                fleet::network_class(&common.network),
+            )?;
+            if cli.json {
+                let nodes: Vec<_> = cluster
+                    .nodes
+                    .iter()
+                    .map(|n| {
+                        serde_json::json!({
+                            "name": n.name, "address": n.address, "gpus": n.assessments,
+                        })
+                    })
+                    .collect();
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "nodes": nodes,
+                        "network": format!("{:?}", cluster.network),
+                    }))?
+                );
+            } else {
+                println!("{}", fleet::summarize(&cluster));
+            }
+            Ok(())
+        }
+        FleetAction::Place {
+            model,
+            train,
+            model_opts,
+            common,
+        } => {
+            let cluster = fleet::build_cluster(
+                &common.nodes,
+                common.key.as_deref(),
+                fleet::network_class(&common.network),
+            )?;
+            let meta = model_meta(model, model_opts);
+            let task = if *train {
+                Task::Training
+            } else {
+                Task::Inference
+            };
+            let settings = settings_from(cli, None)?;
+            let plan = cameo_placement::place_on_fleet(&cluster, &meta, task, &settings)
+                .map_err(|e| plan_error(cli, e))?;
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&plan)?);
+            } else {
+                print_fleet_plan(&plan);
+            }
+            Ok(())
+        }
+    }
+}
+
+/// Human-readable rendering of a fleet placement decision.
+fn print_fleet_plan(plan: &cameo_placement::FleetPlan) {
+    println!("Task:      {:?}", plan.task);
+    match &plan.chosen {
+        cameo_placement::FleetPlacement::SingleNode {
+            node,
+            node_name,
+            plan: p,
+        } => {
+            println!("Placement: node {node} ({node_name})");
+            println!(
+                "  backend={:?}  gpus={}  fits_vram={}",
+                p.backend, p.gpu_count, p.fits_in_vram
+            );
+        }
+        cameo_placement::FleetPlacement::Distributed { nodes, note } => {
+            println!("Placement: distributed across nodes {nodes:?}");
+            println!("  {note}");
+        }
+    }
+    for n in &plan.notes {
+        println!("  • {n}");
     }
 }
 

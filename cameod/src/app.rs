@@ -11,7 +11,9 @@
 use std::sync::Arc;
 
 use cameo_config::{Backend, Settings};
-use cameo_gpu_detect::{classify_topology, detect_topology_or_cpu, Captures, OverrideDb};
+use cameo_gpu_detect::{
+    classify_topology, detect_topology_or_cpu, Captures, OverrideDb, TierAssessment, Topology,
+};
 use cameo_placement::command::build_llama_server;
 use cameo_placement::{plan as make_plan, ModelMeta, QuantLevel, Task};
 use serde::Deserialize;
@@ -238,6 +240,7 @@ fn check_auth(state: &Arc<AppState>, req: &Request) -> Option<Response> {
 fn route_api(state: &Arc<AppState>, req: &Request, rest: &[&str]) -> Response {
     match (req.method.as_str(), rest) {
         ("GET", ["gpus"]) => api_gpus(state),
+        ("GET", ["node"]) => api_node(state),
         ("GET", ["models"]) => api_models(),
         ("POST", ["plan"]) => api_plan(state, req),
         ("GET", ["servers"]) => Response::json(200, &json!({ "servers": state.sup.list() })),
@@ -259,10 +262,9 @@ fn route_api(state: &Arc<AppState>, req: &Request, rest: &[&str]) -> Response {
 
 // ---- detection -------------------------------------------------------------
 
-/// Detect + classify, mapping detection errors to an HTTP response. `Ok` carries
-/// the JSON GPU report the dashboard renders.
-fn detect_report(state: &Arc<AppState>) -> Result<Value, Response> {
-    let topo = detect_topology_or_cpu(&state.captures).map_err(|e| match e {
+/// Map a detection error to an HTTP response, shared by every route that detects.
+fn map_detect_err(e: cameo_gpu_detect::Error) -> Response {
+    match e {
         cameo_gpu_detect::Error::UnsupportedOs => Response::error(
             501,
             "live GPU detection needs Linux. Start cameod with captured fixtures \
@@ -270,9 +272,20 @@ fn detect_report(state: &Arc<AppState>) -> Result<Value, Response> {
         ),
         cameo_gpu_detect::Error::NoGpu => Response::error(404, "no AMD GPU detected"),
         other => Response::error(500, other.to_string()),
-    })?;
-    let assessments = classify_topology(&topo, &OverrideDb::embedded());
+    }
+}
 
+/// Detect + classify, returning the raw topology and per-card assessments. The
+/// single source of detection for every route.
+fn detect(state: &Arc<AppState>) -> Result<(Topology, Vec<TierAssessment>), Response> {
+    let topo = detect_topology_or_cpu(&state.captures).map_err(map_detect_err)?;
+    let assessments = classify_topology(&topo, &OverrideDb::embedded());
+    Ok((topo, assessments))
+}
+
+/// The GPU report the dashboard renders (its specific shape).
+fn detect_report(state: &Arc<AppState>) -> Result<Value, Response> {
+    let (topo, assessments) = detect(state)?;
     Ok(json!({
         "gpus": assessments,
         "host_mem": topo.host_mem,
@@ -281,6 +294,42 @@ fn detect_report(state: &Arc<AppState>) -> Result<Value, Response> {
         })).collect::<Vec<_>>(),
         "bottleneck": topo.bottleneck_link().map(|k| format!("{k:?}")),
     }))
+}
+
+/// `GET /api/node` (F13): this box's full self-description — identity, the
+/// serde-round-trippable topology, per-card tier assessments, and its live
+/// endpoints. A `cameo fleet` controller (or k8s, or a harness) polls this to
+/// build the `Cluster` the placement brain consumes; it is authenticated like the
+/// rest of `/api`.
+fn api_node(state: &Arc<AppState>) -> Response {
+    let (topo, assessments) = match detect(state) {
+        Ok(pair) => pair,
+        Err(resp) => return resp,
+    };
+    Response::json(
+        200,
+        &json!({
+            "name": node_name(),
+            "cameo_version": env!("CARGO_PKG_VERSION"),
+            "topology": topo,
+            "gpus": assessments,
+            "endpoints": state.sup.list(),
+        }),
+    )
+}
+
+/// This node's name: the OS hostname when we can read it, else a stable fallback.
+fn node_name() -> String {
+    std::env::var("HOSTNAME")
+        .ok()
+        .or_else(|| std::env::var("COMPUTERNAME").ok())
+        .or_else(|| {
+            std::fs::read_to_string("/etc/hostname")
+                .ok()
+                .map(|s| s.trim().to_string())
+        })
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "cameo-node".into())
 }
 
 fn api_gpus(state: &Arc<AppState>) -> Response {
@@ -355,15 +404,7 @@ fn plan_for(
     state: &Arc<AppState>,
     body: &ModelRequest,
 ) -> Result<(cameo_placement::PlacementPlan, cameo_placement::CommandSpec), Response> {
-    let topo = detect_topology_or_cpu(&state.captures).map_err(|e| match e {
-        cameo_gpu_detect::Error::UnsupportedOs => Response::error(
-            501,
-            "live GPU detection needs Linux. Start cameod with captured fixtures to plan here.",
-        ),
-        cameo_gpu_detect::Error::NoGpu => Response::error(404, "no AMD GPU detected"),
-        other => Response::error(500, other.to_string()),
-    })?;
-    let assessments = classify_topology(&topo, &OverrideDb::embedded());
+    let (topo, assessments) = detect(state)?;
 
     // Fold the request's backend choice over the daemon's settings, matching the
     // CLI precedence (an explicit request beats the daemon default).

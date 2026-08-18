@@ -104,6 +104,7 @@ dependencies = [
  "cameo-placement",
  "cameo-quant-tools",
  "clap",
+ "serde",
  "serde_json",
  "tracing",
  "tracing-subscriber",
