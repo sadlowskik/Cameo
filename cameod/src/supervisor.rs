@@ -15,10 +15,53 @@
 use std::collections::HashMap;
 use std::process::Child;
 use std::sync::Mutex;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use cameo_placement::{spawn, CommandSpec};
 use serde_json::{json, Value};
+
+/// A crashed server (they do not exit cleanly) is restarted automatically, up to
+/// this many times before it is parked as `failed` with the reason — so a broken
+/// command flags itself instead of flapping forever.
+const MAX_RESTARTS: u32 = 5;
+/// Minimum gap between restart attempts, so a fast crash-loop backs off instead
+/// of respawning on every dashboard poll.
+const RESTART_BACKOFF: Duration = Duration::from_secs(2);
+
+/// What to do with an endpoint whose child process is gone. Kept as a pure
+/// decision so the timing and counting are unit-tested without spawning.
+#[derive(Debug, PartialEq)]
+enum Restart {
+    /// Running, or already parked as failed — nothing to do.
+    NotApplicable,
+    /// Exited recently; wait for the backoff before retrying.
+    Backoff,
+    /// Exited, budget remains, backoff elapsed — respawn.
+    Attempt,
+    /// Exhausted the restart budget — park as failed.
+    Exhausted,
+}
+
+fn restart_decision(
+    running: bool,
+    parked: bool,
+    since_exit: Option<Duration>,
+    restarts: u32,
+) -> Restart {
+    if running || parked {
+        return Restart::NotApplicable;
+    }
+    let Some(elapsed) = since_exit else {
+        return Restart::NotApplicable;
+    };
+    if elapsed < RESTART_BACKOFF {
+        Restart::Backoff
+    } else if restarts >= MAX_RESTARTS {
+        Restart::Exhausted
+    } else {
+        Restart::Attempt
+    }
+}
 
 /// One supervised endpoint: what was asked for, the exact command, and — when it
 /// spawned — the live process. The public view is produced by [`Endpoint::view`].
@@ -46,6 +89,10 @@ pub struct Endpoint {
     /// Exit code, set once the child has been reaped.
     exit_code: Option<i32>,
     started_at: SystemTime,
+    /// How many times this endpoint has been auto-restarted after a crash.
+    restarts: u32,
+    /// When the current child last exited on its own; drives the restart backoff.
+    last_exit_at: Option<SystemTime>,
 }
 
 impl Endpoint {
@@ -57,6 +104,7 @@ impl Endpoint {
                 Ok(Some(status)) => {
                     self.exit_code = status.code();
                     self.child = None;
+                    self.last_exit_at = Some(SystemTime::now());
                 }
                 Ok(None) => {}
                 Err(e) => {
@@ -64,6 +112,40 @@ impl Endpoint {
                     self.child = None;
                 }
             }
+        }
+        self.maybe_restart();
+    }
+
+    /// Auto-restart a server that exited on its own. Reads drive this (the
+    /// dashboard polls), the backoff keeps a crash-loop from respawning on every
+    /// poll, and the cap turns a permanently-broken command into a `failed`
+    /// endpoint that shows why — rather than flapping forever. A `stop()`ped
+    /// endpoint is removed from the map, so only genuine crashes reach here.
+    fn maybe_restart(&mut self) {
+        let since = self.last_exit_at.and_then(|t| t.elapsed().ok());
+        match restart_decision(
+            self.child.is_some(),
+            self.error.is_some(),
+            since,
+            self.restarts,
+        ) {
+            Restart::Attempt => match spawn(&self.command) {
+                Ok(child) => {
+                    self.child = Some(child);
+                    self.restarts += 1;
+                    self.exit_code = None;
+                    self.last_exit_at = None;
+                    self.started_at = SystemTime::now();
+                }
+                Err(e) => self.error = Some(format!("restart failed: {e}")),
+            },
+            Restart::Exhausted => {
+                self.error = Some(format!(
+                    "exited after {} restarts (last code {:?}); giving up",
+                    self.restarts, self.exit_code
+                ));
+            }
+            Restart::Backoff | Restart::NotApplicable => {}
         }
     }
 
@@ -94,6 +176,7 @@ impl Endpoint {
             "pid": self.child.as_ref().map(Child::id),
             "exit_code": self.exit_code,
             "error": self.error,
+            "restarts": self.restarts,
             "fits_vram": self.fits_vram,
             "notes": self.notes,
             "command": self.command.display(),
@@ -166,6 +249,8 @@ impl Supervisor {
             error,
             exit_code: None,
             started_at: SystemTime::now(),
+            restarts: 0,
+            last_exit_at: None,
         };
         let view = endpoint.view();
         map.insert(id, endpoint);
@@ -294,5 +379,38 @@ mod tests {
         let sup = Supervisor::new();
         sup.start(req("tinyllama", 8080)).unwrap();
         assert!(sup.start(req("tinyllama", 8080)).is_ok());
+    }
+
+    #[test]
+    fn restart_decision_covers_the_states() {
+        // Running or already parked → leave alone.
+        assert_eq!(
+            restart_decision(true, false, None, 0),
+            Restart::NotApplicable
+        );
+        assert_eq!(
+            restart_decision(false, true, Some(Duration::from_secs(10)), 0),
+            Restart::NotApplicable
+        );
+        // Exited but no timestamp yet → nothing to act on.
+        assert_eq!(
+            restart_decision(false, false, None, 0),
+            Restart::NotApplicable
+        );
+        // Exited recently → back off.
+        assert_eq!(
+            restart_decision(false, false, Some(Duration::from_millis(100)), 0),
+            Restart::Backoff
+        );
+        // Backoff elapsed, budget left → attempt.
+        assert_eq!(
+            restart_decision(false, false, Some(Duration::from_secs(5)), 2),
+            Restart::Attempt
+        );
+        // Budget exhausted → give up.
+        assert_eq!(
+            restart_decision(false, false, Some(Duration::from_secs(5)), MAX_RESTARTS),
+            Restart::Exhausted
+        );
     }
 }

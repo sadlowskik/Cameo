@@ -110,9 +110,22 @@ impl ModelRequest {
 pub fn route(state: &Arc<AppState>, req: &Request) -> Response {
     let segs = req.segments();
 
-    // The dashboard shell is always reachable so it can prompt for a key.
-    if req.method == "GET" && segs.is_empty() {
-        return Response::html(crate::dashboard::INDEX_HTML);
+    // Unauthenticated, side-effect-free routes: the dashboard shell (so it can
+    // prompt for a key) and the liveness/readiness probes (so k8s and the fleet
+    // controller can reach them without the console key — F9/F13).
+    if req.method == "GET" {
+        match segs.as_slice() {
+            [] => return Response::html(crate::dashboard::INDEX_HTML),
+            ["healthz"] => return Response::json(200, &json!({ "status": "ok" })),
+            ["readyz"] => {
+                // Ready = the node can actually detect hardware and plan work.
+                return match detect_report(state) {
+                    Ok(_) => Response::json(200, &json!({ "ready": true })),
+                    Err(_) => Response::json(503, &json!({ "ready": false })),
+                };
+            }
+            _ => {}
+        }
     }
 
     // Everything under /api is gated by the console key, when one is configured.
