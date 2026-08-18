@@ -156,7 +156,7 @@ restart with backoff + a crash cap (then park as `failed` with the reason, which
 the dashboard already renders); add `/healthz` (process up) and `/readyz` (model
 loaded) — the same probes k8s and the F13 controller consume.
 
-**F10 · VRAM residency manager** 🔴 *(referenced but not built)*
+**F10 · VRAM residency manager** 🟢 *(done — admission + LRU eviction over the supervisor, planner VRAM math, refuses oversize)*
 Why: `agents.rs:224` promises "cameod's residency manager arbitrates that at
 runtime," but `supervisor.rs` has no VRAM accounting or eviction — two models on
 one GPU will just OOM. · Fixable: yes, moderate. · Compat: must use the same

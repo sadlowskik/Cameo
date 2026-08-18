@@ -358,6 +358,22 @@ fn api_start_server(state: &Arc<AppState>, req: &Request) -> Response {
         Err(resp) => return resp,
     };
 
+    // Residency inputs (F10): the box's usable VRAM and this model's GPU-resident
+    // footprint, both from the planner. When VRAM is unknown, `0` disables
+    // residency for this start rather than guessing.
+    let vram_budget = if plan.budget.vram_known {
+        plan.budget.vram_bytes
+    } else {
+        0
+    };
+    let vram_need = if vram_budget > 0 {
+        // A model that fits keeps its true size; one that spills wants the whole
+        // GPU, so cap the need at the budget.
+        body.meta().total_bytes().min(vram_budget)
+    } else {
+        0
+    };
+
     let start = StartRequest {
         model: body.model.clone(),
         host: body.host.clone(),
@@ -366,12 +382,15 @@ fn api_start_server(state: &Arc<AppState>, req: &Request) -> Response {
         fits_vram: plan.fits_in_vram,
         notes: plan.notes.clone(),
         command: spec,
+        vram_need,
+        vram_budget,
     };
     match state.sup.start(start) {
         Ok(view) => Response::json(201, &view),
         Err(StartError::PortInUse(id)) => {
             Response::error(409, format!("endpoint {id} is already running"))
         }
+        Err(StartError::WontFit(msg)) => Response::error(507, msg),
     }
 }
 

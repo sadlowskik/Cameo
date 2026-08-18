@@ -17,7 +17,7 @@ use std::process::Child;
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
 
-use cameo_placement::{spawn, CommandSpec};
+use cameo_placement::{gib, spawn, CommandSpec};
 use serde_json::{json, Value};
 
 /// A crashed server (they do not exit cleanly) is restarted automatically, up to
@@ -63,6 +63,55 @@ fn restart_decision(
     }
 }
 
+/// A currently-resident endpoint, as the admission decision sees it: how much
+/// VRAM it holds and when it was last used (for LRU eviction).
+struct ResidentVram {
+    id: String,
+    vram_bytes: u64,
+    last_used: SystemTime,
+}
+
+/// The outcome of admitting a new endpoint under the VRAM budget (F10).
+#[derive(Debug, PartialEq)]
+enum Admission {
+    /// Fits in the remaining budget — start without disturbing anything.
+    Admit,
+    /// Fits only after stopping these endpoints (least-recently-used first).
+    Evict(Vec<String>),
+    /// Larger than the whole GPU — refuse even with nothing else resident.
+    Refuse,
+}
+
+/// Decide admission for a `need`-byte endpoint against a known, non-zero VRAM
+/// `budget`, given the endpoints already holding VRAM. Pure, so the arbitration
+/// policy is unit-tested without spawning: a model bigger than the GPU is refused
+/// (the planner's oversize case); otherwise the least-recently-used residents are
+/// evicted until it fits. Callers with an *unknown* budget skip residency
+/// entirely rather than pass `0` here — you cannot arbitrate what you cannot
+/// measure.
+fn admit(budget: u64, need: u64, residents: &mut [ResidentVram]) -> Admission {
+    if need > budget {
+        return Admission::Refuse;
+    }
+    let used: u64 = residents.iter().map(|r| r.vram_bytes).fold(0, u64::saturating_add);
+    if used.saturating_add(need) <= budget {
+        return Admission::Admit;
+    }
+    // Evict oldest-used first until the newcomer fits.
+    residents.sort_by_key(|r| r.last_used);
+    let must_free = used.saturating_add(need).saturating_sub(budget);
+    let mut freed = 0u64;
+    let mut evict = Vec::new();
+    for r in residents.iter() {
+        if freed >= must_free {
+            break;
+        }
+        freed = freed.saturating_add(r.vram_bytes);
+        evict.push(r.id.clone());
+    }
+    Admission::Evict(evict)
+}
+
 /// One supervised endpoint: what was asked for, the exact command, and — when it
 /// spawned — the live process. The public view is produced by [`Endpoint::view`].
 pub struct Endpoint {
@@ -93,6 +142,12 @@ pub struct Endpoint {
     restarts: u32,
     /// When the current child last exited on its own; drives the restart backoff.
     last_exit_at: Option<SystemTime>,
+    /// Estimated GPU VRAM this endpoint holds while running, for residency
+    /// arbitration (F10). `0` when VRAM is unknown (residency then off).
+    vram_bytes: u64,
+    /// When this endpoint last served (or started). Drives LRU eviction; bumped by
+    /// [`Supervisor::touch`] when the gateway routes a request to it.
+    last_used: SystemTime,
 }
 
 impl Endpoint {
@@ -178,6 +233,7 @@ impl Endpoint {
             "error": self.error,
             "restarts": self.restarts,
             "fits_vram": self.fits_vram,
+            "vram_bytes": self.vram_bytes,
             "notes": self.notes,
             "command": self.command.display(),
             "uptime_secs": uptime,
@@ -195,6 +251,10 @@ pub struct StartRequest {
     pub fits_vram: bool,
     pub notes: Vec<String>,
     pub command: CommandSpec,
+    /// Estimated VRAM the endpoint will hold, for residency (F10).
+    pub vram_need: u64,
+    /// The box's usable VRAM budget. `0` = unknown → residency is skipped.
+    pub vram_budget: u64,
 }
 
 /// Why a start was refused before any process was spawned.
@@ -202,6 +262,8 @@ pub struct StartRequest {
 pub enum StartError {
     /// An endpoint with this id is already tracked and still running.
     PortInUse(String),
+    /// The model is larger than the whole GPU — refused rather than OOM (F10).
+    WontFit(String),
 }
 
 /// The supervisor: a lock around the set of tracked endpoints.
@@ -231,6 +293,46 @@ impl Supervisor {
             }
         }
 
+        // Residency admission (F10): only when we actually know the VRAM budget.
+        // Reap first so a crashed endpoint is not counted as holding VRAM, then
+        // arbitrate — evicting least-recently-used residents or refusing outright.
+        if req.vram_budget > 0 && req.vram_need > 0 {
+            let mut residents: Vec<ResidentVram> = map
+                .values_mut()
+                .filter_map(|e| {
+                    e.refresh();
+                    (e.id != id && e.state() == "running" && e.vram_bytes > 0).then(|| {
+                        ResidentVram {
+                            id: e.id.clone(),
+                            vram_bytes: e.vram_bytes,
+                            last_used: e.last_used,
+                        }
+                    })
+                })
+                .collect();
+            match admit(req.vram_budget, req.vram_need, &mut residents) {
+                Admission::Admit => {}
+                Admission::Evict(ids) => {
+                    for victim in ids {
+                        if let Some(mut e) = map.remove(&victim) {
+                            if let Some(mut child) = e.child.take() {
+                                let _ = child.kill();
+                                let _ = child.wait();
+                            }
+                        }
+                    }
+                }
+                Admission::Refuse => {
+                    return Err(StartError::WontFit(format!(
+                        "model needs ~{:.1} GiB of VRAM but the GPU has ~{:.1} GiB; \
+                         quantize further, pick a smaller model, or add a GPU.",
+                        gib(req.vram_need),
+                        gib(req.vram_budget),
+                    )));
+                }
+            }
+        }
+
         let (child, error) = match spawn(&req.command) {
             Ok(child) => (Some(child), None),
             Err(e) => (None, Some(e.to_string())),
@@ -251,10 +353,23 @@ impl Supervisor {
             started_at: SystemTime::now(),
             restarts: 0,
             last_exit_at: None,
+            vram_bytes: req.vram_need,
+            last_used: SystemTime::now(),
         };
         let view = endpoint.view();
         map.insert(id, endpoint);
         Ok(view)
+    }
+
+    /// Mark an endpoint as just-used, so LRU eviction (F10) reflects real traffic.
+    /// Called by the gateway (F8) when it routes a request to this endpoint.
+    // Wired up by F8 (the next increment); the LRU support lands with F10 so the
+    // eviction order is meaningful the moment routing exists.
+    #[allow(dead_code)]
+    pub fn touch(&self, id: &str) {
+        if let Some(e) = self.endpoints.lock().unwrap().get_mut(id) {
+            e.last_used = SystemTime::now();
+        }
     }
 
     /// The current view of every tracked endpoint, most-recently-started first.
@@ -300,6 +415,7 @@ impl Supervisor {
         let mut up = String::new();
         let mut restarts = String::new();
         let mut uptime = String::new();
+        let mut vram = String::new();
         for e in map.values_mut() {
             e.refresh();
             let running = if e.state() == "running" { 1 } else { 0 };
@@ -321,6 +437,10 @@ impl Supervisor {
             uptime.push_str(&format!(
                 "cameo_endpoint_uptime_seconds{{{id_label}}} {secs}\n"
             ));
+            vram.push_str(&format!(
+                "cameo_endpoint_vram_bytes{{{id_label}}} {}\n",
+                e.vram_bytes
+            ));
         }
 
         let mut out = String::new();
@@ -340,6 +460,9 @@ impl Supervisor {
         out.push_str("# HELP cameo_endpoint_uptime_seconds Seconds since the current process started.\n");
         out.push_str("# TYPE cameo_endpoint_uptime_seconds gauge\n");
         out.push_str(&uptime);
+        out.push_str("# HELP cameo_endpoint_vram_bytes Estimated VRAM the endpoint holds.\n");
+        out.push_str("# TYPE cameo_endpoint_vram_bytes gauge\n");
+        out.push_str(&vram);
         out
     }
 }
@@ -406,7 +529,55 @@ mod tests {
             fits_vram: true,
             notes: vec![],
             command: spec(),
+            vram_need: 0,
+            vram_budget: 0,
         }
+    }
+
+    fn resident(id: &str, vram: u64, age_secs: u64) -> ResidentVram {
+        ResidentVram {
+            id: id.into(),
+            vram_bytes: vram,
+            last_used: SystemTime::now() - Duration::from_secs(age_secs),
+        }
+    }
+
+    #[test]
+    fn admit_when_it_fits_without_eviction() {
+        let mut r = vec![resident("a", 4, 10)];
+        assert_eq!(admit(16, 8, &mut r), Admission::Admit);
+    }
+
+    #[test]
+    fn refuse_when_larger_than_the_whole_gpu() {
+        let mut r = vec![];
+        assert_eq!(admit(16, 20, &mut r), Admission::Refuse);
+    }
+
+    #[test]
+    fn evict_least_recently_used_until_it_fits() {
+        // Budget 16; residents hold 12 (a=oldest, c=newest); newcomer needs 8, so
+        // 4 must be freed — the single oldest (a=6) suffices, and only it goes.
+        let mut r = vec![
+            resident("a", 6, 100), // oldest
+            resident("b", 4, 50),
+            resident("c", 2, 10), // newest
+        ];
+        assert_eq!(admit(16, 8, &mut r), Admission::Evict(vec!["a".into()]));
+    }
+
+    #[test]
+    fn evict_spills_to_the_next_lru_when_one_is_not_enough() {
+        // Need 14 into a 16 budget with 12 resident → free 10; a(6)+b(4)=10.
+        let mut r = vec![
+            resident("a", 6, 100),
+            resident("b", 4, 50),
+            resident("c", 2, 10),
+        ];
+        assert_eq!(
+            admit(16, 14, &mut r),
+            Admission::Evict(vec!["a".into(), "b".into()])
+        );
     }
 
     #[test]
