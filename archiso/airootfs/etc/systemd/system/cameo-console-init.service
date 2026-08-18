@@ -1,0 +1,15 @@
+[Unit]
+Description=Cameo console bootstrap (generate console key + LAN bind)
+Documentation=https://github.com/sadlowskik/Cameo
+# Must complete before cameod reads its EnvironmentFile, so the generated
+# /run/cameo/cameod.env is in place when the console starts.
+Before=cameod.service
+After=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/cameo-console-init
+
+[Install]
+WantedBy=multi-user.target

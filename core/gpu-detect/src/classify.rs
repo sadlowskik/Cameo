@@ -87,6 +87,7 @@ mod tests {
             vram_mb: None,
             gfx_arch: arch.map(str::to_string),
             driver_version: None,
+            ..Default::default()
         }
     }
 

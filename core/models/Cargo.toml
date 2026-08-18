@@ -1,0 +1,11 @@
+[package]
+name = "cameo-models"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Model acquisition and cache resolution: friendly names and specs to local .gguf paths."
+
+[dependencies]
+anyhow.workspace = true

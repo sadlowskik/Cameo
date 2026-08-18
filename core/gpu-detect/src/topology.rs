@@ -5,6 +5,7 @@
 //! while XGMI makes it cheap. The parser is pure and fixture-tested; the numbers
 //! it feeds into the placement engine are what turn "N cards" into a real plan.
 
+use crate::hostmem::HostMemory;
 use crate::types::GpuInfo;
 
 /// How two GPUs are connected, fastest to slowest.
@@ -42,6 +43,9 @@ pub struct Link {
 pub struct Topology {
     pub gpus: Vec<GpuInfo>,
     pub links: Vec<Link>,
+    /// Host RAM facts when the collector could read them. `None` means unknown,
+    /// and the planner must then refuse to assume host offload capacity exists.
+    pub host_mem: Option<HostMemory>,
 }
 
 impl Topology {
@@ -50,12 +54,24 @@ impl Topology {
         Self {
             gpus: vec![gpu],
             links: Vec::new(),
+            host_mem: None,
         }
     }
 
     /// Build from detected GPUs plus parsed links.
     pub fn new(gpus: Vec<GpuInfo>, links: Vec<Link>) -> Self {
-        Self { gpus, links }
+        Self {
+            gpus,
+            links,
+            host_mem: None,
+        }
+    }
+
+    /// Attach host-memory facts to a topology.
+    #[must_use]
+    pub fn with_host_memory(mut self, host_mem: Option<HostMemory>) -> Self {
+        self.host_mem = host_mem;
+        self
     }
 
     pub fn gpu_count(&self) -> usize {
@@ -167,6 +183,7 @@ mod tests {
             vram_mb: Some(16384),
             gfx_arch: Some("gfx1100".into()),
             driver_version: None,
+            ..Default::default()
         }
     }
 

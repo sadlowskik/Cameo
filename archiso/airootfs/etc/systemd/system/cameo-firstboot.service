@@ -5,6 +5,7 @@ ConditionPathExists=!/var/lib/cameo/.firstboot-done
 
 [Service]
 Type=oneshot
+Environment=CAMEO_FORCE_COLOR=1
 ExecStart=/usr/local/bin/cameo-firstboot
 ExecStartPost=/usr/bin/mkdir -p /var/lib/cameo
 ExecStartPost=/usr/bin/touch /var/lib/cameo/.firstboot-done

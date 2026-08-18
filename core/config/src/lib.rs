@@ -39,6 +39,12 @@ pub struct Settings {
     pub model_dir: Option<PathBuf>,
     /// Unix socket path for the core API service.
     pub socket_path: Option<PathBuf>,
+    /// Plan a model even when it exceeds VRAM + host RAM. Off by default: the
+    /// planner refuses rather than emitting a command the kernel will OOM-kill.
+    pub allow_oversize: Option<bool>,
+    /// API key `llama-server` requires from clients. Serving on anything other
+    /// than loopback is refused without one.
+    pub serve_api_key: Option<String>,
 }
 
 impl Settings {
@@ -68,6 +74,12 @@ impl Settings {
         }
         if higher.model_dir.is_some() {
             self.model_dir = higher.model_dir;
+        }
+        if higher.allow_oversize.is_some() {
+            self.allow_oversize = higher.allow_oversize;
+        }
+        if higher.serve_api_key.is_some() {
+            self.serve_api_key = higher.serve_api_key;
         }
         if higher.socket_path.is_some() {
             self.socket_path = higher.socket_path;
@@ -101,6 +113,7 @@ mod tests {
             hsa_override: None,
             model_dir: Some(PathBuf::from("/var/lib/cameo/models")),
             socket_path: None,
+            ..Default::default()
         };
         let file = Settings {
             backend: Some(Backend::Rocm),

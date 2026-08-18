@@ -89,8 +89,8 @@ jobs:
       - name: Verify toolchain
         run: docker exec arch bash -euo pipefail -c "mkarchiso -h >/dev/null && cargo --version && rustc --version"
 
-      - name: Build cameo CLI
-        run: docker exec arch bash -euo pipefail -c "cargo build --release -p cameo-cli"
+      - name: Build cameo CLI + cameod
+        run: docker exec arch bash -euo pipefail -c "CARGO_TARGET_DIR=/repo/build/cargo-target cargo build --release -p cameo-cli -p cameo-daemon"
 
       # pacman 7 runs downloads under an unprivileged DownloadUser confined by
       # landlock. That sandbox cannot be set up inside a container and aborts
@@ -159,14 +159,35 @@ jobs:
 
           echo "--- root account ---"
           sudo grep '^root:' "$A/etc/shadow"
-          if sudo grep -qE '^root:[!*]' "$A/etc/shadow"; then
-            echo "FAIL: root is locked; autologin falls through to a password prompt"
+          # Passwordless, not merely unlocked. `--autologin` bypasses auth, but
+          # the manual-login fallback (serial console, non-tty1 VT, a future
+          # regression) needs an empty password or it is a lockout with no
+          # recovery on a read-only live image. build-iso.sh forces this.
+          if ! sudo grep -qE '^root::' "$A/etc/shadow"; then
+            echo "FAIL: root is not passwordless; a fallback console login could lock out"
+            sudo grep '^root:' "$A/etc/shadow"
             exit 1
           fi
-          echo "OK: root is not locked"
+          echo "OK: root is passwordless"
+
+          # The image ships no display manager, so a graphical default.target is
+          # a target systemd can never complete — the autologin tty never comes
+          # to the foreground and the screen looks dead.
+          echo "--- default target ---"
+          DT=$(sudo readlink "$A/etc/systemd/system/default.target" || echo "(unset)")
+          echo "default.target -> $DT"
+          case "$DT" in
+            *multi-user.target) echo "OK: boots to multi-user (text console)";;
+            *) echo "FAIL: default.target is not multi-user; the autologin tty may never foreground"; exit 1;;
+          esac
 
           echo "--- autologin drop-in ---"
           sudo cat "$A/etc/systemd/system/getty@tty1.service.d/autologin.conf"
+          # The drop-in must actually force autologin, not just exist.
+          sudo grep -q -- '--autologin root' \
+            "$A/etc/systemd/system/getty@tty1.service.d/autologin.conf" \
+            || { echo "FAIL: tty1 drop-in does not force --autologin root"; exit 1; }
+          echo "OK: tty1 autologins root"
 
           # root's shell must exist inside the image. The account database comes
           # from releng, which points root at zsh; if the edition's package list
@@ -184,6 +205,17 @@ jobs:
           # follow them against the runner's filesystem and always fail.
           sudo test -L "$A/etc/systemd/system/multi-user.target.wants/cameo-firstboot.service" \
             || { echo "FAIL: firstboot not enabled"; exit 1; }
+
+          # The control plane must actually ship and be enabled — the console is
+          # the product's front door. Binary staged, both units enabled.
+          echo "--- control plane (cameod) ---"
+          sudo test -x "$A/usr/local/bin/cameod" \
+            || { echo "FAIL: cameod binary missing - the console cannot start"; exit 1; }
+          for u in cameod.service cameo-console-init.service; do
+            sudo test -L "$A/etc/systemd/system/multi-user.target.wants/$u" \
+              || { echo "FAIL: $u not enabled"; exit 1; }
+          done
+          echo "OK: cameod shipped and enabled"
 
           # The mission check. Every serve/run/quantize path spawns one of
           # these; without them the image boots and does nothing it exists for.
@@ -227,6 +259,26 @@ jobs:
           [ "$bad" -eq 0 ] || { echo "FAIL: an enabled unit points at a file not in the image"; exit 1; }
           echo "OK: every enabled unit resolves"
 
+          # releng's /root/.zlogin runs .automated_script.sh, which fetches and
+          # executes whatever a `script=` kernel parameter points at, as root,
+          # at boot. The airootfs merge inherits it silently, so assert it is
+          # gone rather than trusting that the removal stayed in the script.
+          echo "--- boot-time remote-execution channel ---"
+          for f in root/.zlogin root/.automated_script.sh; do
+            if sudo test -e "$A/$f"; then
+              echo "FAIL: inherited automation channel /$f is present in the image"
+              exit 1
+            fi
+          done
+          echo "OK: no boot-time script= channel"
+
+          # A box meant to be developed on needs an editor and the manuals.
+          echo "--- editor and manuals ---"
+          for b in vim man; do
+            sudo test -x "$A/usr/bin/$b" || { echo "FAIL: $b missing"; exit 1; }
+          done
+          echo "OK: vim and man present"
+
       - name: Verify boot splash was rendered
         run: |
           ls -l build/profile/syslinux/splash.png
@@ -234,6 +286,17 @@ jobs:
           file build/profile/syslinux/splash.png | grep -q "640 x 480" \
             || { echo "FAIL: splash is not 640x480"; exit 1; }
           echo "OK: Cameo splash rendered at 640x480"
+
+      - name: Verify no dead boot-menu entries
+        run: |
+          # Each of these selects a kernel or module that is not on the
+          # medium, so the entry can only fail when chosen.
+          if grep -rniE 'memtest|with speech|accessibility=on' \
+               build/profile/syslinux build/profile/efiboot build/profile/grub 2>/dev/null; then
+            echo "FAIL: a boot entry points at a payload the image does not ship"
+            exit 1
+          fi
+          echo "OK: no dead boot-menu entries"
 
       - name: "DIAG log size and tail"
         if: always()

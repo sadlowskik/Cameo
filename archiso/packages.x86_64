@@ -73,6 +73,13 @@ python-pytorch-rocm
 nano
 less
 openssh
+# An editor and the manuals. A box you are meant to develop on should not
+# require a second machine to fix a config file or look up a flag.
+vim
+man-db
+man-pages
 
-# NOTE: the `cameo` CLI package itself is injected by the build pipeline once
-# packaged (cargo build --release -> PKGBUILD). See archiso/README.md.
+# NOTE: the `cameo` CLI and the `cameod` control-plane daemon are injected by the
+# build pipeline (cargo build --release, staged into the airootfs) rather than
+# listed here as packages. cameod is started on boot by cameod.service and serves
+# the browser console on 127.0.0.1:9090 by default. See archiso/README.md.

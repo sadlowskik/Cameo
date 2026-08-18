@@ -2,9 +2,9 @@
 //!
 //! Everything above this module is pure planning. This module translates a
 //! [`PlacementPlan`] into an exact command line (`CommandSpec`) — still pure and
-//! unit-tested — and [`execute`] is the *only* function that actually spawns a
-//! process against the GPU. That keeps all hardware risk in one small, clearly
-//! marked place for the Phase 1 validation run.
+//! unit-tested — and [`execute`] is the only function *here* that spawns a
+//! process against the GPU. (Detection has its own, separate hardware boundary
+//! in `cameo_gpu_detect::collect`; see `docs/architecture.md`.)
 //!
 //! ⚠️ The llama.cpp / PyTorch flag names below are best-effort and are the main
 //! thing to confirm during Phase 1. They are centralized here on purpose.
@@ -23,11 +23,42 @@ pub struct CommandSpec {
 }
 
 impl CommandSpec {
-    /// A copy-pasteable shell rendering, for `--dry-run`.
+    /// A copy-pasteable shell rendering, for `--dry-run` and the `shell` field
+    /// of `--json`.
+    ///
+    /// Every token is quoted for POSIX `sh`. This is not cosmetic: the rendering
+    /// is published as something to run, and a model path containing a space
+    /// used to render as two arguments, while one containing `;` rendered as a
+    /// second command. Arguments are program-supplied, but the *paths* in them
+    /// come from whoever typed them.
     pub fn display(&self) -> String {
-        let env: String = self.env.iter().map(|(k, v)| format!("{k}={v} ")).collect();
-        format!("{env}{} {}", self.program, self.args.join(" "))
+        let mut out = String::new();
+        for (k, v) in &self.env {
+            out.push_str(&format!("{k}={} ", shell_quote(v)));
+        }
+        out.push_str(&shell_quote(&self.program));
+        for a in &self.args {
+            out.push(' ');
+            out.push_str(&shell_quote(a));
+        }
+        out
     }
+}
+
+/// Quote one token for POSIX `sh`.
+///
+/// Anything outside a conservative safe set is wrapped in single quotes, with
+/// embedded single quotes rendered the only way `sh` allows: close, escape,
+/// reopen.
+fn shell_quote(s: &str) -> String {
+    const SAFE: &str = "-_./:=@,+";
+    if !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || SAFE.contains(c))
+    {
+        return s.to_string();
+    }
+    format!("'{}'", s.replace('\'', r"'\''"))
 }
 
 /// Build a llama.cpp inference command from a plan.
@@ -92,6 +123,11 @@ fn placement_flags(plan: &PlacementPlan) -> Vec<String> {
 /// Build a `llama-server` command — a persistent, OpenAI-compatible HTTP endpoint.
 /// This is what makes Cameo a serving box (and the engine provider a harness's
 /// engine slot can point at).
+///
+/// `api_key` is the credential clients must present. Callers that bind to
+/// anything other than loopback are expected to supply one; the decision of
+/// whether it is *required* belongs to the caller, which knows the reachability
+/// of the address it chose (see [`crate::agents::resolve_agent`]).
 pub fn build_llama_server(
     plan: &PlacementPlan,
     model: &ModelMeta,
@@ -99,6 +135,7 @@ pub fn build_llama_server(
     binary: &str,
     host: &str,
     port: u16,
+    api_key: Option<&str>,
 ) -> CommandSpec {
     let mut args = vec![
         "-m".into(),
@@ -110,6 +147,9 @@ pub fn build_llama_server(
         "--port".into(),
         port.to_string(),
     ];
+    if let Some(key) = api_key {
+        args.extend(["--api-key".into(), key.to_string()]);
+    }
     args.extend(placement_flags(plan));
 
     CommandSpec {
@@ -139,7 +179,12 @@ pub fn build_llama_bench(plan: &PlacementPlan, model_path: &str, binary: &str) -
 
 /// Build a training launch command (PyTorch, ROCm). Training harness is Phase 2;
 /// this encodes the intended shape (torchrun + FSDP degree).
-pub fn build_training(plan: &PlacementPlan, config: &str) -> CommandSpec {
+///
+/// `script` is the user's training entry point. Cameo used to hardcode
+/// `train.py`, a file that exists in neither the repo nor the image, so every
+/// `cameo train` resolved to a torchrun invocation that could only fail — the
+/// launcher is Cameo's job, the training loop is yours.
+pub fn build_training(plan: &PlacementPlan, script: &str, config: &str) -> CommandSpec {
     let shards = match plan.multi_gpu {
         MultiGpu::Fsdp { shards } => shards,
         _ => 1,
@@ -148,7 +193,7 @@ pub fn build_training(plan: &PlacementPlan, config: &str) -> CommandSpec {
         "--standalone".into(),
         "--nproc_per_node".into(),
         shards.to_string(),
-        "train.py".into(),
+        script.to_string(),
         "--config".into(),
         config.to_string(),
     ];
@@ -182,17 +227,64 @@ pub enum ExecError {
     NonZero { program: String, code: i32 },
 }
 
-/// THE execution boundary: spawn the command and wait. Linux only — everything
-/// that reaches real GPU work funnels through here.
+/// Build a `Command` from a spec with the death-signal wiring attached.
+///
+/// Shared by [`spawn`] and [`execute`] so the CLI's foreground run and the
+/// daemon's background supervisor get identical orphan-proofing: the child is
+/// tied to this process's lifetime with `PR_SET_PDEATHSIG`. Without it, killing
+/// `cameo`/`cameod` left `llama-server` running — still holding VRAM, still
+/// bound to its port, and invisible to the next plan. The child deliberately
+/// stays in *this* process group, so Ctrl-C in a terminal still reaches it.
 #[cfg(target_os = "linux")]
-pub fn execute(spec: &CommandSpec) -> Result<(), ExecError> {
+fn configured_command(spec: &CommandSpec) -> std::process::Command {
+    use std::os::unix::process::CommandExt;
     use std::process::Command;
+
     let mut cmd = Command::new(&spec.program);
     cmd.args(&spec.args);
     for (k, v) in &spec.env {
         cmd.env(k, v);
     }
-    let status = cmd.status().map_err(|e| ExecError::Spawn {
+
+    // SAFETY: `pre_exec` runs in the forked child between fork and exec, where
+    // only async-signal-safe work is permitted. Both calls here are bare
+    // syscalls, and the error path only reads `errno`.
+    unsafe {
+        cmd.pre_exec(|| {
+            if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            // The parent can die between fork and prctl, in which case the death
+            // signal was already delivered and this child would survive it —
+            // exactly the orphan the call was meant to prevent. Re-check.
+            if libc::getppid() == 1 {
+                return Err(std::io::Error::other("parent exited before spawn"));
+            }
+            Ok(())
+        });
+    }
+    cmd
+}
+
+/// Execution boundary (non-blocking): spawn the command and hand back the live
+/// child without waiting. This is what `cameod`'s supervisor tracks so it can
+/// stop an endpoint later; the child dies with the daemon (see
+/// [`configured_command`]), so a crashed daemon never leaks a serving process.
+#[cfg(target_os = "linux")]
+pub fn spawn(spec: &CommandSpec) -> Result<std::process::Child, ExecError> {
+    configured_command(spec)
+        .spawn()
+        .map_err(|e| ExecError::Spawn {
+            program: spec.program.clone(),
+            source: e,
+        })
+}
+
+/// Execution boundary (blocking): spawn the command and wait. Linux only —
+/// everything that reaches real GPU work funnels through here or [`spawn`].
+#[cfg(target_os = "linux")]
+pub fn execute(spec: &CommandSpec) -> Result<(), ExecError> {
+    let status = spawn(spec)?.wait().map_err(|e| ExecError::Spawn {
         program: spec.program.clone(),
         source: e,
     })?;
@@ -204,6 +296,12 @@ pub fn execute(spec: &CommandSpec) -> Result<(), ExecError> {
             code: status.code().unwrap_or(-1),
         })
     }
+}
+
+/// Non-Linux stub for [`spawn`].
+#[cfg(not(target_os = "linux"))]
+pub fn spawn(_spec: &CommandSpec) -> Result<std::process::Child, ExecError> {
+    Err(ExecError::UnsupportedOs)
 }
 
 /// Non-Linux stub for [`execute`].
@@ -218,7 +316,7 @@ mod tests {
     use crate::model::{ModelMeta, QuantLevel};
     use crate::plan::{plan, Task};
     use cameo_config::Settings;
-    use cameo_gpu_detect::{classify, GpuInfo, Link, LinkKind, OverrideDb, Topology};
+    use cameo_gpu_detect::{classify, GpuInfo, Link, LinkKind, MemoryKind, OverrideDb, Topology};
 
     fn gpu(gfx: &str, vram_mb: u64) -> GpuInfo {
         GpuInfo {
@@ -226,7 +324,8 @@ mod tests {
             pci_id: "1002:0000".into(),
             vram_mb: Some(vram_mb),
             gfx_arch: Some(gfx.into()),
-            driver_version: None,
+            memory: MemoryKind::Dedicated,
+            ..Default::default()
         }
     }
 
@@ -289,7 +388,7 @@ mod tests {
     }
 
     #[test]
-    fn training_uses_fsdp_degree() {
+    fn training_uses_fsdp_degree_and_the_given_script() {
         let links = vec![Link {
             a: 0,
             b: 1,
@@ -302,20 +401,25 @@ mod tests {
             &m,
             Task::Training,
         );
-        let spec = build_training(&p, "cfg.toml");
+        let spec = build_training(&p, "/work/finetune.py", "cfg.toml");
         let i = spec
             .args
             .iter()
             .position(|a| a == "--nproc_per_node")
             .unwrap();
         assert_eq!(spec.args[i + 1], "2");
+        assert!(spec.args.iter().any(|a| a == "/work/finetune.py"));
+        assert!(
+            !spec.args.iter().any(|a| a == "train.py"),
+            "no hardcoded entry point"
+        );
     }
 
     #[test]
     fn server_command_has_host_port_and_carries_offload() {
         let m = ModelMeta::moe("mixtral", 47.0, QuantLevel::Q4_K_M);
         let p = plan_for(vec![gpu("gfx1030", 16384)], vec![], &m, Task::Inference);
-        let spec = build_llama_server(&p, &m, "/m.gguf", "llama-server", "0.0.0.0", 8080);
+        let spec = build_llama_server(&p, &m, "/m.gguf", "llama-server", "127.0.0.1", 8080, None);
         assert_eq!(spec.program, "llama-server");
         let i = spec.args.iter().position(|a| a == "--port").unwrap();
         assert_eq!(spec.args[i + 1], "8080");
@@ -328,6 +432,22 @@ mod tests {
     }
 
     #[test]
+    fn server_command_passes_an_api_key_when_given() {
+        let m = ModelMeta::dense("llama-7b", 7.0, QuantLevel::Q4_K_M);
+        let p = plan_for(vec![gpu("gfx1100", 16384)], vec![], &m, Task::Inference);
+        let spec = build_llama_server(
+            &p,
+            &m,
+            "/m.gguf",
+            "llama-server",
+            "10.0.0.4",
+            8080,
+            Some("s3cret"),
+        );
+        assert!(spec.args.windows(2).any(|w| w == ["--api-key", "s3cret"]));
+    }
+
+    #[test]
     fn dry_run_display_is_readable() {
         let m = ModelMeta::dense("llama-7b", 7.0, QuantLevel::Q4_K_M);
         let p = plan_for(vec![gpu("gfx1030", 16384)], vec![], &m, Task::Inference);
@@ -335,5 +455,35 @@ mod tests {
         let shown = spec.display();
         assert!(shown.contains("HSA_OVERRIDE_GFX_VERSION=10.3.0"));
         assert!(shown.contains("llama-cli -m /m.gguf"));
+    }
+
+    #[test]
+    fn display_quotes_paths_that_would_otherwise_split_or_inject() {
+        let m = ModelMeta::dense("llama-7b", 7.0, QuantLevel::Q4_K_M);
+        let p = plan_for(vec![gpu("gfx1100", 16384)], vec![], &m, Task::Inference);
+
+        let spaced = build_llama_run(&p, &m, "/models/My Models/llama 7b.gguf", "llama-cli");
+        assert!(
+            spaced
+                .display()
+                .contains("'/models/My Models/llama 7b.gguf'"),
+            "got {}",
+            spaced.display()
+        );
+
+        // The whole rendering, so the separator is provably *inside* the quotes
+        // rather than merely present somewhere in the string.
+        let nasty = build_llama_run(&p, &m, "/tmp/x.gguf; rm -rf ~", "llama-cli");
+        assert_eq!(
+            nasty.display(),
+            "llama-cli -m '/tmp/x.gguf; rm -rf ~' -c 4096 -ngl 999"
+        );
+    }
+
+    #[test]
+    fn display_escapes_embedded_single_quotes() {
+        assert_eq!(shell_quote("it's"), r"'it'\''s'");
+        assert_eq!(shell_quote("plain-path/v1.0"), "plain-path/v1.0");
+        assert_eq!(shell_quote(""), "''");
     }
 }

@@ -13,7 +13,10 @@
 
 pub mod classify;
 pub mod collect;
+pub mod detect;
 pub mod error;
+pub mod hostmem;
+pub mod memfacts;
 pub mod overrides;
 pub mod parse;
 pub mod topology;
@@ -21,7 +24,10 @@ pub mod types;
 
 pub use classify::{classify, classify_topology};
 pub use collect::{collect, collect_topology};
+pub use detect::{detect_topology, Captures};
 pub use error::Error;
+pub use hostmem::{parse_meminfo, HostMemory};
+pub use memfacts::{apply_gpu_memory, parse_gpu_memory};
 pub use overrides::OverrideDb;
 pub use topology::{Link, LinkKind, Topology};
-pub use types::{GpuInfo, Tier, TierAssessment};
+pub use types::{GpuInfo, MemoryKind, Tier, TierAssessment};

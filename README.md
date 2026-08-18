@@ -10,8 +10,11 @@ Radeon, a multi-GPU box, up to a cluster — with the same commands.
   AMD card; ROCm is the optional accelerator on supported ones. Nothing *requires* ROCm.
 - **Auto-detect, always overridable.** Every smart default (tier, backend, placement) has
   a manual override.
-- **One core, many frontends.** All logic lives in the Rust `core/`; the CLI and (later)
-  GUI are thin clients over a stable internal API.
+- **One core, many frontends.** All logic lives in the Rust `core/`; the `cameo` CLI and
+  the `cameod` browser console are thin clients over the same detection/placement brain.
+- **Administer it from a browser.** `cameod` serves a self-contained control plane — see
+  every GPU and tier, define/start/stop inference endpoints, watch the model cache — with
+  no external web stack. It ships in the ISO and starts on boot.
 
 See [`CAMEO_PROJECT_PLAN.md`](CAMEO_PROJECT_PLAN.md) for the full build plan.
 
@@ -30,15 +33,18 @@ core/                 Rust — all real logic
   gpu-detect/         AMD GPU detection, multi-GPU topology, Tier 1/2/3 classify
   config/             config + override precedence (flag > file > auto-detect)
   placement/          the brain: (topology × model × task) → plan → command
+  models/             model cache + acquisition (cameo pull), shared by CLI + daemon
+  containers/         AMD GPU passthrough recipe for Podman/Docker
   api/                stable internal JSON-RPC API surface (CLI + GUI bind to this)
   backend-vulkan/     llama.cpp Vulkan executor (universal baseline)
   backend-rocm/       llama.cpp ROCm + PyTorch training executor (Tier 1/2)
   quant-tools/        GGUF quantization (wraps llama-quantize)
   moe-harness/        MoE expert offloading                   (stub — Phase 3)
   net-strategy/       multi-node networking strategy          (stub — v2)
-cli/                  `cameo` command-line tool (thin client over core/api)
-archiso/              Arch ISO build profile                  (scaffold)
-containers/           Podman/Docker GPU passthrough helpers   (scaffold)
+cli/                  `cameo` command-line tool (thin client over core)
+cameod/               `cameod` control-plane daemon: browser console + JSON API
+archiso/              Arch ISO build profile (ships cameo + cameod)
+containers/           container tooling notes (passthrough logic is core/containers)
 k8s/                  device plugin / Helm charts             (v2)
 scripts/phase1/       automated Phase 1 hardware validation
 docs/                 architecture, tiers, API, definition-of-done

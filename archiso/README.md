@@ -17,9 +17,9 @@ sudo CAMEO_EDITION=lite ./scripts/build-iso.sh
 
 `scripts/build-iso.sh` builds from a *copy* of this profile (source stays clean):
 it pulls the baseline boot files from the stock `releng` profile, compiles the
-`cameo` CLI (`cargo build --release`) and stages it into the image, optionally
-strips the heavy ROCm/PyTorch packages for the lite edition, then runs
-`mkarchiso`. The ISO lands in `archiso/out/`.
+`cameo` CLI **and the `cameod` console daemon** (`cargo build --release`) and
+stages both into the image, optionally strips the heavy ROCm/PyTorch packages for
+the lite edition, then runs `mkarchiso`. The ISO lands in `archiso/out/`.
 
 Write it to a USB stick and boot:
 
@@ -32,17 +32,29 @@ sudo dd if=archiso/out/cameo-*.iso of=/dev/sdX bs=4M status=progress oflag=sync
 - **Login** — `/etc/issue` shows the Cameo wordmark at the prompt (console-safe ASCII);
   `/etc/motd` greets with the tagline and the key commands.
 - **First boot** — `cameo-firstboot.service` runs `cameo gpu-status`, so the very
-  first thing you see is your GPU's support tier, in colour.
+  first thing you see is your GPU's support tier, in colour — followed by the
+  web-console URL.
 - **The CLI** — `cameo` is on `PATH` in the image, wordmark and all.
+- **The console** — `cameod.service` starts the browser control plane on boot.
+  `cameo-console-init` generates a random key and binds all interfaces each boot,
+  so out of the box it's a **key-protected home console** you open from your own
+  machine's browser (the URL + key are printed on first boot). Override in
+  `/etc/cameo/cameod.env` — e.g. `CAMEO_CONSOLE_HOST=127.0.0.1` to force
+  loopback-only, or pin a fixed key. A non-loopback bind without a key is refused
+  on purpose, so the GPU is never published unauthenticated.
 
 ## What's in the image
 `packages.x86_64`: kernel + amdgpu + Vulkan userspace (every tier), ROCm (Tier 1/2,
-dropped in lite), llama.cpp/PyTorch build deps, and the `cameo` CLI.
+dropped in lite), llama.cpp/PyTorch build deps. The `cameo` CLI and the `cameod`
+console daemon are compiled from this repo and staged into the airootfs by the
+build script (not listed as packages).
 
 ## Boot-layer tuning (the distro's unfair advantage)
 - `airootfs/etc/modprobe.d/cameo-amdgpu.conf` — amdgpu module options (GTT aperture
   for offload; power features **off by default**, enable per validated card).
-- `airootfs/etc/sysctl.d/30-cameo.conf` — hugepages / swappiness for pinned offload buffers.
+- `airootfs/etc/sysctl.d/30-cameo.conf` — documents the hugepage / swappiness knobs
+  for pinned offload buffers. Sets nothing: both values it used to ship were no-ops
+  on the live image, and a no-op reads as "already tuned".
 
 ## Still TODO (Phase 5)
 - A boot-menu splash/theme (currently inherits the releng bootloader chrome).

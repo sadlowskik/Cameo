@@ -1,0 +1,45 @@
+=====================
+ROCk module is loaded
+=====================
+HSA System Attributes
+=====================
+Runtime Version:         1.14
+
+==========
+HSA Agents
+==========
+*******
+Agent 1
+*******
+  Name:                    AMD Ryzen 9 7940HS w/ Radeon 780M Graphics
+  Marketing Name:          AMD Ryzen 9 7940HS w/ Radeon 780M Graphics
+  Vendor Name:             CPU
+  Device Type:             CPU
+  Compute Unit:            16
+*******
+Agent 2
+*******
+  Name:                    gfx1103
+  Marketing Name:          AMD Radeon 780M Graphics
+  Vendor Name:             AMD
+  Device Type:             GPU
+  Cache Info:
+    L1:                    32(0x20) KB
+  Chip ID:                 5567(0x15bf)
+  BDFID:                   50432
+  Compute Unit:            12
+  Internal Node ID:        1
+*******
+Agent 3
+*******
+  Name:                    gfx1100
+  Marketing Name:          AMD Radeon RX 7900 XTX
+  Vendor Name:             AMD
+  Device Type:             GPU
+  Cache Info:
+    L1:                    32(0x20) KB
+  Chip ID:                 29772(0x744c)
+  BDFID:                   768
+  Compute Unit:            96
+  Internal Node ID:        2
+*** Done ***

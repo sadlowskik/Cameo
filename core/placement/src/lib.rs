@@ -16,8 +16,8 @@ pub mod plan;
 pub use agents::{
     resolve_agent, resolve_agents, AgentRunPlan, AgentSpec, EngineBinding, PlacementTarget,
 };
-pub use command::{execute, CommandSpec, ExecError};
+pub use command::{execute, spawn, CommandSpec, ExecError};
 pub use error::Error;
 pub use fleet::{place_on_fleet, Cluster, FleetPlacement, FleetPlan, NetworkClass, NodeInfo};
 pub use model::{gib, ModelMeta, QuantLevel};
-pub use plan::{plan, GpuLayers, MultiGpu, Offload, PlacementPlan, Task};
+pub use plan::{plan, GpuLayers, MemoryBudget, MultiGpu, Offload, PlacementPlan, Task};

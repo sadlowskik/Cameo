@@ -1,0 +1,17 @@
+# Captured `/sys/class/drm/cardN/device` memory facts for the APU + dGPU
+# fixture, so the memory planner can be exercised without the machine.
+# Addresses match lspci_apu_dgpu.txt.
+
+# Discrete Radeon RX 7900 XTX: its own 24 GiB of GDDR6.
+[[gpu]]
+pci_addr = "0000:03:00.0"
+vram_mb = 24560
+vram_type = "GDDR6"
+
+# Radeon 780M iGPU: a 512 MiB BIOS carve-out plus a 4 GiB GTT window, both of
+# which are system RAM.
+[[gpu]]
+pci_addr = "0000:c5:00.0"
+vram_mb = 512
+gtt_mb = 4096
+vram_type = "DDR5"

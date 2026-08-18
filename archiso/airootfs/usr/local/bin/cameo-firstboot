@@ -12,5 +12,30 @@ else
   echo "Detected AMD GPUs:"
   lspci -nn | grep -iE 'vga|display|3d controller' | grep -i '\[1002:' || true
 fi
+echo "---------------------------------------------------------"
+if systemctl is-active --quiet cameod 2>/dev/null; then
+  # Report the address the console is actually bound to. Both env layers are
+  # sourced in the unit's order (generated /run first, operator /etc last wins).
+  [ -r /run/cameo/cameod.env ] && . /run/cameo/cameod.env 2>/dev/null || true
+  [ -r /etc/cameo/cameod.env ] && . /etc/cameo/cameod.env 2>/dev/null || true
+  host="${CAMEO_CONSOLE_HOST:-127.0.0.1}"
+  port="${CAMEO_CONSOLE_PORT:-9090}"
+  # 0.0.0.0 means "all interfaces" — show the actual LAN IP to browse to.
+  shown="$host"
+  if [ "$host" = "0.0.0.0" ] || [ "$host" = "::" ]; then
+    shown="$(hostname -I 2>/dev/null | awk '{print $1}')"
+    [ -n "$shown" ] || shown="<this-box-ip>"
+  fi
+  echo "Web console:  http://${shown}:${port}"
+  echo "  Open it from your own machine's browser to manage GPUs, models,"
+  echo "  and inference endpoints on this box."
+  if [ -n "${CAMEO_CONSOLE_KEY:-}" ]; then
+    echo "  Console key:  ${CAMEO_CONSOLE_KEY}"
+    echo "  (the dashboard asks for this once, then remembers it)"
+  fi
+  echo "  Settings: /etc/cameo/cameod.env"
+else
+  echo "Web console (cameod) is not running — start it with: systemctl start cameod"
+fi
 echo "========================================================="
 echo

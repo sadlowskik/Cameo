@@ -12,3 +12,9 @@ cameo-gpu-detect.workspace = true
 cameo-config.workspace = true
 serde.workspace = true
 thiserror.workspace = true
+
+# Only for `PR_SET_PDEATHSIG` at the execution boundary, so a killed `cameo`
+# does not leave `llama-server` holding VRAM. Linux-gated: no other target
+# has the call, and no other target has the boundary.
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"

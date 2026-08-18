@@ -3,10 +3,11 @@
 //! Thin client: it detects the GPU topology, classifies each card's tier, runs
 //! the placement engine to decide how to place work, and turns that plan into an
 //! exact command line. Only the final spawn touches hardware — so `--dry-run`
-//! exercises the entire brain on any OS. All commands support `--json`.
+//! exercises the entire brain on any OS.  All commands support `--json`.
 //!
 //! On non-Linux dev machines, live detection is unavailable; pass captured text
-//! with `--lspci-file` / `--rocminfo-file` / `--topo-file` to exercise everything.
+//! with `--lspci-file` / `--rocminfo-file` / `--topo-file` / `--meminfo-file` to
+//! exercise everything.
 
 use std::path::PathBuf;
 use std::process::exit;
@@ -15,13 +16,13 @@ use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
 
 use cameo_config::{Backend, Settings};
-use cameo_gpu_detect::{classify_topology, parse, topology, OverrideDb, TierAssessment, Topology};
+use cameo_gpu_detect::{
+    classify_topology, detect_topology, Captures, OverrideDb, TierAssessment, Topology,
+};
 use cameo_placement::command::{
     build_llama_run, build_llama_server, build_quantize, build_training,
 };
 use cameo_placement::{plan as make_plan, CommandSpec, ModelMeta, PlacementPlan, QuantLevel, Task};
-
-mod models;
 
 /// Terminal styling. Zero-dependency ANSI, auto-off when piped, on a dumb
 /// terminal, or when `NO_COLOR` / `CAMEO_NO_COLOR` is set. Cameo's signature
@@ -34,9 +35,19 @@ mod style {
     fn color_enabled() -> bool {
         static ON: OnceLock<bool> = OnceLock::new();
         *ON.get_or_init(|| {
-            std::env::var_os("NO_COLOR").is_none()
-                && std::env::var_os("CAMEO_NO_COLOR").is_none()
-                && std::io::stdout().is_terminal()
+            if std::env::var_os("NO_COLOR").is_some()
+                || std::env::var_os("CAMEO_NO_COLOR").is_some()
+            {
+                return false;
+            }
+            // The first-boot tier report runs as a systemd unit, so its stdout is
+            // a journal pipe and `is_terminal()` is false — the one screen most
+            // users see was the one guaranteed to be monochrome. The unit sets
+            // this to opt back in; suppression above still wins.
+            if std::env::var_os("CAMEO_FORCE_COLOR").is_some() {
+                return true;
+            }
+            std::io::stdout().is_terminal()
         })
     }
 
@@ -104,6 +115,15 @@ struct Cli {
     #[arg(long, global = true, value_name = "VER")]
     hsa_override: Option<String>,
 
+    /// Plan a model even when it exceeds VRAM + host RAM (expect swapping).
+    #[arg(long, global = true)]
+    allow_oversize: bool,
+
+    /// API key clients must present to a served model. Required to bind
+    /// anything other than loopback.
+    #[arg(long, global = true, value_name = "KEY", env = "CAMEO_API_KEY")]
+    api_key: Option<String>,
+
     /// Read `lspci -nn` output from a file instead of the live system (dev/testing).
     #[arg(long, global = true, value_name = "FILE")]
     lspci_file: Option<PathBuf>,
@@ -115,6 +135,16 @@ struct Cli {
     /// Read `rocm-smi --showtopo` output from a file (multi-GPU dev/testing).
     #[arg(long, global = true, value_name = "FILE")]
     topo_file: Option<PathBuf>,
+
+    /// Read `/proc/meminfo` from a file (dev/testing of host-RAM sizing).
+    #[arg(long, global = true, value_name = "FILE")]
+    meminfo_file: Option<PathBuf>,
+
+    /// Read captured `/sys/class/drm` memory facts (TOML) instead of the live
+    /// system. VRAM, GTT and memory type are the inputs the planner sizes
+    /// against, and an `lspci` capture cannot carry them.
+    #[arg(long, global = true, value_name = "FILE")]
+    gpu_mem_file: Option<PathBuf>,
 
     /// Load a config file (TOML). CLI flags override its values.
     #[arg(long, global = true, value_name = "FILE")]
@@ -172,6 +202,9 @@ struct PlanArgs {
     /// Plan for training instead of inference.
     #[arg(long)]
     train: bool,
+    /// Training entry point to show in the previewed command.
+    #[arg(long, value_name = "FILE")]
+    script: Option<PathBuf>,
     #[command(flatten)]
     model_opts: ModelOpts,
 }
@@ -210,7 +243,7 @@ impl From<BackendArg> for Backend {
 struct ServeArgs {
     /// Model name or path.
     model: String,
-    /// Address to bind the server to.
+    /// Address to bind the server to. Anything but loopback needs `--api-key`.
     #[arg(long, default_value = "127.0.0.1")]
     host: String,
     /// Port to listen on.
@@ -250,6 +283,10 @@ struct QuantizeArgs {
 struct TrainArgs {
     /// Path to the training config.
     config: String,
+    /// Your training entry point, launched under `torchrun`. Cameo provides the
+    /// launcher and the placement; the training loop is yours.
+    #[arg(long, value_name = "FILE")]
+    script: PathBuf,
     #[command(flatten)]
     model_opts: ModelOpts,
 }
@@ -285,42 +322,40 @@ fn run(cli: &Cli) -> Result<()> {
 // ---- detection -------------------------------------------------------------
 
 /// Detect the GPU topology (live on Linux, or from captured files on any OS).
+///
+/// File reading and error phrasing live here; the assembly order (per-card
+/// `rocminfo` correlation, sysfs memory facts, host RAM) lives once in
+/// [`cameo_gpu_detect::detect_topology`], shared with the daemon.
 fn detect(cli: &Cli) -> Result<(Topology, Vec<TierAssessment>)> {
-    let db = OverrideDb::embedded();
-    let topo = if let Some(lspci_path) = &cli.lspci_file {
-        let lspci_txt = read(lspci_path)?;
-        let mut gpus = parse::parse_lspci(&lspci_txt);
-        if let Some(rp) = &cli.rocminfo_file {
-            if let Some(gfx) = parse::parse_rocminfo_gfx(&read(rp)?) {
-                for g in &mut gpus {
-                    g.gfx_arch.get_or_insert_with(|| gfx.clone());
-                }
-            }
-        }
-        let links = match &cli.topo_file {
-            Some(tp) => topology::parse_rocm_smi_topo(&read(tp)?),
-            None => Vec::new(),
-        };
-        Topology::new(gpus, links)
-    } else {
-        cameo_gpu_detect::collect_topology().map_err(|e| match e {
-            cameo_gpu_detect::Error::UnsupportedOs => anyhow!(
-                "live GPU detection needs Linux. On this host, pass captured output with \
-                 --lspci-file (and optionally --rocminfo-file / --topo-file)."
-            ),
-            other => anyhow!(other.to_string()),
-        })?
+    let captures = Captures {
+        lspci: read_opt(&cli.lspci_file)?,
+        rocminfo: read_opt(&cli.rocminfo_file)?,
+        topo: read_opt(&cli.topo_file)?,
+        meminfo: read_opt(&cli.meminfo_file)?,
+        gpu_mem: read_opt(&cli.gpu_mem_file)?,
     };
 
-    if topo.gpus.is_empty() {
-        return Err(anyhow!("no AMD GPU detected"));
-    }
-    let assessments = classify_topology(&topo, &db);
+    let topo = detect_topology(&captures).map_err(|e| match e {
+        cameo_gpu_detect::Error::UnsupportedOs => anyhow!(
+            "live GPU detection needs Linux. On this host, pass captured output with \
+             --lspci-file (and optionally --rocminfo-file / --topo-file / --meminfo-file)."
+        ),
+        cameo_gpu_detect::Error::NoGpu => anyhow!("no AMD GPU detected"),
+        other => anyhow!(other.to_string()),
+    })?;
+
+    let assessments = classify_topology(&topo, &OverrideDb::embedded());
     Ok((topo, assessments))
 }
 
-fn read(path: &PathBuf) -> Result<String> {
-    std::fs::read_to_string(path).map_err(|e| anyhow!("reading {}: {e}", path.display()))
+/// Read an optional capture file into its contents, preserving path context on error.
+fn read_opt(path: &Option<PathBuf>) -> Result<Option<String>> {
+    match path {
+        Some(p) => std::fs::read_to_string(p)
+            .map(Some)
+            .map_err(|e| anyhow!("reading {}: {e}", p.display())),
+        None => Ok(None),
+    }
 }
 
 // ---- helpers ---------------------------------------------------------------
@@ -330,6 +365,10 @@ fn settings_from(cli: &Cli, backend: Option<Backend>) -> Result<Settings> {
     let flags = Settings {
         backend,
         hsa_override: cli.hsa_override.clone(),
+        // Only a set flag overrides the file; `--allow-oversize` absent must not
+        // stamp `Some(false)` over a config that enabled it.
+        allow_oversize: cli.allow_oversize.then_some(true),
+        serve_api_key: cli.api_key.clone(),
         ..Default::default()
     };
     let file = match &cli.config {
@@ -364,6 +403,15 @@ fn binary_for(backend: Backend) -> &'static str {
 /// llama.cpp's HTTP server binary. The backend selects the build, not the name,
 /// so both tiers resolve to the same program today.
 const SERVER_BINARY: &str = "llama-server";
+
+/// Whether an address reaches this machine only.
+fn is_loopback(host: &str) -> bool {
+    host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<std::net::IpAddr>()
+            .map(|ip| ip.is_loopback())
+            .unwrap_or(false)
+}
 
 /// Print a plan (and optional command) as JSON or human text.
 fn emit_plan(cli: &Cli, plan: &PlacementPlan, spec: Option<&CommandSpec>) {
@@ -426,6 +474,7 @@ fn cmd_gpu_status(cli: &Cli) -> Result<()> {
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
                 "gpus": assessments,
+                "host_mem": topo.host_mem,
                 "links": topo.links.iter().map(|l| serde_json::json!({
                     "a": l.a, "b": l.b, "kind": format!("{:?}", l.kind),
                 })).collect::<Vec<_>>(),
@@ -462,6 +511,18 @@ fn cmd_gpu_status(cli: &Cli) -> Result<()> {
         };
         println!("  {}  {}", style::dim("pci "), a.gpu.pci_id);
         println!("  {}  {}", style::dim("vram"), vram);
+        if a.gpu.memory.is_shared_with_host() {
+            let gtt = a
+                .gpu
+                .gtt_mb
+                .map(|m| format!(", {m} MiB GTT"))
+                .unwrap_or_default();
+            println!(
+                "  {}  shared with system RAM{}",
+                style::dim("mem "),
+                style::dim(&gtt)
+            );
+        }
         println!("  {}  {}", style::dim("arch"), arch);
         println!(
             "  {}  {}   {}",
@@ -473,6 +534,15 @@ fn cmd_gpu_status(cli: &Cli) -> Result<()> {
             println!("  {}  HSA_OVERRIDE_GFX_VERSION={o}", style::dim("ovr "));
         }
         println!("  {}  {}", style::dim("why "), style::dim(&a.rationale));
+    }
+
+    if let Some(h) = topo.host_mem {
+        println!(
+            "\n{}  {:.1} GiB total, {:.1} GiB available",
+            style::bold("Host RAM"),
+            cameo_placement::gib(h.total_bytes),
+            cameo_placement::gib(h.available_bytes)
+        );
     }
 
     if topo.is_multi_gpu() {
@@ -501,15 +571,17 @@ fn cmd_plan(cli: &Cli, args: &PlanArgs) -> Result<()> {
         make_plan(&topo, &assessments, &model, task, &settings).map_err(|e| plan_error(cli, e))?;
 
     let spec = match task {
-        Task::Inference => Some(build_llama_run(
-            &plan,
-            &model,
-            &args.model,
-            binary_for(plan.backend),
-        )),
-        Task::Training => Some(build_training(&plan, "<config>")),
+        Task::Inference => build_llama_run(&plan, &model, &args.model, binary_for(plan.backend)),
+        Task::Training => {
+            let script = args
+                .script
+                .as_ref()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "<your-train-script.py>".to_string());
+            build_training(&plan, &script, "<config>")
+        }
     };
-    emit_plan(cli, &plan, spec.as_ref());
+    emit_plan(cli, &plan, Some(&spec));
     Ok(())
 }
 
@@ -532,6 +604,19 @@ fn cmd_serve(cli: &Cli, args: &ServeArgs) -> Result<()> {
     let model = model_meta(&args.model, &args.model_opts);
     let settings = settings_from(cli, args.backend.map(Backend::from))?;
 
+    // `llama-server` is an unauthenticated completion endpoint unless given a
+    // key. Binding it to a routable address without one publishes the machine's
+    // GPU to whoever can reach the port, so that combination is refused rather
+    // than warned about.
+    let api_key = settings.serve_api_key.clone();
+    if !is_loopback(&args.host) && api_key.is_none() {
+        return Err(anyhow!(
+            "refusing to serve on {} without authentication. Pass --api-key (or set \
+             CAMEO_API_KEY / serve_api_key in config), or bind to 127.0.0.1.",
+            args.host
+        ));
+    }
+
     let plan = make_plan(&topo, &assessments, &model, Task::Inference, &settings)
         .map_err(|e| plan_error(cli, e))?;
     let model_path = resolve_model_path(cli, &args.model)?;
@@ -542,6 +627,7 @@ fn cmd_serve(cli: &Cli, args: &ServeArgs) -> Result<()> {
         SERVER_BINARY,
         &args.host,
         args.port,
+        api_key.as_deref(),
     );
     if !cli.dry_run {
         eprintln!(
@@ -557,22 +643,41 @@ fn cmd_serve(cli: &Cli, args: &ServeArgs) -> Result<()> {
 /// — so the printed command matches what would execute — but falls back to the
 /// name when it is absent, keeping dry-run usable as a planning aid pre-download.
 fn resolve_model_path(cli: &Cli, name: &str) -> Result<String> {
-    match models::resolve(name) {
+    match cameo_models::resolve(name) {
         Ok(path) => Ok(path),
         Err(_) if cli.dry_run => Ok(name.to_string()),
         Err(e) => Err(e),
     }
 }
 
+/// Print the built-in alias table and the current cache contents.
+fn list_models() -> Result<()> {
+    println!("Aliases (cameo pull <name>):");
+    for a in cameo_models::aliases() {
+        println!("  {:<14} {}", a.name, a.repo);
+    }
+    println!("\nCache: {}", cameo_models::models_dir().display());
+    let cached = cameo_models::cached_models();
+    if cached.is_empty() {
+        println!("  (empty)");
+    } else {
+        for name in cached {
+            println!("  {name}");
+        }
+    }
+    Ok(())
+}
+
 fn cmd_pull(cli: &Cli, args: &PullArgs) -> Result<()> {
     if args.list {
-        return models::list();
+        return list_models();
     }
     let spec = args
         .model
         .as_deref()
         .expect("clap requires model unless --list");
-    let path = models::pull(spec)?;
+    // The CLI surfaces pull progress on stderr, matching its other status lines.
+    let path = cameo_models::pull(spec, &mut |line| eprintln!("cameo: {line}"))?;
     if cli.json {
         println!(
             "{}",
@@ -590,9 +695,20 @@ fn cmd_train(cli: &Cli, args: &TrainArgs) -> Result<()> {
     let model = model_meta("train-target", &args.model_opts);
     let settings = settings_from(cli, None)?;
 
+    // Cameo launches training; it does not supply the training loop. Check the
+    // script exists before planning, so the failure names the missing file
+    // rather than surfacing as a torchrun error minutes later.
+    if !cli.dry_run && !args.script.is_file() {
+        return Err(anyhow!(
+            "training script {} not found. Point --script at your entry point; \
+             Cameo provides the torchrun launcher and the placement, not the loop.",
+            args.script.display()
+        ));
+    }
+
     let plan = make_plan(&topo, &assessments, &model, Task::Training, &settings)
         .map_err(|e| plan_error(cli, e))?;
-    let spec = build_training(&plan, &args.config);
+    let spec = build_training(&plan, &args.script.to_string_lossy(), &args.config);
     run_or_dry(cli, &plan, &spec)
 }
 
@@ -671,6 +787,12 @@ fn plan_error(cli: &Cli, e: cameo_placement::Error) -> anyhow::Error {
             "tier_unsupported",
             &format!("training requires a Tier 1/2 (ROCm) GPU; top GPU is Tier {tier}"),
         ),
+        e @ cameo_placement::Error::InsufficientMemory { .. } => {
+            fail(cli.json, "insufficient_memory", &e.to_string())
+        }
+        e @ cameo_placement::Error::InvalidModel(_) => {
+            fail(cli.json, "invalid_model", &e.to_string())
+        }
         other => anyhow!(other.to_string()),
     }
 }
@@ -688,6 +810,8 @@ fn fail(json: bool, code: &str, message: &str) -> ! {
     exit(match code {
         "tier_unsupported" => 2,
         "exec_error" => 3,
+        "insufficient_memory" => 4,
+        "invalid_model" => 5,
         _ => 1,
     });
 }

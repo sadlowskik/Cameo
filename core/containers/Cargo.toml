@@ -1,0 +1,12 @@
+[package]
+name = "cameo-containers"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Container integration: AMD GPU passthrough and Podman/Docker request/response logic (pure; socket I/O is a separate Linux-gated boundary)."
+
+[dependencies]
+serde = { workspace = true }
+serde_json.workspace = true

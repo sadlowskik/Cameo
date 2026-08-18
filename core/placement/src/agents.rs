@@ -53,6 +53,11 @@ pub struct AgentSpec {
 }
 
 /// A resolved, runnable agent binding.
+///
+/// ⚠️ For a local agent on a reachable address, `serve` carries the API key as an
+/// argument — it has to, that is how `llama-server` receives it. Treat an
+/// `AgentRunPlan` as secret-bearing: do not log it or serialize it into anything
+/// world-readable.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AgentRunPlan {
@@ -71,6 +76,11 @@ pub enum AgentRunPlan {
         node: usize,
         node_name: String,
         endpoint: String,
+        /// The address `llama-server` binds to. Loopback unless the node is
+        /// genuinely remote, and never the wildcard without authentication.
+        bind: String,
+        /// Whether the listener requires an API key.
+        authenticated: bool,
         /// The `llama-server` command that stands the model up on the node.
         serve: CommandSpec,
     },
@@ -85,7 +95,34 @@ fn provider_endpoint(provider: &str) -> Option<&'static str> {
     }
 }
 
+/// The host part of a `host:port` (or `[v6]:port`) address.
+fn host_of(address: &str) -> &str {
+    if let Some(rest) = address.strip_prefix('[') {
+        return rest.split(']').next().unwrap_or("127.0.0.1");
+    }
+    match address.split_once(':') {
+        Some((h, _)) => h,
+        None => address,
+    }
+}
+
+/// Whether an address names this machine only.
+fn is_loopback(host: &str) -> bool {
+    host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<std::net::IpAddr>()
+            .map(|ip| ip.is_loopback())
+            .unwrap_or(false)
+}
+
 /// Resolve one agent spec into a run plan. `port` is used only for local serving.
+///
+/// Serving is fail-closed. `llama-server` has no authentication of its own
+/// beyond `--api-key`, so an unauthenticated listener on a routable address is
+/// an open completion endpoint — and previously this function bound every local
+/// agent to `0.0.0.0` with no key at all. Now a non-loopback node requires
+/// `serve_api_key`, and the listener binds to that node's own address rather
+/// than every interface on the box.
 pub fn resolve_agent(
     spec: &AgentSpec,
     cluster: &Cluster,
@@ -140,20 +177,42 @@ pub fn resolve_agent(
                 }
             };
 
-            let host = cluster.nodes[node_idx]
-                .address
-                .split(':')
-                .next()
-                .unwrap_or("127.0.0.1")
-                .to_string();
-            let serve =
-                build_llama_server(&node_plan, model, path, "llama-server", "0.0.0.0", port);
+            let host = host_of(&cluster.nodes[node_idx].address).to_string();
+            let loopback = is_loopback(&host);
+            let api_key = settings.serve_api_key.as_deref();
+            if !loopback && api_key.is_none() {
+                return Err(Error::MissingApiKey(spec.name.clone()));
+            }
+
+            // Bind to the node's own address when it is a literal IP, so the
+            // listener is not exposed on interfaces nobody asked about. A
+            // hostname cannot be bound directly, so those fall back to the
+            // wildcard — which by now is guaranteed to be authenticated.
+            let bind = if host.parse::<std::net::IpAddr>().is_ok() {
+                host.clone()
+            } else if loopback {
+                "127.0.0.1".to_string()
+            } else {
+                "0.0.0.0".to_string()
+            };
+
+            let serve = build_llama_server(
+                &node_plan,
+                model,
+                path,
+                "llama-server",
+                &bind,
+                port,
+                api_key,
+            );
             Ok(AgentRunPlan::Local {
                 name: spec.name.clone(),
                 role: spec.role.clone(),
                 node: node_idx,
                 node_name,
                 endpoint: format!("http://{host}:{port}"),
+                bind,
+                authenticated: api_key.is_some(),
                 serve,
             })
         }
@@ -185,7 +244,7 @@ mod tests {
     use super::*;
     use crate::fleet::{NetworkClass, NodeInfo};
     use crate::model::QuantLevel;
-    use cameo_gpu_detect::{classify, GpuInfo, OverrideDb, Topology};
+    use cameo_gpu_detect::{classify, GpuInfo, MemoryKind, OverrideDb, Topology};
 
     fn node(name: &str, gfx: &str, vram_mb: u64) -> NodeInfo {
         let db = OverrideDb::embedded();
@@ -194,7 +253,8 @@ mod tests {
             pci_id: "1002:0000".into(),
             vram_mb: Some(vram_mb),
             gfx_arch: Some(gfx.into()),
-            driver_version: None,
+            memory: MemoryKind::Dedicated,
+            ..Default::default()
         };
         let assessments = vec![classify(gpu.clone(), &db)];
         NodeInfo {
@@ -212,6 +272,14 @@ mod tests {
                 node("beefy", "gfx1100", 24576),
             ],
             network: NetworkClass::FastEthernet,
+        }
+    }
+
+    /// Settings for a fleet that is allowed to serve off-box.
+    fn keyed() -> Settings {
+        Settings {
+            serve_api_key: Some("fleet-key".into()),
+            ..Default::default()
         }
     }
 
@@ -265,7 +333,7 @@ mod tests {
         let plan = resolve_agent(
             &local_spec("worker", PlacementTarget::Auto),
             &cluster(),
-            &Settings::default(),
+            &keyed(),
             8100,
         )
         .unwrap();
@@ -286,7 +354,7 @@ mod tests {
         let plan = resolve_agent(
             &local_spec("w", PlacementTarget::Node("beefy".into())),
             &cluster(),
-            &Settings::default(),
+            &keyed(),
             8100,
         )
         .unwrap();
@@ -302,7 +370,7 @@ mod tests {
             resolve_agent(
                 &local_spec("w", PlacementTarget::Node("ghost".into())),
                 &cluster(),
-                &Settings::default(),
+                &keyed(),
                 8100
             ),
             Err(Error::NodeNotFound(_))
@@ -323,7 +391,7 @@ mod tests {
             local_spec("hands1", PlacementTarget::Node("edge".into())),
             local_spec("hands2", PlacementTarget::Node("beefy".into())),
         ];
-        let plans: Vec<_> = resolve_agents(&specs, &cluster(), &Settings::default())
+        let plans: Vec<_> = resolve_agents(&specs, &cluster(), &keyed())
             .into_iter()
             .map(|r| r.unwrap())
             .collect();
@@ -340,5 +408,83 @@ mod tests {
             })
             .collect();
         assert_eq!(ports, vec![8100, 8101]);
+    }
+
+    // ---- serving is fail-closed --------------------------------------------
+
+    #[test]
+    fn remote_node_without_an_api_key_is_refused() {
+        let err = resolve_agent(
+            &local_spec("w", PlacementTarget::Node("beefy".into())),
+            &cluster(),
+            &Settings::default(),
+            8100,
+        )
+        .unwrap_err();
+        assert!(matches!(err, Error::MissingApiKey(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn a_reachable_listener_is_always_authenticated() {
+        let plan = resolve_agent(
+            &local_spec("w", PlacementTarget::Node("beefy".into())),
+            &cluster(),
+            &keyed(),
+            8100,
+        )
+        .unwrap();
+        match plan {
+            AgentRunPlan::Local {
+                bind,
+                authenticated,
+                serve,
+                ..
+            } => {
+                assert!(authenticated);
+                assert!(serve
+                    .args
+                    .windows(2)
+                    .any(|w| w == ["--api-key", "fleet-key"]));
+                // The wildcard is only ever reached with a key in hand.
+                if bind == "0.0.0.0" {
+                    assert!(authenticated);
+                }
+            }
+            other => panic!("expected Local, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_loopback_node_needs_no_key_and_never_binds_the_wildcard() {
+        let mut c = cluster();
+        c.nodes[0].address = "127.0.0.1:9000".into();
+        let plan = resolve_agent(
+            &local_spec("w", PlacementTarget::Node("edge".into())),
+            &c,
+            &Settings::default(),
+            8100,
+        )
+        .unwrap();
+        match plan {
+            AgentRunPlan::Local {
+                bind,
+                authenticated,
+                ..
+            } => {
+                assert_eq!(bind, "127.0.0.1");
+                assert!(!authenticated);
+            }
+            other => panic!("expected Local, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn host_parsing_handles_ipv6_and_bare_hosts() {
+        assert_eq!(host_of("[::1]:9000"), "::1");
+        assert_eq!(host_of("beefy.local:9000"), "beefy.local");
+        assert_eq!(host_of("beefy.local"), "beefy.local");
+        assert!(is_loopback("::1"));
+        assert!(is_loopback("localhost"));
+        assert!(!is_loopback("10.0.0.4"));
     }
 }

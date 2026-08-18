@@ -99,6 +99,7 @@ dependencies = [
  "cameo-backend-vulkan",
  "cameo-config",
  "cameo-gpu-detect",
+ "cameo-models",
  "cameo-moe-harness",
  "cameo-placement",
  "cameo-quant-tools",
@@ -118,6 +119,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "cameo-containers"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "cameo-daemon"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cameo-config",
+ "cameo-gpu-detect",
+ "cameo-models",
+ "cameo-placement",
+ "clap",
+ "serde",
+ "serde_json",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "cameo-gpu-detect"
 version = "0.1.0"
 dependencies = [
@@ -125,6 +150,13 @@ dependencies = [
  "serde",
  "thiserror",
  "toml",
+]
+
+[[package]]
+name = "cameo-models"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
 ]
 
 [[package]]
@@ -147,6 +179,7 @@ version = "0.1.0"
 dependencies = [
  "cameo-config",
  "cameo-gpu-detect",
+ "libc",
  "serde",
  "thiserror",
 ]
@@ -255,6 +288,12 @@ name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
+
+[[package]]
+name = "libc"
+version = "0.2.189"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
 
 [[package]]
 name = "log"

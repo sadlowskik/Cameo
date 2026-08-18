@@ -17,6 +17,10 @@ required for v1.
 
 ## Progress marker
 The current tree delivers the hardware-independent foundation (detection, tiering,
-CLI, API contract, config) and the automated Phase 1 validation runbook. The
-**Phase 1 gate** — a real `known-good-combo.json` from `scripts/phase1` on actual
-AMD hardware — is the next milestone; Phase 2 backend work is blocked on it.
+CLI, API contract, config) and the automated Phase 1 validation runbook. It also
+now delivers the **`cameod` control plane** — a browser console (GPU/tier report,
+inference-endpoint lifecycle, model cache) that ships in the ISO and starts on
+boot — built to the same boundary discipline (pure logic + capture-fixture tests,
+Linux-gated I/O), so it is exercised off-hardware. The **Phase 1 gate** — a real
+`known-good-combo.json` from `scripts/phase1` on actual AMD hardware — is the next
+milestone; Phase 2 backend work is blocked on it.

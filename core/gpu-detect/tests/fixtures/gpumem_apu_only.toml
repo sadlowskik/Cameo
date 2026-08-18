@@ -1,0 +1,6 @@
+# A bare APU: 512 MiB carve-out, 4 GiB GTT, all of it system RAM.
+[[gpu]]
+pci_addr = "0000:c5:00.0"
+vram_mb = 512
+gtt_mb = 4096
+vram_type = "DDR5"

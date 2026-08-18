@@ -225,6 +225,7 @@ mod tests {
                 vram_mb: Some(vram_mb),
                 gfx_arch: Some(gfx.into()),
                 driver_version: None,
+                ..Default::default()
             })
             .collect();
         let assessments = gpus.iter().cloned().map(|g| classify(g, &db)).collect();

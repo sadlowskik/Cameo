@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Cameo console bootstrap.
+#
+# The image is a headless appliance: there is no local browser, so the console is
+# meant to be opened from your own machine — the "one home console" model, like
+# Proxmox. For that to work out of the box the daemon must (a) bind a reachable
+# address and (b) be authenticated, because cameod refuses a non-loopback bind
+# without a key on purpose (an unauthenticated GPU on the LAN is a footgun).
+#
+# So this oneshot, ordered *before* cameod, writes an ephemeral env file with a
+# freshly generated key and an all-interfaces bind. It runs before cameod's
+# EnvironmentFile is read, which is why it is a separate unit and not an
+# ExecStartPre (systemd reads EnvironmentFile at service-start, before ExecStartPre).
+#
+# The operator's /etc/cameo/cameod.env is layered AFTER this file by the unit, so
+# anything they uncomment there — a fixed key, or CAMEO_CONSOLE_HOST=127.0.0.1 to
+# force loopback-only — overrides what is generated here. This file lives on tmpfs
+# and is regenerated every boot, which is the right lifetime for a live image.
+set -euo pipefail
+
+RUN_DIR=/run/cameo
+RUN_ENV="$RUN_DIR/cameod.env"
+
+mkdir -p "$RUN_DIR"
+
+# A URL-safe key with no shell- or header-hostile characters. 32 chars of base64
+# from the kernel CSPRNG is ~192 bits of entropy — not brute-forceable.
+key="$(head -c 48 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 32)"
+if [ -z "$key" ]; then
+  # /dev/urandom or base64 unavailable should be impossible on this image, but a
+  # bootstrap must never leave the console unauthenticated on the LAN. Fall back
+  # to loopback rather than binding wide with a weak/empty key.
+  {
+    echo "CAMEO_CONSOLE_HOST=127.0.0.1"
+  } >"$RUN_ENV"
+  echo "cameo-console-init: could not generate a key; bound loopback-only." >&2
+  exit 0
+fi
+
+umask 077
+{
+  echo "# Auto-generated each boot by cameo-console-init. Ephemeral (tmpfs)."
+  echo "# Override anything here from /etc/cameo/cameod.env."
+  echo "CAMEO_CONSOLE_HOST=0.0.0.0"
+  echo "CAMEO_CONSOLE_KEY=$key"
+} >"$RUN_ENV"
+
+echo "cameo-console-init: console will bind 0.0.0.0 with a generated key."

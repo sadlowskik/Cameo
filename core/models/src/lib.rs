@@ -1,20 +1,25 @@
 //! Model acquisition and resolution.
 //!
-//! The CLI spawns `llama-server -m <path>`; without a real path that spawn
-//! fails with ENOENT. This module turns a friendly name into a local `.gguf`
-//! path and provides `cameo pull` to fetch one into a cache.
+//! Cameo spawns `llama-server -m <path>`; without a real path that spawn fails
+//! with ENOENT. This crate turns a friendly name into a local `.gguf` path and
+//! fetches one into a cache. It is shared by both front ends — the `cameo` CLI
+//! (`cameo pull`) and the `cameod` control plane (the dashboard's model list) —
+//! so there is one cache layout and one alias table, not two.
 //!
-//! Downloads shell out to `curl`, which is already in the image and matches
-//! the project's execution-boundary pattern (the CLI never links an HTTP
-//! stack; it drives external tools). Nothing here runs during `--dry-run`.
+//! Downloads shell out to `curl`, which is already in the image and matches the
+//! project's execution-boundary pattern: the code never links an HTTP stack, it
+//! drives external tools.
+//!
+//! This crate returns data and never prints; presentation (human tables, JSON)
+//! belongs to the caller.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{anyhow, bail, Result};
 
-/// A curated alias → (HuggingFace repo, file) table. Weighted toward models
-/// that fit a 4 GB Tier-3 APU, since that is Cameo's proving-ground hardware.
+/// A curated alias → (HuggingFace repo, file) table. Weighted toward models that
+/// fit a 4 GB Tier-3 APU, since that is Cameo's proving-ground hardware.
 /// Filenames verified against the HuggingFace model API.
 const ALIASES: &[(&str, &str, &str)] = &[
     (
@@ -34,6 +39,25 @@ const ALIASES: &[(&str, &str, &str)] = &[
     ),
 ];
 
+/// A built-in model alias: a short name and the HuggingFace source it maps to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Alias {
+    /// The name a user types (`cameo pull <name>`, or the dashboard model list).
+    pub name: &'static str,
+    /// The HuggingFace `owner/repo` the file is fetched from.
+    pub repo: &'static str,
+    /// The GGUF filename within that repo.
+    pub file: &'static str,
+}
+
+/// The built-in alias table, as structured data for a caller to render.
+pub fn aliases() -> Vec<Alias> {
+    ALIASES
+        .iter()
+        .map(|(name, repo, file)| Alias { name, repo, file })
+        .collect()
+}
+
 /// Where pulled models live: `$CAMEO_MODELS_DIR`, else `$HOME/.cache/cameo/models`.
 /// On the live image root's home is `/root`, so `/root/.cache/cameo/models`.
 pub fn models_dir() -> PathBuf {
@@ -47,11 +71,26 @@ pub fn models_dir() -> PathBuf {
     home.join(".cache/cameo/models")
 }
 
+/// The `.gguf` files currently in the cache, by filename (sorted). A missing
+/// cache directory is not an error — it just means nothing has been pulled yet.
+pub fn cached_models() -> Vec<String> {
+    let mut names: Vec<String> = match std::fs::read_dir(models_dir()) {
+        Ok(entries) => entries
+            .flatten()
+            .filter(|e| e.path().extension().is_some_and(|x| x == "gguf"))
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+    names.sort();
+    names
+}
+
 /// Resolve a model argument to a path to hand `llama.cpp` `-m`.
 ///
-/// - An existing file, or anything that looks like a path (has a separator or
-///   a `.gguf` suffix), is passed through untouched — people with their own
-///   GGUF keep working exactly as before.
+/// - An existing file, or anything that looks like a path (has a separator or a
+///   `.gguf` suffix), is passed through untouched — people with their own GGUF
+///   keep working exactly as before.
 /// - A bare name is looked up in the cache as `<name>.gguf` (or `<name>` if it
 ///   already carries the suffix). A miss is an error that names the fix.
 pub fn resolve(name: &str) -> Result<String> {
@@ -77,8 +116,8 @@ pub fn resolve(name: &str) -> Result<String> {
 
 /// Turn a pull spec into (download URL, local filename).
 ///
-/// Accepted forms: a curated alias, a full `http(s)://` URL, or a
-/// HuggingFace `owner/repo:file.gguf` reference.
+/// Accepted forms: a curated alias, a full `http(s)://` URL, or a HuggingFace
+/// `owner/repo:file.gguf` reference.
 fn spec_to_url(spec: &str) -> Result<(String, String)> {
     if let Some((_, repo, file)) = ALIASES.iter().find(|(a, _, _)| *a == spec) {
         let url = format!("https://huggingface.co/{repo}/resolve/main/{file}");
@@ -109,51 +148,32 @@ fn spec_to_url(spec: &str) -> Result<(String, String)> {
     )
 }
 
-/// Print the alias table and the current cache contents.
-pub fn list() -> Result<()> {
-    println!("Aliases (cameo pull <name>):");
-    for (alias, repo, _) in ALIASES {
-        println!("  {alias:<14} {repo}");
-    }
-    let dir = models_dir();
-    println!("\nCache: {}", dir.display());
-    match std::fs::read_dir(&dir) {
-        Ok(entries) => {
-            let mut found = false;
-            for e in entries.flatten() {
-                if e.path().extension().is_some_and(|x| x == "gguf") {
-                    println!("  {}", e.file_name().to_string_lossy());
-                    found = true;
-                }
-            }
-            if !found {
-                println!("  (empty)");
-            }
-        }
-        Err(_) => println!("  (not created yet)"),
-    }
-    Ok(())
-}
+/// A progress line emitted during a pull, so a caller can surface it however it
+/// likes (the CLI prints it; the daemon could log it) without this crate
+/// choosing an output stream.
+pub type Progress<'a> = dyn FnMut(&str) + 'a;
 
-/// Download a model into the cache, resuming a partial file if present.
-/// Returns the final path. Writes to a `.part` sidecar and renames on success
-/// so an interrupted pull never leaves a truncated file that looks complete.
-pub fn pull(spec: &str) -> Result<PathBuf> {
+/// Download a model into the cache, resuming a partial file if present. Returns
+/// the final path. Writes to a `.part` sidecar and renames on success so an
+/// interrupted pull never leaves a truncated file that looks complete.
+///
+/// `report` receives human-readable progress lines; pass `|_| {}` to ignore them.
+pub fn pull(spec: &str, report: &mut Progress<'_>) -> Result<PathBuf> {
     let (url, filename) = spec_to_url(spec)?;
     let dir = models_dir();
     std::fs::create_dir_all(&dir).map_err(|e| anyhow!("creating {}: {e}", dir.display()))?;
 
     let dest = dir.join(&filename);
     if dest.is_file() {
-        eprintln!("cameo: {} already present at {}", spec, dest.display());
+        report(&format!("{} already present at {}", spec, dest.display()));
         return Ok(dest);
     }
     let part = dir.join(format!("{filename}.part"));
 
-    eprintln!(
-        "cameo: pulling {spec}\n  from {url}\n  to   {}",
+    report(&format!(
+        "pulling {spec}\n  from {url}\n  to   {}",
         dest.display()
-    );
+    ));
     let status = Command::new("curl")
         .args([
             "--fail",
@@ -179,7 +199,7 @@ pub fn pull(spec: &str) -> Result<PathBuf> {
     }
 
     std::fs::rename(&part, &dest).map_err(|e| anyhow!("finalising {}: {e}", dest.display()))?;
-    eprintln!("cameo: saved {}", dest.display());
+    report(&format!("saved {}", dest.display()));
     Ok(dest)
 }
 
@@ -232,5 +252,12 @@ mod tests {
     #[test]
     fn junk_spec_is_rejected() {
         assert!(spec_to_url("not a real spec").is_err());
+    }
+
+    #[test]
+    fn aliases_are_exposed_as_data() {
+        let a = aliases();
+        assert!(a.iter().any(|x| x.name == "tinyllama"));
+        assert!(a.iter().all(|x| x.file.ends_with(".gguf")));
     }
 }

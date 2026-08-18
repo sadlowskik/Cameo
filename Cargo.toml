@@ -4,6 +4,8 @@ members = [
     "core/gpu-detect",
     "core/config",
     "core/placement",
+    "core/models",
+    "core/containers",
     "core/api",
     "core/backend-vulkan",
     "core/backend-rocm",
@@ -11,6 +13,7 @@ members = [
     "core/quant-tools",
     "core/net-strategy",
     "cli",
+    "cameod",
 ]
 
 [workspace.package]
@@ -30,12 +33,14 @@ anyhow = "1"
 regex = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 
 # Internal crates (path deps, versioned together)
 cameo-gpu-detect = { path = "core/gpu-detect" }
 cameo-config = { path = "core/config" }
 cameo-placement = { path = "core/placement" }
+cameo-models = { path = "core/models" }
+cameo-containers = { path = "core/containers" }
 cameo-api = { path = "core/api" }
 cameo-backend-vulkan = { path = "core/backend-vulkan" }
 cameo-backend-rocm = { path = "core/backend-rocm" }

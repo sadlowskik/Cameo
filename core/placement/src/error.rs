@@ -7,6 +7,15 @@ pub enum Error {
     #[error("no GPUs available to plan for")]
     NoGpus,
 
+    #[error("invalid model description: {0}")]
+    InvalidModel(String),
+
+    #[error("model needs ~{needed_gib:.1} GiB but this machine can offer ~{available_gib:.1} GiB of VRAM + host RAM; use a smaller model or a heavier quantization, or pass --allow-oversize to plan it anyway")]
+    InsufficientMemory { needed_gib: f64, available_gib: f64 },
+
+    #[error("serving agent '{0}' on a non-loopback address needs an API key; set serve_api_key in config (or give the node a loopback address)")]
+    MissingApiKey(String),
+
     #[error("training requires a Tier 1/2 (ROCm) GPU; the top detected GPU is Tier {0}")]
     TrainingUnsupported(u8),
 

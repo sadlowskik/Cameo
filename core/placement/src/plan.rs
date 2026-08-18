@@ -15,6 +15,11 @@ use serde::{Deserialize, Serialize};
 /// driver, and runtime growth).
 pub(crate) const VRAM_HEADROOM: f64 = 0.90;
 
+/// Fraction of *available* host RAM we are willing to commit to offload. The
+/// rest is the operating system's: page cache, the shell you typed this into,
+/// and the model file being read off disk.
+pub(crate) const HOST_HEADROOM: f64 = 0.75;
+
 /// Very rough training-footprint multiplier over weight bytes (fp32 Adam states
 /// + grads + activations). PLACEHOLDER — calibrate in Phase 1.
 pub(crate) const TRAINING_FOOTPRINT_MULT: u64 = 4;
@@ -61,6 +66,103 @@ pub struct Offload {
     pub kv_on_host: bool,
 }
 
+/// What the machine actually has to spend, after headroom.
+///
+/// The distinction that matters is whether GPU memory is a *separate* pool. On
+/// a discrete card it is, and VRAM plus host RAM really do add up. On an APU the
+/// carve-out and the GTT aperture are both system RAM, so counting "VRAM" and
+/// "host RAM to offload into" as independent budgets spends the same DIMM twice
+/// and produces a plan the kernel OOM-kills.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct MemoryBudget {
+    /// Bytes of GPU-local memory after headroom: a discrete card's VRAM, an
+    /// APU's BIOS carve-out, or the sum of both on a mixed machine.
+    pub vram_bytes: u64,
+    /// Bytes of host RAM an APU can additionally address through its GTT
+    /// aperture. Real GPU capacity, but the *same bytes* as `usable_host_bytes`
+    /// — which is why it is tracked apart rather than folded in.
+    pub gtt_reachable_bytes: u64,
+    /// Bytes of host RAM available for offload. `None` when `/proc/meminfo` was
+    /// not readable — which is *unknown*, not zero, so the ceiling is not enforced.
+    pub usable_host_bytes: Option<u64>,
+    /// Whether every GPU reported its VRAM.
+    pub vram_known: bool,
+    /// Whether any GPU's memory is carved out of system RAM.
+    pub shared_memory: bool,
+}
+
+impl MemoryBudget {
+    /// Derive the budget from a detected topology.
+    pub fn of(topo: &Topology) -> Self {
+        let vram_known = !topo.gpus.is_empty() && topo.gpus.iter().all(|g| g.vram_mb.is_some());
+        let shared_memory = topo.gpus.iter().any(|g| g.memory.is_shared_with_host());
+
+        let vram_total: u64 = topo
+            .gpus
+            .iter()
+            .filter_map(|g| g.vram_bytes())
+            .fold(0, u64::saturating_add);
+        let vram_usable = scale(vram_total, VRAM_HEADROOM);
+
+        let usable_host_bytes = topo
+            .host_mem
+            .map(|h| scale(h.available_bytes, HOST_HEADROOM));
+
+        // An APU can also address host RAM through its GTT aperture. That is
+        // real GPU-resident capacity, but it is *the same bytes* as the host
+        // budget — so it raises the GPU ceiling without raising the total one.
+        let gtt_reachable = if shared_memory {
+            let gtt: u64 = topo
+                .gpus
+                .iter()
+                .filter(|g| g.memory.is_shared_with_host())
+                .filter_map(|g| g.gtt_bytes())
+                .fold(0, u64::saturating_add);
+            match usable_host_bytes {
+                Some(host) => gtt.min(host),
+                None => 0,
+            }
+        } else {
+            0
+        };
+
+        Self {
+            vram_bytes: vram_usable,
+            gtt_reachable_bytes: gtt_reachable,
+            usable_host_bytes,
+            vram_known,
+            shared_memory,
+        }
+    }
+
+    /// Everything the GPU(s) can hold: their own memory plus, on an APU, the
+    /// host RAM they can reach through GTT.
+    pub fn usable_vram(&self) -> u64 {
+        self.vram_bytes.saturating_add(self.gtt_reachable_bytes)
+    }
+
+    /// The most this machine can hold in total, counting the shared pool once.
+    /// `None` when host memory is unknown and no honest ceiling exists.
+    ///
+    /// GTT is deliberately absent from this sum: it is a *window onto* the host
+    /// budget, not memory in addition to it.
+    pub fn ceiling_bytes(&self) -> Option<u64> {
+        Some(self.vram_bytes.saturating_add(self.usable_host_bytes?))
+    }
+}
+
+/// Multiply a byte count by a headroom fraction without overflowing.
+fn scale(bytes: u64, factor: f64) -> u64 {
+    let v = bytes as f64 * factor;
+    if !v.is_finite() || v <= 0.0 {
+        0
+    } else if v >= u64::MAX as f64 {
+        u64::MAX
+    } else {
+        v as u64
+    }
+}
+
 /// The concrete plan the backend builders consume.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PlacementPlan {
@@ -70,6 +172,8 @@ pub struct PlacementPlan {
     pub gpu_count: usize,
     pub multi_gpu: MultiGpu,
     pub offload: Offload,
+    /// The memory this plan was sized against.
+    pub budget: MemoryBudget,
     /// Environment variables to set (e.g. `HSA_OVERRIDE_GFX_VERSION`).
     pub env: Vec<(String, String)>,
     /// Whether the working set is estimated to fit in VRAM without host offload.
@@ -89,6 +193,9 @@ pub fn plan(
     if topo.gpus.is_empty() || assessments.is_empty() {
         return Err(Error::NoGpus);
     }
+    // Before any arithmetic: a description that cannot be reasoned about must
+    // fail here with a message, not downstream as a nonsense byte count.
+    model.validate()?;
     let top = &assessments[0];
 
     let backend = resolve_backend(settings.backend, top, task)?;
@@ -102,26 +209,37 @@ pub fn plan(
         env.push(("HSA_OVERRIDE_GFX_VERSION".to_string(), h));
     }
 
-    let vram_known = topo.gpus.iter().all(|g| g.vram_mb.is_some());
-    let total_vram_bytes: u64 = topo
-        .gpus
-        .iter()
-        .filter_map(|g| g.vram_mb)
-        .map(|mb| mb * 1024 * 1024)
-        .sum();
-    let usable = (total_vram_bytes as f64 * VRAM_HEADROOM) as u64;
+    let budget = MemoryBudget::of(topo);
 
     let mut notes = Vec::new();
-    if !vram_known {
+    if !budget.vram_known {
         notes.push("VRAM unknown for at least one GPU; planning conservatively.".to_string());
     }
     if assessments.iter().any(|a| a.tier != top.tier) {
         notes.push("Mixed GPU tiers detected; planning to the top GPU's tier.".to_string());
     }
+    match budget.usable_host_bytes {
+        Some(h) => notes.push(format!(
+            "~{:.1} GiB of host RAM available for offload.",
+            gib(h)
+        )),
+        None => notes.push(
+            "Host RAM unknown (no /proc/meminfo); offload sizing is unchecked. \
+             Plans that spill to host RAM here are not verified to fit."
+                .to_string(),
+        ),
+    }
+    if budget.shared_memory {
+        notes.push(
+            "Integrated GPU: its memory is carved from system RAM, so GPU and host \
+             offload draw on one pool rather than two."
+                .to_string(),
+        );
+    }
 
     match task {
-        Task::Inference => plan_inference(topo, model, backend, env, usable, vram_known, notes),
-        Task::Training => plan_training(topo, model, backend, env, usable, vram_known, notes),
+        Task::Inference => plan_inference(topo, model, backend, env, budget, settings, notes),
+        Task::Training => plan_training(topo, model, backend, env, budget, settings, notes),
     }
 }
 
@@ -146,17 +264,43 @@ fn resolve_backend(
     }
 }
 
+/// Refuse a workload that does not fit VRAM *and* host RAM combined.
+///
+/// Only enforced when both figures are actually known. Unknown host memory is
+/// unknown, not zero — refusing there would break every dev-host plan fed from
+/// captured fixtures. `allow_oversize` exists because every smart default in
+/// Cameo is overridable, and mmap-from-disk is a real (slow) fallback.
+fn check_ceiling(budget: &MemoryBudget, need: u64, settings: &Settings) -> Result<(), Error> {
+    if settings.allow_oversize.unwrap_or(false) || !budget.vram_known {
+        return Ok(());
+    }
+    let Some(ceiling) = budget.ceiling_bytes() else {
+        return Ok(());
+    };
+    if need > ceiling {
+        return Err(Error::InsufficientMemory {
+            needed_gib: gib(need),
+            available_gib: gib(ceiling),
+        });
+    }
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn plan_inference(
     topo: &Topology,
     model: &ModelMeta,
     backend: Backend,
     env: Vec<(String, String)>,
-    usable: u64,
-    vram_known: bool,
+    budget: MemoryBudget,
+    settings: &Settings,
     mut notes: Vec<String>,
 ) -> Result<PlacementPlan, Error> {
     let need = model.total_bytes();
+    check_ceiling(&budget, need, settings)?;
+
+    let usable = budget.usable_vram();
+    let vram_known = budget.vram_known;
     let fits = vram_known && need <= usable;
     let mut offload = Offload {
         gpu_layers: GpuLayers::All,
@@ -181,7 +325,7 @@ fn plan_inference(
     } else if model.is_moe {
         offload.experts_on_host = true;
         let resident = need.saturating_sub(model.offloadable_expert_bytes());
-        if vram_known && resident <= usable {
+        if resident <= usable {
             notes.push(format!(
                 "MoE experts (~{:.1} GiB) offloaded to host RAM; ~{:.1} GiB stays resident.",
                 gib(model.offloadable_expert_bytes()),
@@ -207,7 +351,7 @@ fn plan_inference(
     } else {
         // Dense offload: weights and KV stay on the GPU for the layers that fit.
         let layers = estimate_gpu_layers(
-            model.weights_bytes() + model.kv_bytes(),
+            model.weights_bytes().saturating_add(model.kv_bytes()),
             model.n_layers,
             usable,
         );
@@ -223,7 +367,8 @@ fn plan_inference(
         }
     }
 
-    let multi_gpu = choose_inference_multi_gpu(topo, model, vram_known, &mut notes);
+    let multi_gpu =
+        choose_inference_multi_gpu(topo, model, &budget, offload.experts_on_host, &mut notes);
     let gpu_count = gpu_count_for(&multi_gpu, topo.gpu_count());
 
     Ok(PlacementPlan {
@@ -232,6 +377,7 @@ fn plan_inference(
         gpu_count,
         multi_gpu,
         offload,
+        budget,
         env,
         fits_in_vram: fits,
         notes,
@@ -244,11 +390,17 @@ fn plan_training(
     model: &ModelMeta,
     backend: Backend,
     env: Vec<(String, String)>,
-    usable: u64,
-    vram_known: bool,
+    budget: MemoryBudget,
+    settings: &Settings,
     mut notes: Vec<String>,
 ) -> Result<PlacementPlan, Error> {
-    let train_need = model.weights_bytes() * TRAINING_FOOTPRINT_MULT;
+    let train_need = model
+        .weights_bytes()
+        .saturating_mul(TRAINING_FOOTPRINT_MULT);
+    check_ceiling(&budget, train_need, settings)?;
+
+    let usable = budget.usable_vram();
+    let vram_known = budget.vram_known;
     let fits = vram_known && train_need <= usable;
     let n = topo.gpu_count();
 
@@ -295,6 +447,7 @@ fn plan_training(
             experts_on_host: false,
             kv_on_host: false,
         },
+        budget,
         env,
         fits_in_vram: fits,
         notes,
@@ -304,7 +457,8 @@ fn plan_training(
 fn choose_inference_multi_gpu(
     topo: &Topology,
     model: &ModelMeta,
-    vram_known: bool,
+    budget: &MemoryBudget,
+    experts_on_host: bool,
     notes: &mut Vec<String>,
 ) -> MultiGpu {
     let n = topo.gpu_count();
@@ -313,7 +467,7 @@ fn choose_inference_multi_gpu(
     }
     let link = topo.bottleneck_link().unwrap_or(LinkKind::HostOnly);
     let single_usable = single_gpu_usable(topo, 0);
-    let fits_one = vram_known && model.total_bytes() <= single_usable;
+    let fits_one = budget.vram_known && model.total_bytes() <= single_usable;
 
     if fits_one && link == LinkKind::HostOnly {
         notes.push(
@@ -327,16 +481,28 @@ fn choose_inference_multi_gpu(
     // VRAM buys KV-cache / batch headroom — which serving especially benefits from.
     // Only a host-only link (above) makes the split not worth it. Override with an
     // explicit backend/placement if you want single-GPU on a fast link.
-    if model.is_moe {
+    if model.is_moe && !experts_on_host {
         notes.push(format!(
             "Distributing MoE experts across {n} GPUs (expert-parallel) over {link:?} link."
         ));
         MultiGpu::ExpertParallel
     } else {
+        // Expert-parallel and experts-on-host are mutually exclusive: one asks
+        // the cards to share the expert tensors, the other pins those same
+        // tensors to the CPU. Emitting both produced a command that told
+        // llama.cpp to do each. With experts on host, what is left to spread
+        // across cards is the resident (non-expert) weights — a layer split.
         let fractions = vram_fractions(topo);
-        notes.push(format!(
-            "Splitting dense model across {n} GPUs by VRAM proportion over {link:?} link."
-        ));
+        if model.is_moe {
+            notes.push(format!(
+                "MoE experts are on host RAM, so the {n} GPUs split the resident \
+                 (non-expert) weights by VRAM proportion over {link:?} link."
+            ));
+        } else {
+            notes.push(format!(
+                "Splitting dense model across {n} GPUs by VRAM proportion over {link:?} link."
+            ));
+        }
         MultiGpu::LayerSplit { fractions }
     }
 }
@@ -353,9 +519,8 @@ fn gpu_count_for(multi: &MultiGpu, n: usize) -> usize {
 fn single_gpu_usable(topo: &Topology, idx: usize) -> u64 {
     topo.gpus
         .get(idx)
-        .and_then(|g| g.vram_mb)
-        .map(|mb| (mb * 1024 * 1024) as f64 * VRAM_HEADROOM)
-        .map(|b| b as u64)
+        .and_then(|g| g.vram_bytes())
+        .map(|b| scale(b, VRAM_HEADROOM))
         .unwrap_or(0)
 }
 
@@ -363,7 +528,7 @@ fn single_gpu_usable(topo: &Topology, idx: usize) -> u64 {
 /// unknown.
 fn vram_fractions(topo: &Topology) -> Vec<f32> {
     let vrams: Vec<u64> = topo.gpus.iter().map(|g| g.vram_mb.unwrap_or(0)).collect();
-    let total: u64 = vrams.iter().sum();
+    let total: u64 = vrams.iter().fold(0, |a, b| a.saturating_add(*b));
     let n = topo.gpu_count().max(1);
     if total == 0 {
         return vec![1.0 / n as f32; n];
@@ -389,7 +554,7 @@ fn estimate_gpu_layers(resident_bytes: u64, n_layers: u32, usable: u64) -> u32 {
 mod tests {
     use super::*;
     use crate::model::QuantLevel;
-    use cameo_gpu_detect::{classify, GpuInfo, OverrideDb, Tier};
+    use cameo_gpu_detect::{classify, GpuInfo, HostMemory, MemoryKind, OverrideDb, Tier};
 
     fn gpu(gfx: &str, vram_mb: u64) -> GpuInfo {
         GpuInfo {
@@ -397,7 +562,22 @@ mod tests {
             pci_id: "1002:0000".into(),
             vram_mb: Some(vram_mb),
             gfx_arch: Some(gfx.into()),
-            driver_version: None,
+            memory: MemoryKind::Dedicated,
+            ..Default::default()
+        }
+    }
+
+    /// An integrated GPU: a small BIOS carve-out plus a GTT window, both of
+    /// which are system RAM.
+    fn igpu(gfx: &str, carveout_mb: u64, gtt_mb: u64) -> GpuInfo {
+        GpuInfo {
+            model: gfx.into(),
+            pci_id: "1002:15bf".into(),
+            vram_mb: Some(carveout_mb),
+            gtt_mb: Some(gtt_mb),
+            gfx_arch: Some(gfx.into()),
+            memory: MemoryKind::Shared,
+            ..Default::default()
         }
     }
 
@@ -408,6 +588,11 @@ mod tests {
         let db = OverrideDb::embedded();
         let assessments: Vec<_> = gpus.iter().cloned().map(|g| classify(g, &db)).collect();
         (Topology::new(gpus, links), assessments)
+    }
+
+    /// Gibibytes as bytes, for readable fixtures.
+    fn gb(n: f64) -> u64 {
+        (n * 1024.0 * 1024.0 * 1024.0) as u64
     }
 
     #[test]
@@ -500,5 +685,134 @@ mod tests {
         let p = plan(&topo, &a, &m, Task::Training, &Settings::default()).unwrap();
         assert_eq!(p.multi_gpu, MultiGpu::Fsdp { shards: 2 });
         assert_eq!(p.backend, Backend::Rocm);
+    }
+
+    // ---- host memory --------------------------------------------------------
+
+    #[test]
+    fn model_beyond_vram_and_host_is_refused_not_planned() {
+        // 16 GiB card, 8 GiB of RAM: a 70B Q4 (~40 GiB) fits neither, and the
+        // old planner happily emitted a layer-split command for it.
+        let (topo, a) = topo_with(vec![gpu("gfx1100", 16384)], vec![]);
+        let topo = topo.with_host_memory(Some(HostMemory {
+            total_bytes: gb(8.0),
+            available_bytes: gb(6.0),
+        }));
+        let m = ModelMeta::dense("llama-70b", 70.0, QuantLevel::Q4_K_M);
+        let err = plan(&topo, &a, &m, Task::Inference, &Settings::default()).unwrap_err();
+        assert!(
+            matches!(err, Error::InsufficientMemory { .. }),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn oversize_is_allowed_when_explicitly_asked_for() {
+        let (topo, a) = topo_with(vec![gpu("gfx1100", 16384)], vec![]);
+        let topo = topo.with_host_memory(Some(HostMemory {
+            total_bytes: gb(8.0),
+            available_bytes: gb(6.0),
+        }));
+        let m = ModelMeta::dense("llama-70b", 70.0, QuantLevel::Q4_K_M);
+        let settings = Settings {
+            allow_oversize: Some(true),
+            ..Default::default()
+        };
+        assert!(plan(&topo, &a, &m, Task::Inference, &settings).is_ok());
+    }
+
+    #[test]
+    fn unknown_host_memory_does_not_refuse() {
+        // Unknown is not zero. Dev hosts fed from captured fixtures have no
+        // /proc/meminfo, and must still be able to plan.
+        let (topo, a) = topo_with(vec![gpu("gfx1100", 16384)], vec![]);
+        assert!(topo.host_mem.is_none());
+        let m = ModelMeta::dense("llama-70b", 70.0, QuantLevel::Q4_K_M);
+        let p = plan(&topo, &a, &m, Task::Inference, &Settings::default()).unwrap();
+        assert!(p.notes.iter().any(|n| n.contains("Host RAM unknown")));
+    }
+
+    #[test]
+    fn apu_does_not_count_the_same_ram_twice() {
+        // 512 MiB carve-out, 4 GiB GTT, 4 GiB of RAM with ~2.5 GiB available.
+        // Counting "VRAM + host" as separate pools makes this look like it can
+        // hold ~2.4 GiB of GPU memory *plus* ~1.9 GiB of host offload; it cannot.
+        let (topo, a) = topo_with(vec![igpu("gfx1103", 512, 4096)], vec![]);
+        let topo = topo.with_host_memory(Some(HostMemory {
+            total_bytes: gb(4.0),
+            available_bytes: gb(2.5),
+        }));
+        let budget = MemoryBudget::of(&topo);
+        assert!(budget.shared_memory);
+
+        let host = budget.usable_host_bytes.unwrap();
+        let ceiling = budget.ceiling_bytes().unwrap();
+        assert!(
+            ceiling < budget.usable_vram() + host,
+            "ceiling {ceiling} must be less than the naive sum"
+        );
+
+        // A 7B Q4 (~4.2 GiB) does not fit this machine in any arrangement.
+        let m = ModelMeta::dense("llama-7b", 7.0, QuantLevel::Q4_K_M);
+        assert!(matches!(
+            plan(&topo, &a, &m, Task::Inference, &Settings::default()),
+            Err(Error::InsufficientMemory { .. })
+        ));
+
+        // A 1.1B Q4 (~0.7 GiB) does, and gets the GTT window it needs.
+        let small = ModelMeta::dense("tinyllama", 1.1, QuantLevel::Q4_K_M);
+        let p = plan(&topo, &a, &small, Task::Inference, &Settings::default()).unwrap();
+        assert!(p.notes.iter().any(|n| n.contains("Integrated GPU")));
+        assert!(p.fits_in_vram, "notes: {:?}", p.notes);
+    }
+
+    // ---- validation ---------------------------------------------------------
+
+    #[test]
+    fn nonsense_params_are_refused_before_any_math() {
+        let (topo, a) = topo_with(vec![gpu("gfx1100", 16384)], vec![]);
+        for bad in [f64::INFINITY, f64::NAN, -1.0] {
+            let m = ModelMeta::dense("x", bad, QuantLevel::Q4_K_M);
+            let err = plan(&topo, &a, &m, Task::Inference, &Settings::default()).unwrap_err();
+            assert!(matches!(err, Error::InvalidModel(_)), "{bad}: {err:?}");
+        }
+    }
+
+    // ---- MoE consistency ----------------------------------------------------
+
+    #[test]
+    fn experts_on_host_never_coexists_with_expert_parallel() {
+        // Two cards, fast link, an MoE far too big for their combined VRAM.
+        // The offload decision pins experts to the CPU; the multi-GPU decision
+        // used to independently choose to distribute those same experts.
+        let links = vec![cameo_gpu_detect::Link {
+            a: 0,
+            b: 1,
+            kind: LinkKind::Xgmi,
+        }];
+        let (topo, a) = topo_with(vec![gpu("gfx1100", 8192), gpu("gfx1100", 8192)], links);
+        let m = ModelMeta::moe("huge-moe", 200.0, QuantLevel::Q4_K_M);
+        let p = plan(&topo, &a, &m, Task::Inference, &Settings::default()).unwrap();
+        assert!(p.offload.experts_on_host);
+        assert_ne!(
+            p.multi_gpu,
+            MultiGpu::ExpertParallel,
+            "cannot both pin experts to host and spread them across cards"
+        );
+        assert!(matches!(p.multi_gpu, MultiGpu::LayerSplit { .. }));
+    }
+
+    #[test]
+    fn moe_that_fits_the_cards_still_goes_expert_parallel() {
+        let links = vec![cameo_gpu_detect::Link {
+            a: 0,
+            b: 1,
+            kind: LinkKind::Xgmi,
+        }];
+        let (topo, a) = topo_with(vec![gpu("gfx1100", 24576), gpu("gfx1100", 24576)], links);
+        let m = ModelMeta::moe("mixtral-47b", 47.0, QuantLevel::Q4_K_M);
+        let p = plan(&topo, &a, &m, Task::Inference, &Settings::default()).unwrap();
+        assert!(!p.offload.experts_on_host);
+        assert_eq!(p.multi_gpu, MultiGpu::ExpertParallel);
     }
 }

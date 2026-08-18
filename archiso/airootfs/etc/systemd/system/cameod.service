@@ -1,0 +1,29 @@
+[Unit]
+Description=Cameo control-plane console (cameod)
+Documentation=https://github.com/sadlowskik/Cameo
+# Detection reads local tools (lspci/rocminfo/rocm-smi) and binds a socket. The
+# generated env below binds all interfaces with a key, so wait for the network.
+After=network.target cameo-console-init.service
+Wants=network.target
+
+[Service]
+Type=simple
+# Two env layers, later wins for a duplicate key:
+#   1. /run/cameo/cameod.env — generated each boot by cameo-console-init: a random
+#      key + an all-interfaces bind, so the box is a reachable "home console".
+#   2. /etc/cameo/cameod.env — operator overrides (a fixed key, or
+#      CAMEO_CONSOLE_HOST=127.0.0.1 to force loopback-only). Ships all-commented.
+# Both optional ('-'): with neither, cameod falls back to a safe loopback bind.
+EnvironmentFile=-/run/cameo/cameod.env
+EnvironmentFile=-/etc/cameo/cameod.env
+# Match where `cameo pull` (run as root on the live image) caches models, so the
+# console's model list and the CLI agree on one cache.
+Environment=CAMEO_MODELS_DIR=/root/.cache/cameo/models
+ExecStart=/usr/local/bin/cameod
+# A crashed daemon takes its supervised endpoints with it (PR_SET_PDEATHSIG), so
+# restarting is clean — no orphaned llama-server holding VRAM.
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
