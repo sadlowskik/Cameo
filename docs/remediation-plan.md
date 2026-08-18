@@ -232,7 +232,7 @@ untested. · Fixable: yes, cheap. · Compat: CI runners have no GPU — software
 tier report → CPU-backend token); container build+run smoke; real-GPU accel stays
 the gated `scripts/phase1/` checklist.
 
-**F17 · Docs** 🟡
+**F17 · Docs** 🟢 *(done — `quickstart.md` (container/ISO/install), `api-reference.md` (the cameod HTTP surface), harness + updating guides, linked from README; architecture boundary drift already fixed)*
 Why: `architecture.md` has the known detection-boundary drift (#18); no single
 user-facing quickstart/install/API guide. · Fixable: yes. · **Best-of-both:** fix
 the architecture doc to name both hardware boundaries (execution *and* detection),

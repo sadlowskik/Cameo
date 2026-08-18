@@ -69,6 +69,14 @@ cargo test  --workspace
 Pure-logic crates build and test on any OS. Linux-only paths (Unix-socket daemon,
 `/sys` collectors, backend execution) are `#[cfg(target_os = "linux")]`-gated.
 
+## Documentation
+
+- [Quickstart](docs/quickstart.md) — run and serve, three ways from one build.
+- [HTTP API reference](docs/api-reference.md) — the `cameod` control-plane surface.
+- [Harness integration](docs/harness-integration.md) — point Knossos at Cameo.
+- [Updating](docs/updating.md) — container / installed / ISO update paths.
+- [Architecture](docs/architecture.md) · [Tiers](docs/tiers.md) · [Road to v1](docs/remediation-plan.md)
+
 ## License
 
 Apache-2.0. See [`LICENSE`](LICENSE).
