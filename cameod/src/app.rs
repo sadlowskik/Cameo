@@ -131,6 +131,16 @@ pub fn route(state: &Arc<AppState>, req: &Request) -> Response {
         }
     }
 
+    // The OpenAI-compatible gateway (F8): one front door, routed by model name to
+    // the right supervised llama-server. Gated by the *serve* key — the inference
+    // credential — separate from the console key that gates /api.
+    if segs.first() == Some(&"v1") {
+        if let Some(denied) = check_serve_auth(state, req) {
+            return denied;
+        }
+        return route_v1(state, req, &segs[1..]);
+    }
+
     // Everything under /api is gated by the console key, when one is configured.
     if segs.first() == Some(&"api") {
         if let Some(denied) = check_auth(state, req) {
@@ -140,6 +150,78 @@ pub fn route(state: &Arc<AppState>, req: &Request) -> Response {
     }
 
     Response::error(404, "not found")
+}
+
+/// Authenticate a `/v1` request against the serve key. `None` = allowed. No serve
+/// key configured means the gateway is open (loopback dev), mirroring the
+/// per-endpoint serving rule.
+fn check_serve_auth(state: &Arc<AppState>, req: &Request) -> Option<Response> {
+    let key = state.settings.serve_api_key.as_deref()?;
+    let presented = req
+        .header("authorization")
+        .and_then(|h| h.strip_prefix("Bearer "))
+        .map(str::trim);
+    if presented == Some(key) {
+        None
+    } else {
+        Some(Response::error(401, "missing or invalid api key"))
+    }
+}
+
+/// The `/v1` OpenAI gateway (F8). `GET /v1/models` lists the served models; any
+/// `POST /v1/*` (chat/completions, completions, embeddings) is routed by the
+/// body's `model` field to the endpoint serving it and proxied.
+fn route_v1(state: &Arc<AppState>, req: &Request, rest: &[&str]) -> Response {
+    match (req.method.as_str(), rest) {
+        ("GET", ["models"]) => {
+            let data: Vec<Value> = state
+                .sup
+                .served_models()
+                .into_iter()
+                .map(|m| json!({ "id": m, "object": "model", "owned_by": "cameo" }))
+                .collect();
+            Response::json(200, &json!({ "object": "list", "data": data })).no_store()
+        }
+        ("POST", _) => gateway_proxy(state, req),
+        _ => Response::error(404, "unknown /v1 route"),
+    }
+}
+
+/// Route one gateway request: find the endpoint serving the body's `model`, mark
+/// it used (for LRU residency), and proxy the call to its `llama-server`.
+fn gateway_proxy(state: &Arc<AppState>, req: &Request) -> Response {
+    let model = serde_json::from_slice::<Value>(&req.body)
+        .ok()
+        .and_then(|v| {
+            v.get("model")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        });
+    let Some(model) = model else {
+        return Response::error(400, "request body must be JSON with a \"model\" field");
+    };
+
+    let Some((host, port, id)) = state.sup.endpoint_for_model(&model) else {
+        return Response::error(
+            404,
+            format!("no running endpoint serves model '{model}'. Start one via POST /api/servers."),
+        );
+    };
+    state.sup.touch(&id);
+
+    let content_type = req.header("content-type").unwrap_or("application/json");
+    match crate::proxy::forward(
+        &host,
+        port,
+        &req.method,
+        &req.path,
+        content_type,
+        &req.body,
+        state.settings.serve_api_key.as_deref(),
+    ) {
+        Ok(b) => Response::new(b.status, &b.content_type, b.body),
+        Err(e) => Response::error(502, format!("upstream {host}:{port} unreachable: {e}")),
+    }
 }
 
 /// Authenticate an `/api` request. `None` means allowed; `Some(resp)` is the

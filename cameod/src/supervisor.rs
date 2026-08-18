@@ -363,13 +363,36 @@ impl Supervisor {
 
     /// Mark an endpoint as just-used, so LRU eviction (F10) reflects real traffic.
     /// Called by the gateway (F8) when it routes a request to this endpoint.
-    // Wired up by F8 (the next increment); the LRU support lands with F10 so the
-    // eviction order is meaningful the moment routing exists.
-    #[allow(dead_code)]
     pub fn touch(&self, id: &str) {
         if let Some(e) = self.endpoints.lock().unwrap().get_mut(id) {
             e.last_used = SystemTime::now();
         }
+    }
+
+    /// The `(host, port, id)` of a running endpoint serving `model`, for the F8
+    /// gateway to proxy to. Reaps first so a crashed endpoint is not routed to.
+    pub fn endpoint_for_model(&self, model: &str) -> Option<(String, u16, String)> {
+        let mut map = self.endpoints.lock().unwrap();
+        map.values_mut().find_map(|e| {
+            e.refresh();
+            (e.model == model && e.state() == "running")
+                .then(|| (e.host.clone(), e.port, e.id.clone()))
+        })
+    }
+
+    /// Distinct model names currently served (running), for `GET /v1/models`.
+    pub fn served_models(&self) -> Vec<String> {
+        let mut map = self.endpoints.lock().unwrap();
+        let mut names: Vec<String> = map
+            .values_mut()
+            .filter_map(|e| {
+                e.refresh();
+                (e.state() == "running").then(|| e.model.clone())
+            })
+            .collect();
+        names.sort();
+        names.dedup();
+        names
     }
 
     /// The current view of every tracked endpoint, most-recently-started first.

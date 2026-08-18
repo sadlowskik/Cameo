@@ -28,6 +28,7 @@ use crate::supervisor::Supervisor;
 mod app;
 mod dashboard;
 mod http;
+mod proxy;
 mod supervisor;
 
 #[derive(Parser)]

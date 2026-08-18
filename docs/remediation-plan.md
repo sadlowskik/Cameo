@@ -6,12 +6,13 @@ is the plan to turn what exists into a **finished v1 product** — "most of what
 need" to run AI on almost any machine, manage it like a product, and scale a box
 into a fleet.
 
-**Progress (synced against the tree 2026-08-18):** 🟢 done — F1, F2, F7, F9, F12.
-🟡 partial — F4, F13, F16, F17, F18. 🔴 not started — F3, F5, F6, F8, F10, F11,
-F14, F15. Foundation (fleet brain, agents, supervisor, control-plane HTTP +
-dashboard, CI, containers passthrough, `cameo-install`, phase1 toolkit) is in.
-Detection is corroborated on silicon; the execution/serving flags are still
-unvalidated on a real GPU. Now working the remainder in the sequenced order below.
+**Progress (synced against the tree 2026-08-18):** 🟢 done — F1, F2, F7, F8, F9,
+F10, F11, F12 (**Phase B serving core complete**). 🟡 partial — F4, F13, F16, F17,
+F18. 🔴 not started — F3, F5, F6, F14, F15. Foundation (fleet brain, agents,
+supervisor, control-plane HTTP + dashboard, CI, containers passthrough,
+`cameo-install`, phase1 toolkit) is in. Detection is corroborated on silicon; the
+execution/serving flags are still unvalidated on a real GPU. Now working the
+remainder in the sequenced order below.
 
 Method (same as the gap assessment): every feature carries **why/damage**,
 **fixable?**, **compatibility** (what it must not break), and a
@@ -138,7 +139,7 @@ knows host RAM (`hostmem.rs`) — route to CPU with a clear "low throughput" not
 
 ### Area 3 — Serving runtime (turns one box into a serving product)
 
-**F8 · Unified OpenAI gateway** 🔴
+**F8 · Unified OpenAI gateway** 🟢 *(done — `/v1/models` + `/v1/*` routed by model name to the serving llama-server, dependency-free proxy)*
 Why: per-endpoint OpenAI serving exists (`llama-server`), but there's **no single
 front door** — a client must know each model's host/port. A product needs one
 stable endpoint. · Fixable: yes; `cameod` already has the HTTP server + the
