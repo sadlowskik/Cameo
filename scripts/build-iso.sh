@@ -210,21 +210,36 @@ for f in "$BUILD"/syslinux/*.cfg; do
   ' "$f" >"$f.new"
   mv "$f.new" "$f"
 done
-if [ -f "$BUILD/grub/grub.cfg" ]; then
-  # Brace-counted so a whole menuentry block goes, not just its title line.
+# grub has TWO config files (grub.cfg and loopback.cfg) and two droppable
+# constructs, so both files get the same pass:
+#   * Memtest86+ is wrapped in an `if ... -f '/boot/memtest86+/...' ; then
+#     menuentry {...} fi` guard. Dropping only the inner menuentry leaves the
+#     `if`/`fi` lines, and the guard path itself carries the string "memtest"
+#     that the verify step greps for -- so the whole if...fi block is dropped.
+#   * The accessibility entry is a plain menuentry, but releng titles it
+#     "(x86_64, UEFI, Accessibility)" -- not "speech" -- and only its APPEND
+#     carries `accessibility=on`. Matching the title on "speech" alone missed
+#     it, so each menuentry block is buffered and dropped if any line in it
+#     mentions accessibility, speech, or memtest.
+for g in "$BUILD"/grub/grub.cfg "$BUILD"/grub/loopback.cfg; do
+  [ -f "$g" ] || continue
   awk '
-    /^[[:space:]]*menuentry/ && (/speech/ || tolower($0) ~ /memtest/) {
-      drop = 1; depth = 0
-    }
-    drop {
-      depth += gsub(/\{/, "{"); depth -= gsub(/\}/, "}")
-      if (depth <= 0) { drop = 0 }
+    BEGIN { IGNORECASE = 1 }
+    /^[[:space:]]*if[[:space:]].*memtest/ { ifdrop = 1; next }
+    ifdrop { if ($0 ~ /^[[:space:]]*fi[[:space:]]*$/) ifdrop = 0; next }
+    /^[[:space:]]*menuentry/ { inme = 1; depth = 0; opened = 0; block = ""; bad = 0 }
+    inme {
+      block = block $0 ORS
+      if ($0 ~ /accessibility|speech|memtest/) bad = 1
+      n = gsub(/\{/, "{"); depth += n; if (n) opened = 1
+      depth -= gsub(/\}/, "}")
+      if (opened && depth <= 0) { if (!bad) printf "%s", block; inme = 0 }
       next
     }
     { print }
-  ' "$BUILD/grub/grub.cfg" >"$BUILD/grub/grub.cfg.new"
-  mv "$BUILD/grub/grub.cfg.new" "$BUILD/grub/grub.cfg"
-fi
+  ' "$g" >"$g.new"
+  mv "$g.new" "$g"
+done
 log "Dropped $dropped systemd-boot entr(ies), plus syslinux/grub equivalents"
 
 # 1e. Brand the boot menus. Those borrowed configs label every entry "Arch
