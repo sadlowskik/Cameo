@@ -15,7 +15,7 @@ Errors are JSON: `{ "error": "…", "status": <code> }`.
 
 | Method · Path | Returns |
 |---|---|
-| `GET /healthz` | `{ "status": "ok" }` — process is up (F9). |
+| `GET /healthz` | `{ "status": "ok", "hub": <bool> }` — process is up (F9); `hub` is whether this daemon accepts `/hub/*`. |
 | `GET /readyz` | `{ "ready": true }` / `503` — can detect + plan (F9). |
 | `GET /version` | `{ "name": "cameod", "version": "…" }` (F5). |
 | `GET /` | The dashboard (HTML). |

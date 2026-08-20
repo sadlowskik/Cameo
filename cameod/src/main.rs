@@ -286,8 +286,42 @@ fn run(args: Args) -> Result<()> {
         eprintln!("cameod: detection replayed from captured fixtures");
     }
 
+    #[cfg(unix)]
+    if posture == auth::Posture::SelfHost {
+        let sock_path = std::env::var("CAMEO_SOCKET")
+            .unwrap_or_else(|_| "/run/cameo/cameo.sock".into());
+        match bind_operator_socket(&sock_path) {
+            Ok(unix) => {
+                let sock_state = Arc::clone(&state);
+                std::thread::spawn(move || {
+                    http::serve_unix(unix, move |req| app::route(&sock_state, req));
+                });
+                eprintln!("cameod: operator socket {sock_path} (self-host, keyless for Knossos)");
+            }
+            Err(e) => {
+                eprintln!("cameod: operator socket not bound ({e}); LAN HTTP is still keyed");
+            }
+        }
+    }
+
     http::serve(listener, move |req| app::route(&state, req));
     Ok(())
+}
+
+/// Host-only operator socket. 0600 so only the cameod user (and a co-located
+/// harness running as the same user) can connect. Multi-tenant never calls this.
+#[cfg(unix)]
+fn bind_operator_socket(path: &str) -> Result<std::os::unix::net::UnixListener> {
+    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::net::UnixListener;
+    if let Some(dir) = std::path::Path::new(path).parent() {
+        std::fs::create_dir_all(dir).map_err(|e| anyhow!("creating {}: {e}", dir.display()))?;
+    }
+    let _ = std::fs::remove_file(path);
+    let listener = UnixListener::bind(path).map_err(|e| anyhow!("binding {path}: {e}"))?;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+        .map_err(|e| anyhow!("chmod {path}: {e}"))?;
+    Ok(listener)
 }
 
 /// Whether an address reaches this machine only.

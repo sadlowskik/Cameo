@@ -21,6 +21,10 @@ at them.
 - **Auth:** when `auth_required` is true, present the serve key as
   `Authorization: Bearer <key>`. It is the same key for every model behind the one
   door.
+- **Operator seam (self-host):** Knossos on the same box may speak HTTP to
+  `/run/cameo/cameo.sock` (override with `CAMEO_SOCKET`). That connection is
+  operator without a bearer key — load, stop, evict. Multi-tenant posture does
+  not bind the socket. LAN TCP stays keyed.
 
 ## One box
 
@@ -44,9 +48,11 @@ at them.
    )
    ```
 
-That is the whole bridge: Knossos treats `http://box-a:9090/v1` as an OpenAI
-provider, and Cameo routes, supervises, auto-restarts (F9), and VRAM-arbitrates
-(F10) behind it.
+That is the whole bridge: Knossos `--engine cameo` discovers `GET /api/engines`
+(serve key is enough), fail-closes if the model is not resident, and — on the
+host-only socket or with `CAMEO_CONSOLE_KEY` — `POST /api/servers` to ensure it.
+A consumer key never loads VRAM. Cameo routes, supervises, auto-restarts (F9),
+and VRAM-arbitrates (F10) behind `/v1`.
 
 ## A fleet
 

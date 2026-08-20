@@ -45,6 +45,21 @@ pub struct NodeInfo {
     pub address: String,
     pub topology: Topology,
     pub assessments: Vec<TierAssessment>,
+    /// Model names this node is already serving. One resident `/v1` per name —
+    /// a second agent asking for the same GGUF reuses this, it does not spawn.
+    pub resident: Vec<String>,
+}
+
+impl NodeInfo {
+    /// True when this node already has `model` (or the GGUF `path`) loaded.
+    pub fn is_warm_for(&self, model: &str, path: &str) -> bool {
+        let want = model.trim_end_matches(".gguf");
+        let want_path = path.trim_end_matches(".gguf");
+        self.resident.iter().any(|m| {
+            let have = m.trim_end_matches(".gguf");
+            have == want || have == want_path || m == path
+        })
+    }
 }
 
 impl NodeInfo {
@@ -234,6 +249,7 @@ mod tests {
             address: format!("{name}:9000"),
             topology: Topology::new(gpus, Vec::new()),
             assessments,
+            resident: Vec::new(),
         }
     }
 

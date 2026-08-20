@@ -398,31 +398,20 @@ fn plan_inference(
             gib(usable)
         ));
     } else if model.is_moe {
-        offload.experts_on_host = true;
-        let resident = need.saturating_sub(model.offloadable_expert_bytes());
-        if resident <= usable {
-            notes.push(format!(
-                "MoE experts (~{:.1} GiB) offloaded to host RAM; ~{:.1} GiB stays resident.",
-                gib(model.offloadable_expert_bytes()),
-                gib(resident)
-            ));
-        } else {
-            // Experts and KV are on host, so only the non-expert weights stay
-            // resident — size GPU layers against those, not the full weights.
-            let resident_weights = model
-                .weights_bytes()
-                .saturating_sub(model.offloadable_expert_bytes());
-            offload.gpu_layers = GpuLayers::Count(estimate_gpu_layers(
-                resident_weights,
-                model.n_layers,
-                usable,
-            ));
-            offload.kv_on_host = true;
-            notes.push(
-                "MoE model tight even with experts on host; also offloading layers/KV — expect lower throughput."
-                    .to_string(),
-            );
-        }
+        let moe = cameo_moe_harness::plan_offload(&cameo_moe_harness::OffloadRequest {
+            total_bytes: need,
+            weights_bytes: model.weights_bytes(),
+            offloadable_expert_bytes: model.offloadable_expert_bytes(),
+            n_layers: model.n_layers,
+            usable_vram_bytes: usable,
+        });
+        offload.experts_on_host = moe.experts_on_host;
+        offload.kv_on_host = moe.kv_on_host;
+        offload.gpu_layers = match moe.gpu_layers {
+            cameo_moe_harness::GpuLayers::All => GpuLayers::All,
+            cameo_moe_harness::GpuLayers::Count(n) => GpuLayers::Count(n),
+        };
+        notes.extend(moe.notes);
     } else {
         // Dense offload: weights and KV stay on the GPU for the layers that fit.
         let layers = estimate_gpu_layers(

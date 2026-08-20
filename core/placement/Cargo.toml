@@ -10,6 +10,7 @@ description = "The placement engine: turns (topology x model x task) into a conc
 [dependencies]
 cameo-gpu-detect.workspace = true
 cameo-config.workspace = true
+cameo-moe-harness.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 

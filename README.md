@@ -22,6 +22,11 @@ runs on *any* AMD card. **ROCm is an optional accelerator** that only ever makes
 supported cards faster; nothing requires it. Cameo detects the card, classifies what
 it can do, and serves — no CUDA envy, no driver archaeology.
 
+**Layers.** Cameo is the box (GPUs, VRAM, `/v1`, the fleet map). **Knossos** is
+the harness that points an engine slot at a node. **Daedalus** is a coding
+*model* — served on Cameo later, not shipped in this ISO. The deck is the map
+of nodes, cards, resident models, and who is using them — not a hypervisor.
+
 - **Runs on the card you already have.** A gfx803 RX 580 from 2017 serves inference
   over Vulkan. A 7900 XTX or MI210 trains and serves over ROCm. Same tool.
 - **Auto-detect, always overridable.** Every default — tier, backend, placement — is

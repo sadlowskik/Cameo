@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "MoE expert offloading / placement logic (stub — implemented in Phase 3)."
+description = "Userspace MoE expert offload: VRAM vs host RAM for experts, layers, and KV."
 
 [dependencies]
 thiserror.workspace = true

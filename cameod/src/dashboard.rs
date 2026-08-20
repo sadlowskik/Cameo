@@ -1,9 +1,8 @@
 //! The dashboard: one self-contained HTML page served at `/`.
 //!
-//! No build step, no bundler, no external asset — the page is vanilla HTML, CSS
-//! and JS embedded in the binary, matching the daemon's dependency-light stance.
-//! It talks to the same `/api` routes documented in [`crate::app`]; if you add a
-//! route there, wire it in here.
+//! Console (this node's GPUs, endpoints, playground) plus a fleet map (every
+//! node, GPU, VRAM, loaded model, and who is using it). A hub sets
+//! `healthz.hub`; the HTML is the same. No build step, no bundler.
 
 /// The complete dashboard page. Embedded verbatim; served as `text/html`.
 pub const INDEX_HTML: &str = r##"
@@ -158,6 +157,17 @@ pub const INDEX_HTML: &str = r##"
   .meter{height:6px;background:var(--panel-3);margin-top:6px;overflow:hidden}
   .meter>i{display:block;height:100%;background:var(--ember);width:0}
   .dcard{background:var(--panel-2);border:1px solid var(--line);padding:10px;margin-bottom:8px;font-size:12px}
+  .nmap{display:grid;gap:14px;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));padding:18px;align-content:start}
+  .ncard{background:var(--panel);border:1px solid var(--line);padding:14px;cursor:pointer}
+  .ncard:hover,.ncard.on{border-color:var(--ember)}
+  .ncard.offline{opacity:.55}
+  .ncard h3{margin:0 0 8px;font-size:14px;display:flex;align-items:center;gap:8px}
+  .ncard h3 .addr{margin-left:auto;font-size:11px;color:var(--faint);font-weight:400}
+  .nchips{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
+  .nchip{background:var(--panel-2);border:1px solid var(--line);padding:3px 8px;font-size:11px}
+  .ncard .who{font-size:12px;color:var(--muted);margin-top:8px}
+  #view-deck .serve{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+  #view-deck .serve input{flex:1;min-width:80px}
   @media(max-width:820px){#view-deck.show{grid-template-columns:1fr;height:auto}.rail{border:1px solid var(--line);border-top:none}}
 </style>
 </head>
@@ -169,7 +179,7 @@ pub const INDEX_HTML: &str = r##"
 </header>
 <nav class="tabs">
   <button id="tab-console" class="on" onclick="showView('console')">Console</button>
-  <button id="tab-deck" onclick="showView('deck')">Deck</button>
+  <button id="tab-deck" onclick="showView('deck')">Fleet</button>
 </nav>
 
 <main>
@@ -237,16 +247,21 @@ pub const INDEX_HTML: &str = r##"
 
 <div id="view-deck">
   <aside class="rail">
-    <h3>Cameo · compute</h3>
-    <div id="deck-gpus"></div>
-    <h3 style="margin-top:18px">Resident models</h3>
-    <div id="deck-models"></div>
+    <h3>Nodes</h3>
+    <div id="deck-nodes"></div>
   </aside>
-  <div id="field" title="Select a unit or a card"></div>
+  <div id="field" title="Every node, GPU, VRAM, loaded model, and who is using it"></div>
   <aside class="rail r">
+    <div id="deck-flash" class="flash"></div>
     <h3>Selected</h3>
-    <div id="detail"><div class="empty">Click a soldier or a GPU.</div></div>
-    <h3 style="margin-top:18px">Knossos · soldiers</h3>
+    <div id="detail"><div class="empty">Click a node, GPU, or session.</div></div>
+    <h3 style="margin-top:18px">Serve on this node</h3>
+    <div class="serve">
+      <input id="deck-model" placeholder="model" list="model-list">
+      <input id="deck-port" value="8080" style="flex:0 0 70px">
+      <button id="deck-serve" type="button">Serve</button>
+    </div>
+    <h3 style="margin-top:18px">Who</h3>
     <div id="deck-sessions" class="muted">No harness heartbeats yet.</div>
   </aside>
 </div>
@@ -272,7 +287,8 @@ function setStatus(ok,text){
   document.getElementById('status-text').textContent=text;
 }
 function flash(kind,msg){
-  const f=document.getElementById('flash');
+  const deckOn=document.getElementById('view-deck').classList.contains('show');
+  const f=document.getElementById(deckOn?'deck-flash':'flash')||document.getElementById('flash');
   f.className='flash '+kind; f.textContent=msg;
   if(kind==='ok') setTimeout(()=>{f.className='flash';},4000);
 }
@@ -450,228 +466,142 @@ function showView(name){
   document.getElementById('tab-console').classList.toggle('on', name==='console');
 }
 
-const plugins={
-  cameo:{async snapshot(){
-    const out=[];
-    try{const r=await api('/api/gpus');if(r.ok){const d=await r.json();
-      (d.gpus||[]).forEach((a,i)=>{const g=a.gpu||{};
-        out.push({plugin:'cameo',kind:'gpu',id:'gpu-'+i,label:g.model||'GPU',vram:g.vram_mb,vram_used:g.vram_used_mb,
-          tier:tierNum(a.tier),rationale:a.rationale||'',training:!!a.training_supported});});}}catch(e){}
-    try{const r=await api('/api/servers');if(r.ok){const d=await r.json();
-      (d.servers||[]).forEach(s=>{out.push({plugin:'cameo',kind:'model',id:s.id,label:s.model,state:s.state,endpoint:s.endpoint,backend:s.backend,fits:s.fits_vram});});}}catch(e){}
-    return out;
-  }},
-  knossos:{async snapshot(){
-    try{const r=await api('/api/sessions');if(!r.ok)return[];const d=await r.json();
-      return (d.sessions||[]).map(s=>({plugin:'knossos',kind:'session',id:s.id,label:s.name||s.id,role:s.role,mode:s.mode,state:s.state,model:s.model,halt:s.halt,files:s.files||[],summary:s.summary||'',stale:!!s.stale}));}catch(e){return[];}
-  }}
-};
+let IS_HUB=false;
 let selected=null;
+let selectedNode=null;
+let fleetNodes=[];
+
+function vramLabel(g){
+  const tot=g.vram_mb!=null?g.vram_mb:(g.vram!=null?g.vram:null);
+  const used=g.vram_used_mb!=null?g.vram_used_mb:(g.vram_used!=null?g.vram_used:null);
+  if(tot==null) return '? MiB';
+  return (used!=null?used+'/':'')+tot+' MiB';
+}
+function gpuChips(gpus){
+  if(!gpus||!gpus.length) return '<span class="nchip muted">CPU-only</span>';
+  return gpus.map(g=>{
+    const t=g.tier!=null?tierNum(g.tier):'';
+    const tot=g.vram_mb!=null?g.vram_mb:g.vram;
+    const used=g.vram_used_mb!=null?g.vram_used_mb:g.vram_used;
+    const pct=(used!=null&&tot)?Math.min(100,100*used/tot):0;
+    return '<span class="nchip">'+(esc(g.model||g.label||'GPU'))
+      +(t?(' T'+t):'')+' · '+esc(vramLabel(g))
+      +'<div class="meter"><i style="width:'+pct+'%"></i></div></span>';
+  }).join('');
+}
+function whoLine(sessions, endpoints){
+  const who=(sessions||[]).map(s=>s.name||s.label||s.id).filter(Boolean);
+  const models=(endpoints||[]).map(e=>e.model||e.label).filter(Boolean);
+  const bits=[];
+  if(models.length) bits.push(models.join(', '));
+  if(who.length) bits.push('who: '+who.join(', '));
+  return bits.join(' · ');
+}
 function pick(ent){
   selected=ent; const el=document.getElementById('detail');
-  if(!ent){el.innerHTML='<div class="empty">Click a soldier or a GPU.</div>';return;}
+  if(!ent){el.innerHTML='<div class="empty">Click a node, GPU, or session.</div>';return;}
+  if(ent.kind==='node'||ent.node_id) selectedNode=ent;
   const rows=[];
-  for(const [k,v] of Object.entries(ent)){if(k==='plugin'||v==null||v==='')continue;rows.push('<span>'+esc(k)+'</span><b>'+esc(Array.isArray(v)?v.join(', '):v)+'</b>');}
-  el.innerHTML='<div class="muted">'+esc(ent.plugin)+' · '+esc(ent.kind)+'</div><h3 style="margin:6px 0">'+esc(ent.label)+'</h3><div class="kv">'+rows.join('')+'</div>';
+  for(const [k,v] of Object.entries(ent)){
+    if(k==='plugin'||v==null||v===''||typeof v==='object') continue;
+    rows.push('<span>'+esc(k)+'</span><b>'+esc(v)+'</b>');
+  }
+  el.innerHTML='<div class="muted">'+esc(ent.kind||'node')+'</div><h3 style="margin:6px 0">'+esc(ent.label||ent.name||ent.id)+'</h3><div class="kv">'+rows.join('')+'</div>';
 }
-function layout(ents){
+
+async function localNode(){
+  const n={node_id:'local',name:'this-node',online:true,local:true,kind:'node',gpus:[],endpoints:[],sessions:[],cameo_version:''};
+  try{const r=await api('/api/node');if(r.ok){const d=await r.json();
+    n.name=d.name||n.name; n.cameo_version=d.cameo_version||'';
+    n.endpoints=d.endpoints||[]; n.sessions=d.sessions||[];
+    n.gpus=(d.gpus||[]).map(a=>{const g=a.gpu||{};
+      return {model:g.model||'GPU',vram_mb:g.vram_mb,vram_used_mb:g.vram_used_mb,tier:tierNum(a.tier)};});
+  }}catch(e){}
+  return n;
+}
+async function remoteNodes(){
+  if(!IS_HUB) return [];
+  try{const r=await api('/hub/nodes'); if(!r.ok) return []; const d=await r.json();
+    return (d.nodes||[]).map(x=>({...x, kind:'node', local:false, label:x.name}));
+  }catch(e){return [];}
+}
+function mergeFleet(local, remotes){
+  const out=[local];
+  for(const r of remotes){
+    if(r.name && r.name===local.name) continue;
+    out.push(r);
+  }
+  return out;
+}
+function nodeCard(n, i){
+  const on=selectedNode && selectedNode.node_id===n.node_id;
+  const eps=n.endpoints||[];
+  const sess=n.sessions||[];
+  const who=whoLine(sess, eps);
+  const models=eps.length?eps.map(e=>'<span class="nchip"><code>'+esc(e.model||e.label||'')+'</code> <span class="badge st-'+esc(e.state||'')+'">'+esc(e.state||'')+'</span></span>').join(''):'<span class="nchip muted">no model loaded</span>';
+  return '<div class="ncard '+(n.online===false?'offline':'')+(on?' on':'')+'" data-i="'+i+'">'
+    +'<h3><span class="dot '+(n.online===false?'bad':'ok')+'"></span>'+esc(n.name||n.node_id)
+    +(n.local?'<span class="badge">this box</span>':'')
+    +'<span class="addr">'+esc(n.address||'')+'</span></h3>'
+    +'<div class="nchips">'+gpuChips(n.gpus)+'</div>'
+    +'<div class="nchips">'+models+'</div>'
+    +(who?'<div class="who">'+esc(who)+'</div>':'')
+    +'</div>';
+}
+function layoutFleet(nodes){
+  fleetNodes=nodes;
   const field=document.getElementById('field');
-  const gpus=ents.filter(e=>e.kind==='gpu'),models=ents.filter(e=>e.kind==='model'),units=ents.filter(e=>e.kind==='session');
-  const H=field.clientHeight||400; const html=[];
-  gpus.forEach((e,i)=>{const x=40+i*170,y=H*0.16;
-    const pct=(e.vram_used!=null&&e.vram?Math.min(100,100*e.vram_used/e.vram):0);
-    html.push('<div class="res" data-i="'+ents.indexOf(e)+'" style="left:'+x+'px;top:'+y+'px"><b>'+esc(e.label)+'</b><div class="muted">Tier '+esc(e.tier)+' · '+esc(e.vram||'?')+' MiB</div><div class="meter"><i style="width:'+pct+'%"></i></div></div>');});
-  models.forEach((e,i)=>{html.push('<div class="res" data-i="'+ents.indexOf(e)+'" style="left:'+(40+i*150)+'px;top:'+H*0.46+'px"><b>'+esc(e.label)+'</b><div class="muted">'+esc(e.state)+' · '+esc(e.backend||'')+'</div></div>');});
-  units.forEach((e,i)=>{const x=60+(i%6)*130,y=H*0.72;
-    html.push('<div class="unit '+esc(e.mode||'')+' '+(e.stale?'stale':'')+'" data-i="'+ents.indexOf(e)+'" style="left:'+x+'px;top:'+y+'px"><b>'+esc(e.label)+'</b><div class="muted">'+esc(e.mode)+' · '+esc(e.model||'no model')+'</div></div>');});
-  if(!html.length) html.push('<div class="empty" style="padding:24px">No compute and no soldiers yet. Load a model on Console, or point Knossos at this node.</div>');
-  field.innerHTML=html.join('');
-  field.querySelectorAll('[data-i]').forEach(n=>{n.onclick=()=>pick(ents[Number(n.dataset.i)]);});
-  const gEl=document.getElementById('deck-gpus');
-  gEl.innerHTML=gpus.length?gpus.map(g=>'<div class="dcard"><b>'+esc(g.label)+'</b><div class="muted">Tier '+esc(g.tier)+' · '+esc(g.vram||'?')+' MiB</div></div>').join(''):'<div class="empty">no GPU (or detection offline)</div>';
-  const mEl=document.getElementById('deck-models');
-  mEl.innerHTML=models.length?models.map(m=>'<div class="dcard">'+esc(m.label)+' <span class="badge st-'+esc(m.state)+'">'+esc(m.state)+'</span></div>').join(''):'<div class="empty">none loaded</div>';
+  if(!nodes.length){
+    field.innerHTML='<div class="empty" style="padding:24px">No nodes yet. Load a model on Console, or boot another Cameo box with CAMEO_HUB_URL.</div>';
+  } else {
+    field.innerHTML='<div class="nmap">'+nodes.map(nodeCard).join('')+'</div>';
+    field.querySelectorAll('.ncard').forEach(c=>c.onclick=()=>pick(nodes[Number(c.dataset.i)]));
+  }
+  const rail=document.getElementById('deck-nodes');
+  rail.innerHTML=nodes.map((n,i)=>'<div class="dcard" data-i="'+i+'"><b>'+esc(n.name||n.node_id)+'</b><div class="muted">'+(n.online===false?'offline':'online')+(n.local?' · this box':'')+'</div></div>').join('');
+  rail.querySelectorAll('.dcard').forEach(c=>c.onclick=()=>pick(nodes[Number(c.dataset.i)]));
+  const focus=selectedNode?nodes.find(n=>n.node_id===selectedNode.node_id):nodes[0];
+  const units=focus?(focus.sessions||[]):[];
   const sEl=document.getElementById('deck-sessions');
-  sEl.innerHTML=units.length?units.map(u=>'<div class="dcard">'+esc(u.label)+' <span class="muted">'+esc(u.mode)+'</span></div>').join(''):'<div class="empty">No harness heartbeats yet. Run <code>daedalus</code> with --engine cameo.</div>';
+  sEl.innerHTML=units.length?units.map(u=>'<div class="dcard">'+esc(u.name||u.label||u.id)+' <span class="muted">'+esc(u.mode||'')+' · '+esc(u.model||'')+'</span></div>').join(''):'<div class="empty">No harness heartbeats yet. Point Knossos at this node.</div>';
+  if(focus) pick(focus);
 }
 async function tickDeck(){
-  const ents=[];
-  for(const p of Object.values(plugins)) ents.push(...await p.snapshot());
-  layout(ents);
-  if(selected){const again=ents.find(e=>e.id===selected.id&&e.kind===selected.kind); if(again) pick(again);}
+  const local=await localNode();
+  const remotes=await remoteNodes();
+  layoutFleet(mergeFleet(local, remotes));
 }
-function refresh(){loadGpus();loadServers();loadPlayground();tickDeck();}
-loadModels(); refresh();
-setInterval(()=>{loadServers();loadPlayground();tickDeck();},4000);
-</script>
-</body>
-</html>
-"##;
-
-/// The fleet-hub dashboard, served at `/` when cameod runs with `--hub`. Lists
-/// every node that has phoned home to `GET /hub/nodes`, and drives a node's
-/// endpoints through the hub's push routes. Self-contained, same palette as
-/// [`INDEX_HTML`]; admin auth is the console key (same store key, so one login
-/// covers a box that is both a hub and a node).
-pub const HUB_HTML: &str = r##"<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Cameo Fleet</title>
-<style>
-  :root{
-    --bg:#0e1116; --panel:#161b22; --panel-2:#1c232d; --border:#2a3038;
-    --ink:#e6edf3; --muted:#8b949e; --accent:#ff7f5c; --accent-dim:#3a2a24;
-    --t1:#3fb950; --t2:#d29922; --t3:#39c5cf; --danger:#f85149;
-  }
-  *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--ink);
-    font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
-  a{color:var(--accent)}
-  header{display:flex;align-items:baseline;gap:16px;padding:20px 28px;
-    border-bottom:1px solid var(--border);background:var(--panel);}
-  .wordmark{font-weight:800;letter-spacing:.5px;font-size:20px;color:var(--accent)}
-  .tagline{color:var(--muted);font-size:13px}
-  .status{margin-left:auto;font-size:12px;color:var(--muted)}
-  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--muted);margin-right:6px;vertical-align:middle}
-  .dot.ok{background:var(--t1)} .dot.bad{background:var(--danger)}
-  main{max-width:1200px;margin:0 auto;padding:24px 28px;display:grid;gap:18px}
-  .grid{display:grid;gap:16px;grid-template-columns:repeat(auto-fill,minmax(320px,1fr))}
-  .card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:16px}
-  .card.offline{opacity:.55}
-  .card h3{margin:0 0 10px;font-size:16px;display:flex;align-items:center;gap:8px}
-  .card h3 .addr{margin-left:auto;font-size:12px;color:var(--muted);font-weight:400}
-  .kv{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;font-size:12px;color:var(--muted);margin-bottom:10px}
-  .kv b{color:var(--ink);font-weight:500}
-  .gpus{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 12px}
-  .gpu{background:var(--panel-2);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:12px}
-  .badge{font-size:10px;font-weight:700;padding:1px 7px;border-radius:20px;margin-left:6px}
-  .tier1{background:rgba(63,185,80,.15);color:var(--t1)}
-  .tier2{background:rgba(210,153,34,.15);color:var(--t2)}
-  .tier3{background:rgba(57,197,207,.15);color:var(--t3)}
-  .ep{display:flex;align-items:center;gap:8px;font-size:12px;padding:6px 0;border-top:1px solid var(--border)}
-  .ep code{color:var(--muted)}
-  .ep .st{font-size:10px;font-weight:700;padding:1px 7px;border-radius:20px}
-  .st-running{background:rgba(63,185,80,.15);color:var(--t1)}
-  .st-exited,.st-failed{background:rgba(139,148,158,.15);color:var(--muted)}
-  .serve{display:flex;gap:8px;margin-top:12px}
-  input{flex:1;min-width:0;background:var(--bg);border:1px solid var(--border);color:var(--ink);border-radius:6px;padding:7px 9px;font-size:13px}
-  input.port{flex:0 0 78px}
-  input:focus{outline:none;border-color:var(--accent)}
-  button{background:var(--accent);color:#1a1008;border:none;border-radius:6px;padding:8px 14px;font-weight:600;font-size:13px;cursor:pointer}
-  button:hover{filter:brightness(1.08)} button:active{transform:translateY(1px)}
-  button.stop{background:transparent;color:var(--danger);border:1px solid var(--danger);padding:3px 10px;font-size:11px;margin-left:auto}
-  button.ghost{background:transparent;color:var(--muted);border:1px solid var(--border);padding:4px 10px;font-size:12px;margin-top:12px}
-  .flash{padding:10px 14px;border-radius:6px;font-size:13px;display:none}
-  .flash.err{display:block;background:var(--accent-dim);color:var(--accent);border:1px solid var(--accent)}
-  .flash.ok{display:block;background:rgba(63,185,80,.1);color:var(--t1);border:1px solid var(--t1)}
-  .empty{color:var(--muted);font-style:italic;padding:40px;text-align:center;
-    border:1px dashed var(--border);border-radius:10px}
-  .empty code{color:var(--ink)}
-</style>
-</head>
-<body>
-<header>
-  <span class="wordmark">Cameo Fleet</span>
-  <span class="tagline">every node that phoned home, one console</span>
-  <span class="status"><span class="dot" id="dot"></span><span id="status-text">connecting…</span></span>
-</header>
-<main>
-  <div class="flash" id="flash"></div>
-  <div class="grid" id="nodes"></div>
-  <div class="empty" id="empty" style="display:none">
-    No nodes yet. Boot a Cameo node with <code>CAMEO_HUB_URL</code> and the farm token set,
-    and it will appear here on its own.
-  </div>
-</main>
-<script>
-const KEY_STORE='cameo_console_key';
-const getKey=()=>localStorage.getItem(KEY_STORE)||'';
-async function api(path,opts={}){
-  opts.headers=Object.assign({'Content-Type':'application/json'},opts.headers||{});
-  const k=getKey(); if(k) opts.headers['Authorization']='Bearer '+k;
-  let r=await fetch(path,opts);
-  if(r.status===401){
-    const entered=prompt('This hub requires the console key:');
-    if(entered){localStorage.setItem(KEY_STORE,entered); return api(path,opts);}
-  }
-  return r;
-}
-const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-function setStatus(ok,text){document.getElementById('dot').className='dot '+(ok?'ok':'bad');document.getElementById('status-text').textContent=text;}
-function flash(kind,msg){const f=document.getElementById('flash');f.className='flash '+kind;f.textContent=msg;if(kind==='ok')setTimeout(()=>{f.className='flash';},4000);}
-function tierNum(t){const m=/([123])/.exec(t||'');return m?m[1]:'';}
-function age(s){if(s<60)return s+'s ago';if(s<3600)return Math.floor(s/60)+'m ago';return Math.floor(s/3600)+'h ago';}
-
-function gpuChip(g){
-  const t=tierNum(g.tier);
-  const vram=g.vram_mb?` · ${(g.vram_mb/1024).toFixed(1)}GB`:'';
-  const badge=t?`<span class="badge tier${t}">T${t}</span>`:'';
-  return `<span class="gpu">${esc(g.model)}${vram}${badge}</span>`;
-}
-function epRow(nid,e){
-  const st=esc(e.state||'?');
-  const stop=e.state==='running'?`<button class="stop" data-nid="${esc(nid)}" data-sid="${esc(e.id)}">Stop</button>`:'';
-  return `<div class="ep"><code>${esc(e.model)}</code><span class="st st-${st}">${st}</span>${stop}</div>`;
-}
-function card(n){
-  const gpus=(n.gpus||[]).map(gpuChip).join('')||'<span class="gpu muted">CPU-only</span>';
-  const eps=(n.endpoints||[]).map(e=>epRow(n.node_id,e)).join('');
-  return `<div class="card ${n.online?'':'offline'}">
-    <h3><span class="dot ${n.online?'ok':'bad'}"></span>${esc(n.name)}<span class="addr">${esc(n.address)}</span></h3>
-    <div class="kv"><span>status</span><b>${n.online?'online':'offline · '+age(n.age_secs)}</b>
-      <span>version</span><b>${esc(n.cameo_version||'?')}</b></div>
-    <div class="gpus">${gpus}</div>
-    ${eps}
-    <div class="serve">
-      <input placeholder="model to serve (e.g. tinyllama)" data-nid="${esc(n.node_id)}" class="model">
-      <input class="port" placeholder="port" value="8080" data-nid="${esc(n.node_id)}">
-      <button class="do-serve" data-nid="${esc(n.node_id)}">Serve</button>
-    </div>
-    <button class="ghost do-forget" data-nid="${esc(n.node_id)}">Forget node</button>
-  </div>`;
-}
-
-async function serve(nid){
-  const model=document.querySelector(`input.model[data-nid="${CSS.escape(nid)}"]`).value.trim();
-  const port=Number(document.querySelector(`input.port[data-nid="${CSS.escape(nid)}"]`).value)||8080;
+document.getElementById('deck-serve').onclick=async()=>{
+  const model=document.getElementById('deck-model').value.trim();
+  const port=Number(document.getElementById('deck-port').value)||8080;
   if(!model){flash('err','Enter a model name to serve.');return;}
-  const r=await api('/hub/nodes/'+encodeURIComponent(nid)+'/servers',
-    {method:'POST',body:JSON.stringify({model,host:'127.0.0.1',port})});
+  const n=selectedNode||fleetNodes[0];
+  let r;
+  if(!n||n.local||n.node_id==='local'||!IS_HUB){
+    r=await api('/api/servers',{method:'POST',body:JSON.stringify({model,host:'127.0.0.1',port})});
+  } else {
+    r=await api('/hub/nodes/'+encodeURIComponent(n.node_id)+'/servers',{method:'POST',body:JSON.stringify({model,host:'127.0.0.1',port})});
+  }
   const d=await r.json().catch(()=>({}));
-  if(r.ok)flash('ok','Serving '+model+' on '+nid);
-  else flash('err',(d.error||'serve failed')+'');
-  load();
+  if(r.ok) flash('ok','Serving '+model);
+  else flash('err',d.error||('serve failed ('+r.status+')'));
+  tickDeck(); loadServers();
+};
+function refresh(){loadGpus();loadServers();loadPlayground();tickDeck();}
+async function boot(){
+  try{const r=await fetch('/healthz'); const d=await r.json(); IS_HUB=!!d.hub;
+    if(IS_HUB){document.querySelector('.tagline').textContent='every node · GPU · VRAM · who is using it';
+      document.title='Cameo Fleet'; showView('deck');}
+  }catch(e){}
+  loadModels(); refresh();
+  setInterval(()=>{loadServers();loadPlayground();tickDeck();},4000);
 }
-async function stop(nid,sid){
-  const r=await api('/hub/nodes/'+encodeURIComponent(nid)+'/servers/'+encodeURIComponent(sid),{method:'DELETE'});
-  if(r.ok)flash('ok','Stopped '+sid+' on '+nid); else flash('err','stop failed');
-  load();
-}
-async function forget(nid){
-  if(!confirm('Forget '+nid+'? It reappears if it heartbeats again.'))return;
-  const r=await api('/hub/nodes/'+encodeURIComponent(nid),{method:'DELETE'});
-  if(r.ok)flash('ok','Forgot '+nid); load();
-}
-
-async function load(){
-  let r; try{r=await api('/hub/nodes');}catch(e){setStatus(false,'unreachable');return;}
-  if(!r.ok){setStatus(false,'hub error '+r.status);return;}
-  const d=await r.json(); const nodes=d.nodes||[];
-  const online=nodes.filter(n=>n.online).length;
-  setStatus(true,nodes.length+' node'+(nodes.length===1?'':'s')+' · '+online+' online');
-  const grid=document.getElementById('nodes'), empty=document.getElementById('empty');
-  if(!nodes.length){grid.innerHTML='';empty.style.display='block';return;}
-  empty.style.display='none';
-  grid.innerHTML=nodes.map(card).join('');
-  grid.querySelectorAll('.do-serve').forEach(b=>b.onclick=()=>serve(b.dataset.nid));
-  grid.querySelectorAll('.do-forget').forEach(b=>b.onclick=()=>forget(b.dataset.nid));
-  grid.querySelectorAll('.ep .stop').forEach(b=>b.onclick=()=>stop(b.dataset.nid,b.dataset.sid));
-}
-load();
-setInterval(load,5000);
+boot();
 </script>
 </body>
 </html>
 "##;
+
+/// Hub and node serve the same page. The JS reads `healthz.hub`.
+#[allow(dead_code)]
+pub const HUB_HTML: &str = INDEX_HTML;

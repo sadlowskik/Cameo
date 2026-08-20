@@ -83,6 +83,8 @@ pub enum AgentRunPlan {
         authenticated: bool,
         /// The `llama-server` command that stands the model up on the node.
         serve: CommandSpec,
+        /// The node already serves this GGUF — callers must not spawn `serve`.
+        already_running: bool,
     },
 }
 
@@ -205,6 +207,7 @@ pub fn resolve_agent(
                 port,
                 api_key,
             );
+            let already_running = cluster.nodes[node_idx].is_warm_for(&model.name, path);
             Ok(AgentRunPlan::Local {
                 name: spec.name.clone(),
                 role: spec.role.clone(),
@@ -214,6 +217,7 @@ pub fn resolve_agent(
                 bind,
                 authenticated: api_key.is_some(),
                 serve,
+                already_running,
             })
         }
     }
@@ -241,7 +245,14 @@ pub fn resolve_agents(
         };
         let resolved = resolve_agent(spec, cluster, settings, port);
         match (&resolved, path) {
-            (Ok(AgentRunPlan::Local { node_name, .. }), Some(path)) => {
+            (
+                Ok(AgentRunPlan::Local {
+                    node_name,
+                    already_running,
+                    ..
+                }),
+                Some(path),
+            ) => {
                 let key = (node_name.clone(), path);
                 if let Some(existing) = resident.get(&key) {
                     out.push(Ok(reuse_local(spec, existing)));
@@ -250,7 +261,10 @@ pub fn resolve_agents(
                 if let Ok(plan) = &resolved {
                     resident.insert(key, plan.clone());
                 }
-                port = port.saturating_add(1);
+                // A warm node already paid for the process — do not burn the next port.
+                if !already_running {
+                    port = port.saturating_add(1);
+                }
                 out.push(resolved);
             }
             (Ok(AgentRunPlan::Local { .. }), None) => out.push(resolved),
@@ -280,6 +294,7 @@ fn reuse_local(spec: &AgentSpec, existing: &AgentRunPlan) -> AgentRunPlan {
             bind: bind.clone(),
             authenticated: *authenticated,
             serve: serve.clone(),
+            already_running: true,
         },
         other => other.clone(),
     }
@@ -308,6 +323,7 @@ mod tests {
             address: format!("{name}.local:9000"),
             topology: Topology::new(vec![gpu], Vec::new()),
             assessments,
+            resident: Vec::new(),
         }
     }
 
@@ -480,6 +496,31 @@ mod tests {
             ends[0], ends[1],
             "same GGUF on one node is one llama-server"
         );
+        match &plans[1] {
+            AgentRunPlan::Local {
+                already_running, ..
+            } => assert!(already_running),
+            _ => panic!("expected local"),
+        }
+    }
+
+    #[test]
+    fn a_node_already_serving_the_model_does_not_spawn() {
+        let mut c = cluster();
+        c.nodes[1].resident = vec!["qwen-7b".into()];
+        let plan = resolve_agent(
+            &local_spec("w", PlacementTarget::Node("beefy".into())),
+            &c,
+            &keyed(),
+            8100,
+        )
+        .unwrap();
+        match plan {
+            AgentRunPlan::Local {
+                already_running, ..
+            } => assert!(already_running),
+            other => panic!("expected Local, got {other:?}"),
+        }
     }
 
     // ---- serving is fail-closed --------------------------------------------

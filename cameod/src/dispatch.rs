@@ -8,7 +8,6 @@
 //! existing push to the node's `/api/servers`, done in [`crate::app`].
 
 use cameo_gpu_detect::{TierAssessment, Topology};
-use cameo_models;
 use cameo_placement::{
     route, Candidate, ModelMeta, NodeInfo, NodeLoad, QuantLevel, RouteChoice, RouteError,
     RouteRequest, Task,
@@ -97,6 +96,7 @@ fn parse_node(node_id: &str, desc: &Value) -> Option<ParsedNode> {
         .and_then(Value::as_str)
         .unwrap_or(node_id)
         .to_string();
+    let load = load_from_endpoints(desc.get("endpoints"));
     Some(ParsedNode {
         node_id: node_id.to_string(),
         info: NodeInfo {
@@ -104,8 +104,9 @@ fn parse_node(node_id: &str, desc: &Value) -> Option<ParsedNode> {
             address: String::new(), // not needed for routing; push uses node_id
             topology,
             assessments,
+            resident: load.serving.clone(),
         },
-        load: load_from_endpoints(desc.get("endpoints")),
+        load,
     })
 }
 

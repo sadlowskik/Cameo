@@ -56,8 +56,8 @@ pub struct AppState {
     /// The fleet roster, when this daemon runs as a hub. Nodes phone home to
     /// `/hub/register`; empty and inert on a plain node.
     pub farm: Farm,
-    /// True when this daemon is a hub: `/` serves the fleet dashboard and the
-    /// `/hub/*` registration routes accept nodes.
+    /// True when this daemon is a hub: `/hub/*` enrollment is on and
+    /// `GET /healthz` reports `hub: true`. `/` is always the one fleet map.
     pub hub_enabled: bool,
     /// The token a node must present to enroll (`POST /hub/register|heartbeat`).
     /// Required in hub mode — registration fails closed without it.
@@ -154,11 +154,12 @@ pub fn route(state: &Arc<AppState>, req: &Request) -> Response {
     // controller can reach them without the console key — F9/F13).
     if req.method == "GET" {
         match segs.as_slice() {
-            // A hub serves the fleet dashboard at `/`; a plain node serves its own
-            // console. Both are unauthenticated shells that prompt for their key.
-            [] if state.hub_enabled => return Response::html(crate::dashboard::HUB_HTML),
+            // One page: this node's console plus the fleet map. Hub vs node is
+            // `healthz.hub`; the HTML is the same so the map is one UI.
             [] => return Response::html(crate::dashboard::INDEX_HTML),
-            ["healthz"] => return Response::json(200, &json!({ "status": "ok" })),
+            ["healthz"] => {
+                return Response::json(200, &json!({ "status": "ok", "hub": state.hub_enabled }))
+            }
             ["readyz"] => {
                 // Ready = the node can actually detect hardware and plan work.
                 // Served from the short-lived cache: k8s probes on a cadence,
@@ -212,7 +213,15 @@ pub fn route(state: &Arc<AppState>, req: &Request) -> Response {
     }
 
     // Everything under /api is gated by the console key, when one is configured.
+    // GET /api/engines is the harness discovery surface: a consumer (serve) key
+    // is enough to see which models are resident; loading still needs operator.
     if segs.first() == Some(&"api") {
+        if req.method == "GET" && segs.get(1) == Some(&"engines") && segs.len() == 2 {
+            if let Some(denied) = check_engines_auth(state, req) {
+                return denied;
+            }
+            return api_engines(state).no_store();
+        }
         if let Some(denied) = check_auth(state, req) {
             return denied;
         }
@@ -251,6 +260,9 @@ fn bearer(req: &Request) -> Option<&str> {
 /// gateway falls closed to that operator key — an unauthenticated public `/v1`
 /// would serve the box's GPU to anyone who can reach the port.
 fn check_serve_auth(state: &Arc<AppState>, req: &Request) -> Option<Response> {
+    if req.from_unix && state.posture.allows_local_harness() {
+        return None;
+    }
     if state.open_inference && !state.keyring.requires_consumer() {
         return None;
     }
@@ -346,11 +358,33 @@ fn gateway_proxy(state: &Arc<AppState>, req: &Request) -> Response {
     }
 }
 
+/// Discover which models are resident. A serve key is enough; an operator key
+/// also works. Keyless (no role configured) stays open, matching the rest of
+/// `/api`. Loading a model still goes through [`check_auth`].
+fn check_engines_auth(state: &Arc<AppState>, req: &Request) -> Option<Response> {
+    if req.from_unix && state.posture.allows_local_harness() {
+        return None;
+    }
+    if !state.keyring.requires_operator() && !state.keyring.requires_consumer() {
+        return None;
+    }
+    if state.keyring.is_consumer_or_better(bearer(req)) {
+        None
+    } else {
+        Some(Response::error(401, "missing or invalid api key"))
+    }
+}
+
 /// Authenticate an operator request (`/api`, `/hub` admin). Requires an **operator**
 /// credential — a consumer/friend key is deliberately refused here, so an inference
 /// user can never manipulate VRAM or the fleet. `None` means allowed; no operator
 /// key configured means the control surface is open (loopback dev).
 fn check_auth(state: &Arc<AppState>, req: &Request) -> Option<Response> {
+    // Host-only socket: a co-located harness on self-host is the operator.
+    // Multi-tenant never binds that socket (see main.rs).
+    if req.from_unix && state.posture.allows_local_harness() {
+        return None;
+    }
     if !state.keyring.requires_operator() {
         return None;
     }
@@ -722,6 +756,7 @@ fn node_json(topo: &Topology, assessments: &[TierAssessment], state: &Arc<AppSta
         "topology": topo,
         "gpus": assessments,
         "endpoints": state.sup.list(),
+        "sessions": state.board.list(),
     })
 }
 

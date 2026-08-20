@@ -214,6 +214,7 @@ impl Farm {
                     "age_secs": age.as_secs(),
                     "gpus": gpu_summary(&e.reg.node),
                     "endpoints": e.reg.node.get("endpoints").cloned().unwrap_or_else(|| json!([])),
+                    "sessions": e.reg.node.get("sessions").cloned().unwrap_or_else(|| json!([])),
                 })
             })
             .collect()
@@ -292,6 +293,8 @@ fn gpu_summary(node: &Value) -> Value {
                             .unwrap_or_else(|| json!("GPU")),
                         "vram_mb": gpu.and_then(|g| g.get("vram_mb")).cloned()
                             .unwrap_or(Value::Null),
+                        "vram_used_mb": gpu.and_then(|g| g.get("vram_used_mb")).cloned()
+                            .unwrap_or(Value::Null),
                         "tier": a.get("tier").cloned().unwrap_or(Value::Null),
                     })
                 })
@@ -316,10 +319,11 @@ mod tests {
         json!({
             "name": "box-a",
             "gpus": [{
-                "gpu": { "model": "Radeon RX 7900 XTX", "vram_mb": 24560 },
+                "gpu": { "model": "Radeon RX 7900 XTX", "vram_mb": 24560, "vram_used_mb": 8192 },
                 "tier": "Tier1"
             }],
-            "endpoints": [{ "id": "tiny-8080", "model": "tinyllama" }]
+            "endpoints": [{ "id": "tiny-8080", "model": "tinyllama" }],
+            "sessions": [{ "id": "s1", "name": "alice", "model": "tinyllama" }]
         })
     }
 
@@ -359,8 +363,10 @@ mod tests {
         assert_eq!(list[0]["online"], json!(true), "just-registered is online");
         assert_eq!(list[0]["gpus"][0]["model"], "Radeon RX 7900 XTX");
         assert_eq!(list[0]["gpus"][0]["vram_mb"], 24560);
+        assert_eq!(list[0]["gpus"][0]["vram_used_mb"], 8192);
         assert_eq!(list[0]["gpus"][0]["tier"], "Tier1");
         assert_eq!(list[0]["endpoints"][0]["model"], "tinyllama");
+        assert_eq!(list[0]["sessions"][0]["name"], "alice");
     }
 
     #[test]

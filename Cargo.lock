@@ -180,6 +180,7 @@ version = "0.1.0"
 dependencies = [
  "cameo-config",
  "cameo-gpu-detect",
+ "cameo-moe-harness",
  "libc",
  "serde",
  "thiserror",

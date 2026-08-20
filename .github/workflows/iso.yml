@@ -10,18 +10,11 @@ on:
           - lite
           - full
         default: lite
+  # Tags always publish a GitHub Release. Do not AND this with `paths`: a tag
+  # of an existing commit has no path diff, and GitHub would skip the build.
   push:
     tags:
       - "v*"
-    # mkarchiso is Linux-only; this branch is the appliance/ISO work, so a
-    # push that touches the image rebuilds it on the Arch-in-Docker runner.
-    branches:
-      - ship/cameod-console
-    paths:
-      - "archiso/**"
-      - "scripts/build-iso.sh"
-      - "scripts/fetch-starter-model.sh"
-      - ".github/workflows/iso.yml"
 
 # The build runs inside a long-lived privileged Arch container driven by
 # `docker exec`, one named step per command. That is deliberate: workflow logs

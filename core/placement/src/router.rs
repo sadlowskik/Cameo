@@ -226,6 +226,7 @@ mod tests {
             address: format!("{name}:9090"),
             topology: Topology::new(vec![gpu], Vec::new()),
             assessments,
+            resident: Vec::new(),
         }
     }
 

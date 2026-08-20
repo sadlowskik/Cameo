@@ -16,11 +16,13 @@ required for v1.
 - [ ] Optionally run the same capabilities in a container with correct GPU passthrough.
 
 ## Progress marker
-The current tree delivers the hardware-independent foundation (detection, tiering,
-CLI, API contract, config) and the automated Phase 1 validation runbook. It also
-now delivers the **`cameod` control plane** — a browser console (GPU/tier report,
-inference-endpoint lifecycle, model cache) that ships in the ISO and starts on
-boot — built to the same boundary discipline (pure logic + capture-fixture tests,
-Linux-gated I/O), so it is exercised off-hardware. The **Phase 1 gate** — a real
-`known-good-combo.json` from `scripts/phase1` on actual AMD hardware — is the next
-milestone; Phase 2 backend work is blocked on it.
+
+**Code-shaped (not a hardware proof):** detection, tiering, CLI, `cameod` console
++ hub, `/v1`, supervisor/VRAM admit, one-serve-per-GGUF in `resolve_agents`,
+self-host operator socket, ISO/container delivery, starter GGUF seed.
+
+**Still open vs this list:** boot+serve on a signed `known-good-combo.json`
+(hardware), `cameo train` as a productized loop (launcher exists), Secure Boot
+signing. MoE userspace offload is code-shaped (`cameo-moe-harness` + placement).
+
+The Phase 1 gate remains: a real combo from `scripts/phase1` on AMD silicon.

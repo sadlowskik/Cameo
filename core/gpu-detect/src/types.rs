@@ -101,6 +101,11 @@ pub struct GpuInfo {
     /// carve-out, not the memory the GPU can actually address — see `gtt_mb`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vram_mb: Option<u64>,
+    /// Live VRAM in use in MiB, from sysfs `mem_info_vram_used`. Re-read on each
+    /// detection so it tracks current utilisation; `None` when the sysfs node is
+    /// absent (non-amdgpu, capture-based fixtures, or a non-Linux host).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vram_used_mb: Option<u64>,
     /// GTT (system-memory) aperture in MiB: host RAM the GPU can address.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gtt_mb: Option<u64>,
@@ -132,6 +137,7 @@ impl GpuInfo {
             pci_id,
             pci_addr: None,
             vram_mb: None,
+            vram_used_mb: None,
             gtt_mb: None,
             memory: MemoryKind::Unknown,
             gfx_arch: None,

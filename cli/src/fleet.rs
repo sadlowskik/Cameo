@@ -24,6 +24,16 @@ struct NodeDescription {
     name: String,
     topology: Topology,
     gpus: Vec<TierAssessment>,
+    #[serde(default)]
+    endpoints: Vec<EndpointStub>,
+}
+
+#[derive(Deserialize)]
+struct EndpointStub {
+    #[serde(default)]
+    model: String,
+    #[serde(default)]
+    state: String,
 }
 
 /// Parse an `/api/node` response body into a [`NodeInfo`] at `address`. Pure, so
@@ -31,11 +41,19 @@ struct NodeDescription {
 fn node_from_json(address: &str, body: &[u8]) -> Result<NodeInfo> {
     let d: NodeDescription = serde_json::from_slice(body)
         .map_err(|e| anyhow!("parsing /api/node from {address}: {e}"))?;
+    let resident = d
+        .endpoints
+        .into_iter()
+        .filter(|e| e.state.is_empty() || e.state == "running")
+        .map(|e| e.model)
+        .filter(|m| !m.is_empty())
+        .collect();
     Ok(NodeInfo {
         name: d.name,
         address: address.to_string(),
         topology: d.topology,
         assessments: d.gpus,
+        resident,
     })
 }
 
@@ -258,6 +276,24 @@ mod tests {
         assert_eq!(node.topology.gpus.len(), 1);
         assert_eq!(node.assessments.len(), 1);
         assert_eq!(node.assessments[0].gpu.vram_mb, Some(24560));
+        assert!(node.resident.is_empty());
+    }
+
+    #[test]
+    fn running_endpoints_become_resident_models() {
+        let body = br#"{
+            "name":"box-a",
+            "topology":{"gpus":[],"links":[]},
+            "gpus":[],
+            "endpoints":[
+                {"model":"qwen2.5-0.5b","state":"running"},
+                {"model":"old","state":"exited"}
+            ]
+        }"#;
+        let node = node_from_json("box-a:9090", body).unwrap();
+        assert_eq!(node.resident, vec!["qwen2.5-0.5b".to_string()]);
+        assert!(node.is_warm_for("qwen2.5-0.5b", "/models/qwen2.5-0.5b.gguf"));
+        assert!(!node.is_warm_for("tinyllama", "/models/tinyllama.gguf"));
     }
 
     #[test]

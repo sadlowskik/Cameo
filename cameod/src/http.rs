@@ -50,6 +50,9 @@ pub struct Request {
     pub query: HashMap<String, String>,
     pub headers: HashMap<String, String>,
     pub body: Vec<u8>,
+    /// True when this request arrived on the host-only operator socket
+    /// (`/run/cameo/cameo.sock`). Self-host posture treats that as operator.
+    pub from_unix: bool,
 }
 
 impl Request {
@@ -281,6 +284,7 @@ fn parse_request<R: BufRead>(reader: &mut R) -> Result<Request, ParseError> {
         query,
         headers,
         body,
+        from_unix: false,
     })
 }
 
@@ -377,6 +381,55 @@ impl Response {
     pub fn no_store(self) -> Self {
         self.header("Cache-Control", "no-store")
     }
+}
+
+/// Host-only operator listener. Same HTTP app as TCP; [`Request::from_unix`] is
+/// set so `self-host` posture grants operator without a bearer key.
+/// LAN / TCP is unchanged.
+#[cfg(unix)]
+pub fn serve_unix<F>(listener: std::os::unix::net::UnixListener, handler: F)
+where
+    F: Fn(&Request) -> Response + Send + Sync + 'static,
+{
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let handler = Arc::new(handler);
+    let in_flight = Arc::new(AtomicUsize::new(0));
+    for stream in listener.incoming() {
+        let Ok(stream) = stream else { continue };
+        if in_flight.load(Ordering::Relaxed) >= MAX_CONNECTIONS {
+            drop(stream);
+            continue;
+        }
+        in_flight.fetch_add(1, Ordering::Relaxed);
+        let handler = Arc::clone(&handler);
+        let in_flight = Arc::clone(&in_flight);
+        std::thread::spawn(move || {
+            let _ = handle_unix(stream, handler.as_ref());
+            in_flight.fetch_sub(1, Ordering::Relaxed);
+        });
+    }
+}
+
+#[cfg(unix)]
+fn handle_unix<F>(stream: std::os::unix::net::UnixStream, handler: &F) -> std::io::Result<()>
+where
+    F: Fn(&Request) -> Response,
+{
+    stream.set_read_timeout(Some(IO_TIMEOUT))?;
+    stream.set_write_timeout(Some(IO_TIMEOUT))?;
+    let mut reader = BufReader::new(stream);
+    let response = match parse_request(&mut reader) {
+        Ok(mut req) => {
+            req.from_unix = true;
+            handler(&req)
+        }
+        Err(ParseError::TooLarge) => Response::error(413, "request body too large"),
+        Err(ParseError::Malformed) => Response::error(400, "malformed request"),
+        Err(ParseError::Empty) => return Ok(()),
+        Err(ParseError::Io(e)) => return Err(e),
+    };
+    write_response(reader.get_mut(), response)
 }
 
 #[cfg(test)]

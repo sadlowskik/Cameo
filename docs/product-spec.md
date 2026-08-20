@@ -12,7 +12,7 @@ One appliance, three layers. The **deck** is a fourth thing that only *looks*: i
 2. **Kernel-level = privileged Cameo socket only.** Knossos the *host* talks to `/run/cameo/cameo.sock` on the local box. The model never gets syscalls, `/dev/kfd`, or `insmod`. No `cameo.ko` in v1.
 3. **Deck v1 = tree + local git + GitHub remotes**, plus **compute** from Cameo plugins.
 4. **Inference is a fleet.** Any machine that can run `cameod` is a node (bare metal, Proxmox VM, LXC with GPU passthrough). Each node has a dashboard at **that machine’s IP**. Multi-node GPUs are in-scope; multi-login humans can wait.
-5. **The deck is a commander, not a plugin host.** v1 hardcodes two layers (Cameo HTTP compute, Knossos sessions). No plugin ABI until a third brain exists. LAN control is `cameod` HTTP only — no second Unix-socket API.
+5. **The deck is a commander, not a plugin host.** v1 hardcodes two layers (Cameo HTTP compute, Knossos sessions). No plugin ABI until a third brain exists. **LAN control is `cameod` HTTP only.** The host-only socket `/run/cameo/cameo.sock` is the co-located operator seam (self-host posture); it is not a second network API.
 
 ---
 
@@ -30,7 +30,7 @@ Existing code this sits on:
 - `cameod` already binds `:9090`, serves a console at `/`, `GET /api/node`, `GET /api/engines`, `GET /api/gpus`, `/metrics`, load/unload via `/api/servers`.
 - `cameo fleet` already polls a static node list and rebuilds `Cluster`.
 - Knossos already has an OpenAI-compat client that can point at `http://<node>:9090/v1`.
-- Gap: `moe-harness` is a stub. `resolve_agents` still opens one `llama-server` per agent (8100, 8101…). That is the efficiency bug. The deck does not exist yet.
+- Gap: git-on-the-map is later. `moe-harness` plans userspace expert offload (placement calls it). The dashboard is one fleet map (this node + hub roster). `resolve_agents` reuses one serve per (node, GGUF).
 
 ---
 

@@ -22,7 +22,8 @@ core/placement  (the brain)
    │  (topology × model × task) → PlacementPlan → CommandSpec
    ▼  ── execution boundary: spawn (tracked) | execute (blocking) ──
 core/{backend-vulkan, backend-rocm, quant-tools}   thin executors of a CommandSpec
-core/{moe-harness, net-strategy}                   stubs (Phase 3 / v2)
+core/moe-harness                                   userspace MoE expert/layer/KV offload
+core/net-strategy                                  stub (v2 distributed)
 ```
 
 Two front ends bind to the same brain. The **CLI** runs one plan to completion;
@@ -209,12 +210,13 @@ gate is skipped only when no key of that class exists (loopback dev).
 
 | Route | Method | Auth | Purpose |
 |---|---|---|---|
-| `/` | GET | none (shell) | console (`INDEX_HTML`) or fleet dashboard (`HUB_HTML`) in hub mode (`app.rs:153`) |
-| `/healthz` `/readyz` | GET | none | liveness / readiness (readiness = can detect+plan; served from a 5s detect cache) |
+| `/` | GET | none (shell) | one dashboard: this-node console + fleet map (`INDEX_HTML`) |
+| `/healthz` `/readyz` | GET | none | liveness (`status`, `hub`) / readiness (can detect+plan; 5s detect cache) |
 | `/version` | GET | none | daemon version for the console's update check |
 | `/metrics` | GET | operator* | Prometheus scrape: supervisor + GPU gauges (`app.rs:171`) |
 | `/v1/models`, `/v1/*` | GET/POST | consumer+ | OpenAI-compatible gateway, routed by body `model` to a supervised endpoint (`app.rs:256`) |
-| `/api/gpus` `/api/node` `/api/engines` `/api/models` | GET | operator | detection report, self-description, harness engine descriptor, model catalog |
+| `/api/gpus` `/api/node` `/api/models` | GET | operator | detection report, self-description, model catalog |
+| `/api/engines` | GET | consumer+ | harness engine descriptor (resident models); load still needs operator |
 | `/api/plan` | POST | operator | placement preview |
 | `/api/servers` (+`{id}`) | GET/POST/DELETE | operator | endpoint lifecycle |
 | `/api/sessions` (+`{id}`) | GET/POST/DELETE | operator | Knossos session board |
@@ -337,7 +339,8 @@ keys pushes by `node_id`, not by the routing-time address (`dispatch.rs:102`).
 `backend-vulkan`, `backend-rocm`, `quant-tools` are **thin executors** — they name
 the right binary and run a prepared `CommandSpec` through the shared boundary.
 They only *do* something on a validated Linux host; elsewhere `execute` returns
-`UnsupportedOs`. `moe-harness` (Phase 3) and `net-strategy` (v2) remain stubs.
+`UnsupportedOs`. `moe-harness` plans userspace expert/layer/KV offload;
+`net-strategy` (v2) remains a stub.
 
 ## `archiso/`
 Scaffolded ISO profile: package set + boot-layer tuning (amdgpu module options,
@@ -362,15 +365,10 @@ console — not a dev-box binary you run by hand.
   the Knossos session board (`sessions`, commit `d42a903`), and now the fleet hub, auth
   roles, and dispatch (commit `2c2ba31`). "Not documented" there meant "not yet written up,"
   not "not present." This pass reconciles the module list and route table with the code.
-- **Privileged local socket — described, not present.** `auth.rs:11` and the `--posture`
-  help (`main.rs:64`) describe a self-host box granting a co-located harness *keyless*
-  operator power "via the privileged local socket." No such Unix/local socket exists in
-  this tree — the daemon binds one TCP listener (`main.rs:260`) and every operator route
-  goes through `check_auth`, which only ever consults the keyring. `Posture` today has two
-  observable effects: the startup gate that forces an operator key in `multi-tenant`
-  (`main.rs:208`), and the `local_harness`/`posture` fields reported by `/api/engines`. An
-  auditor should treat the "keyless local harness" grant as **design intent not yet
-  implemented**, and not assume a local caller is silently trusted.
+- **Privileged local socket.** On `self-host`, `cameod` also binds
+  `/run/cameo/cameo.sock` (0600, `CAMEO_SOCKET` overrides). HTTP on that socket
+  sets `Request.from_unix`; `check_auth` / `check_serve_auth` treat it as
+  operator. TCP is unchanged. Multi-tenant does not bind the socket.
 - **`/api/node` doc comment names `cameo fleet`, but the live consumer is the hub agent.**
   `api_node`'s comment (`app.rs:679`) says a `cameo fleet` controller polls it; that pull
   path exists, but in this tree the actual in-repo caller of the self-description is

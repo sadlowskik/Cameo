@@ -105,6 +105,11 @@ fn read_drm_memory(gpu: &mut GpuInfo) {
     if let Some(t) = read_trimmed(base.join("mem_info_vram_total")) {
         gpu.vram_mb = parse::parse_vram_mib(&t);
     }
+    // Live VRAM in use, re-read on every detection. amdgpu exposes this right
+    // beside the total; it is what the console's per-GPU VRAM gauge fills to.
+    if let Some(t) = read_trimmed(base.join("mem_info_vram_used")) {
+        gpu.vram_used_mb = parse::parse_vram_mib(&t);
+    }
     if let Some(t) = read_trimmed(base.join("mem_info_gtt_total")) {
         gpu.gtt_mb = parse::parse_vram_mib(&t);
     }
