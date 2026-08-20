@@ -49,8 +49,12 @@ export SOURCE_DATE_EPOCH="$STAMP"
 COMMIT="$(git -C "$REPO" rev-parse --short=8 HEAD 2>/dev/null || echo unknown)"
 CAMEO_ISO_VERSION="$(date -u -d "@$STAMP" +%Y.%m.%d).g$COMMIT"
 CAMEO_ISO_LABEL="CAMEO_$(date -u -d "@$STAMP" +%Y%m)"
-export CAMEO_ISO_VERSION CAMEO_ISO_LABEL
-log "Image identity: version $CAMEO_ISO_VERSION, label $CAMEO_ISO_LABEL"
+# The edition rides in the image name so both artifacts can sit in one release
+# without colliding: `cameo-<ver>` (universal, ships ROCm) and `cameo-lite-<ver>`.
+CAMEO_ISO_NAME="cameo"
+[ "$EDITION" = "lite" ] && CAMEO_ISO_NAME="cameo-lite"
+export CAMEO_ISO_VERSION CAMEO_ISO_LABEL CAMEO_ISO_NAME
+log "Image identity: name $CAMEO_ISO_NAME, version $CAMEO_ISO_VERSION, label $CAMEO_ISO_LABEL"
 
 BUILD="$WORK/profile"
 log "Staging a build copy of the profile at $BUILD (edition: $EDITION)"

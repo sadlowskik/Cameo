@@ -28,11 +28,13 @@ echo "This installs Cameo permanently onto a disk in this machine, so you boot"
 echo "from the disk and never need the USB again. A whole disk is erased — but"
 echo "nothing is touched until you pick a disk, review the plan, and type the"
 echo "disk's name to confirm."
+echo "No internet needed: everything installs from this USB. Network is only for"
+echo "pulling models and finding other Cameo nodes, later."
 echo
 
 # Show what Cameo detected on this box up front, so the installer is visibly
-# hardware-aware (this is the same tier read-out cameo-install uses to decide
-# whether to pull the ROCm stack — surfaced here before you commit to anything).
+# hardware-aware — the tier read-out, surfaced before you commit to anything.
+# (The image installs as-is; the flashed edition already decided ROCm vs Vulkan.)
 if command -v cameo >/dev/null 2>&1; then
   printf '%sDetected on this machine%s\n' "$C_ACCENT" "$C_OFF"
   cameo gpu-status 2>/dev/null || cameo detect 2>/dev/null \
@@ -53,8 +55,9 @@ case "$answer" in
 esac
 
 # The real installer. It owns all the safety (dry-run-style plan, typed disk
-# confirmation, network preflight, refusing the boot device). A non-zero exit is
-# an abort or a handled error, not a crash — either way we fall through to a shell.
+# confirmation, refusing the boot device) and copies the live image offline. A
+# non-zero exit is an abort or a handled error, not a crash — either way we fall
+# through to a shell.
 if cameo-install --commit; then
   echo
   printf '%sCameo is installed.%s Remove the USB, then type %sreboot%s.\n' \

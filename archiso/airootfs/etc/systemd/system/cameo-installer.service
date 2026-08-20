@@ -4,9 +4,9 @@ Documentation=https://github.com/sadlowskik/Cameo
 # Fires ONLY when the kernel command line carries `cameo.install` — which only the
 # "Install Cameo to disk" boot entry adds. A normal live boot lacks it, this unit
 # is skipped, and getty@tty1 runs as usual. No network dependency on purpose: the
-# installer runs its own network preflight and guides Wi-Fi association, so a box
-# whose Wi-Fi is not yet associated still reaches the installer (rather than this
-# unit blocking forever on network-online.target).
+# installer copies the live image onto disk fully offline, so a box with no
+# Ethernet and no Wi-Fi still installs (rather than this unit blocking forever on
+# network-online.target). Network matters only later — pulling models, finding nodes.
 ConditionKernelCommandLine=cameo.install
 After=cameo-console-init.service systemd-user-sessions.service
 Conflicts=getty@tty1.service

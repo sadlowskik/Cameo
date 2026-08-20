@@ -80,11 +80,20 @@ man-db
 man-pages
 
 # Installer tooling. `cameo-install` runs from this live medium to put Cameo on a
-# disk (partition, pacstrap, GRUB, admin account), so the medium needs the
-# install scripts and partitioning tools present: arch-install-scripts gives
-# pacstrap/genfstab/arch-chroot, gptfdisk gives sgdisk, dosfstools gives
-# mkfs.fat for the EFI partition, and parted gives partprobe.
+# disk by COPYING the live image (offline — no mirrors), then installing a
+# bootloader and creating the admin account. The medium therefore needs:
+#   * squashfs-tools — unsquashfs, to unpack the live airootfs onto the target;
+#     rsync is the fallback copy path when the pristine sfs is unavailable.
+#   * grub + efibootmgr — the bootloader is installed into the COPIED system, so
+#     GRUB must already live in the image (it is not fetched at install time).
+#   * arch-install-scripts — genfstab/arch-chroot to configure the target.
+#   * gptfdisk (sgdisk), dosfstools (mkfs.fat for the EFI partition),
+#     parted (partprobe).
 arch-install-scripts
+squashfs-tools
+rsync
+grub
+efibootmgr
 gptfdisk
 dosfstools
 parted

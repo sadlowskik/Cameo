@@ -123,7 +123,8 @@ body.anim h1 .w{opacity:0;animation:wordin .55s cubic-bezier(.2,.8,.2,1) forward
 
 /* the real firstboot printout — proof, shown in the tiers section */
 .term.boot{margin-top:22px;background:var(--inset)}
-.term.boot pre{font-size:13px;line-height:1.78}
+.term.boot pre{font-size:13px;line-height:1.78;white-space:pre-wrap;overflow-wrap:anywhere;overflow-x:hidden}
+.term.boot .ln{padding-left:2ch;text-indent:-2ch}
 .term .em{color:var(--amber)}
 .term .tt{color:var(--ember)}
 .term b{color:var(--ink);font-weight:600}
@@ -207,6 +208,17 @@ h2{font-family:var(--disp);font-weight:700;letter-spacing:-.03em;font-size:clamp
 .install .mini{margin:14px 0 6px;color:var(--faint);font-family:var(--mono);font-size:12px;letter-spacing:.02em}
 .tag-rec{font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;
   color:var(--ember-ink);background:var(--ember);border-radius:20px;padding:2px 8px;vertical-align:middle;margin-left:8px}
+.eds{display:flex;flex-direction:column;gap:10px;margin:0 0 16px}
+.ed{border:1px solid var(--line);border-radius:9px;background:var(--inset);padding:13px 14px}
+.ed.rec{border-color:rgba(255,122,26,.42)}
+.ed-h{display:flex;align-items:center;gap:8px;margin:0 0 6px;flex-wrap:wrap}
+.ed-name{font-family:var(--disp);font-weight:600;font-size:15.5px;letter-spacing:-.01em}
+.ed p{margin:0 0 11px;color:var(--muted);font-size:13.5px;line-height:1.55}
+.ed .tag-s{font-family:var(--mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);
+  border:1px solid var(--line-2);border-radius:20px;padding:2px 8px}
+.ed-picks{display:flex;flex-direction:column;gap:5px;margin:0 0 12px;font-family:var(--mono);font-size:11.5px;color:var(--faint);line-height:1.5}
+.ed-picks b{color:var(--body);font-weight:500}
+.ed .btn,.ed .btn-primary{font-size:12.5px;padding:9px 14px}
 
 footer{border-top:1px solid var(--line);padding:44px 0 54px}
 .foot{display:flex;justify-content:space-between;gap:30px;flex-wrap:wrap;align-items:center}
@@ -502,19 +514,38 @@ podman run --rm -p 9090:9090 \
       </article>
       <article class="install rise">
         <h3>ISO appliance</h3>
-        <p>Flash the image, boot the box. "Install to disk" is the default entry; first boot prints your card's tier, the console URL, and a key.</p>
-        <div class="actions" style="margin:0 0 12px">
-          <a class="btn-primary" href="https://github.com/sadlowskik/cameo/releases" rel="noopener">
-            <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
-            download ISO (beta)
-          </a>
+        <p>Flash the image, boot the box. "Install to disk" is the default entry and runs <em>fully offline</em> — it copies the image, downloads nothing. First boot prints your card's tier, the console URL, and a key.</p>
+
+        <div class="eds">
+          <div class="ed rec">
+            <div class="ed-h"><span class="ed-name">Autodetect</span><span class="tag-rec">universal · recommended</span></div>
+            <p>One image for every AMD card. It ships the ROCm stack but boots on Vulkan and only switches ROCm on when it detects a training-capable card. Not sure what you have? Take this.</p>
+            <a class="btn-primary" href="https://github.com/sadlowskik/cameo/releases" rel="noopener">
+              <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+              download universal ISO (beta)
+            </a>
+          </div>
+          <div class="ed">
+            <div class="ed-h"><span class="ed-name">Known device</span><span class="tag-s">smaller</span></div>
+            <p>Know your card? Take the image matched to its tier — a Vulkan-only card carries none of the ROCm weight it can't use.</p>
+            <div class="ed-picks">
+              <span>Tier 3 · RX 580 / APUs → <b>Lite</b>, Vulkan-only</span>
+              <span>Tier 1–2 · 7900 XTX · MI210 · RX 6800 → the <b>universal</b> image</span>
+            </div>
+            <a class="btn" href="https://github.com/sadlowskik/cameo/releases" rel="noopener">
+              <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+              lite &amp; matched builds
+            </a>
+          </div>
         </div>
-        <p class="mini">Flash it, then boot:</p>
+
+        <p class="mini">Flash either image, then boot:</p>
 <pre id="cmd-iso">sudo dd if=cameo-*.iso of=/dev/sdX \
   bs=4M status=progress oflag=sync</pre>
         <p class="mini">Or build it yourself on an Arch host:</p>
 <pre id="cmd-build">git clone https://github.com/sadlowskik/cameo
-sudo ./scripts/build-iso.sh   # CAMEO_EDITION=lite for old cards</pre>
+sudo ./scripts/build-iso.sh                    # universal · ships ROCm
+sudo CAMEO_EDITION=lite ./scripts/build-iso.sh # lite · Vulkan-only, old cards</pre>
         <button class="chip copy" type="button" data-copy-from="cmd-build" aria-label="Copy ISO build commands">
           <svg class="ico cp" data-copy-icon viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
           copy

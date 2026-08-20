@@ -10,7 +10,7 @@
 # copy those in, then Cameo overlays the packages and airootfs tuning here.
 # shellcheck disable=SC2034
 
-iso_name="cameo"
+iso_name="${CAMEO_ISO_NAME:-cameo}"
 # Identity comes from the build script, which derives it from the commit (or
 # SOURCE_DATE_EPOCH) so the same source produces the same image name and volume
 # label. The `date` fallbacks exist only for a direct mkarchiso invocation, and

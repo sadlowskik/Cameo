@@ -1,12 +1,20 @@
 #!/usr/bin/env bash
-# cameo-install — install Cameo from the live medium onto a disk.
+# cameo-install — install Cameo from the live medium onto a disk. OFFLINE.
 #
-# This turns Cameo from a live USB into a real, persistent OS: it partitions a
-# target disk, pacstraps the base + AMD/inference stack onto it, installs a
-# bootloader (GRUB, UEFI *or* BIOS — detected), creates your admin account, and
-# enables the cameod console. After it finishes you reboot into an installed
-# system and never touch the USB again. Accounts, keys, models and config then
-# persist like any normal machine.
+# This turns Cameo from a live USB into a real, persistent OS. It does NOT
+# download anything: the live image already carries the whole system (kernel,
+# Mesa/Vulkan, llama.cpp, ggml, cameo/cameod — and, on the universal edition,
+# ROCm), so the installer COPIES that image onto the target disk, installs a
+# bootloader, creates your admin account, and enables the cameod console. No
+# network is required to install. (Network is only needed later, at runtime, to
+# pull models and to discover other Cameo nodes on your LAN — never to install.)
+#
+# After it finishes you reboot into an installed system and never touch the USB
+# again. Accounts, keys, models and config then persist like any normal machine.
+#
+# The GPU tier decides nothing here: whichever edition you flashed is what lands
+# on disk — the universal image ships ROCm (and uses it only on training-capable
+# cards), the lite image is Vulkan-only. Pick the edition when you flash, not now.
 #
 # SAFETY. This erases a whole disk, so it is built to be hard to misfire:
 #   * It DEFAULTS TO A DRY RUN — it prints the exact plan and changes nothing.
@@ -57,14 +65,25 @@ done
 [ "$(id -u)" -eq 0 ] || die "run as root."
 [ "$(uname -m)" = "x86_64" ] || die "this build targets x86_64."
 
-for tool in sgdisk mkfs.ext4 pacstrap genfstab arch-chroot lsblk findmnt; do
+for tool in sgdisk mkfs.ext4 genfstab arch-chroot lsblk findmnt; do
   command -v "$tool" >/dev/null 2>&1 \
-    || die "missing '$tool'. The live image must ship arch-install-scripts, gptfdisk and dosfstools."
+    || die "missing '$tool'. The live image must ship arch-install-scripts and gptfdisk."
 done
+# The copy needs one of these; unsquashfs is preferred (pristine image), rsync is
+# the fallback. Both are shipped in the ISO, but check so a hand-rolled medium
+# fails loudly here rather than halfway through a wiped disk.
+if command -v unsquashfs >/dev/null 2>&1; then
+  COPY_METHOD="unsquashfs"
+elif command -v rsync >/dev/null 2>&1; then
+  COPY_METHOD="rsync"
+else
+  die "need 'unsquashfs' (squashfs-tools) or 'rsync' to copy the system; neither is present."
+fi
 
 # Firmware mode decides the partition layout and how GRUB is installed.
 if [ -d /sys/firmware/efi ]; then
   FIRMWARE="uefi"
+  command -v mkfs.fat >/dev/null 2>&1 || die "missing 'mkfs.fat' (dosfstools) for the EFI partition."
 else
   FIRMWARE="bios"
 fi
@@ -79,6 +98,18 @@ live_disk() {
   [ -n "$parent" ] && printf '/dev/%s\n' "$parent"
 }
 LIVE_DISK="$(live_disk || true)"
+
+# Locate the pristine live root: the squashfs on the boot medium (preferred) and
+# the kernel that came with it (a safety net in case the airootfs was pruned of
+# /boot/vmlinuz-linux to save image space).
+SFS_SRC="$(find /run/archiso/bootmnt -type f -name 'airootfs.sfs' 2>/dev/null | head -1 || true)"
+KERNEL_SRC="$(find /run/archiso/bootmnt -type f -name 'vmlinuz-linux' 2>/dev/null | head -1 || true)"
+if [ "$COPY_METHOD" = "unsquashfs" ] && [ -z "$SFS_SRC" ]; then
+  # No sfs to unpack (unusual boot mode) — fall back to mirroring the running root.
+  command -v rsync >/dev/null 2>&1 \
+    || die "no airootfs.sfs found and rsync is absent; cannot copy the system."
+  COPY_METHOD="rsync"
+fi
 
 # ---- choose the disk --------------------------------------------------------
 list_disks() {
@@ -138,31 +169,17 @@ else
   USERNAME_VAL="${USERNAME_VAL:-admin}"
 fi
 
-# Tier-appropriate package set. A Tier-3 (Vulkan-only) box — a typical junk
-# laptop APU — must NOT pull the multi-gigabyte ROCm stack it cannot use, so
-# ROCm is added only when detection reports a training-capable (Tier 1/2) GPU.
-BASE_PKGS=(
-  base linux linux-firmware linux-headers mkinitcpio amd-ucode
-  grub sudo zsh bash
-  mesa vulkan-radeon vulkan-icd-loader vulkan-tools
-  llama-cpp ggml-vulkan
-  iwd wireless-regdb
-  git curl nano vim less openssh man-db man-pages
-)
-[ "$FIRMWARE" = "uefi" ] && BASE_PKGS+=(efibootmgr dosfstools)
-ROCM_PKGS=(rocm-hip-sdk rocminfo rocm-smi-lib ggml-hip python python-pytorch-rocm)
-
-INCLUDE_ROCM=0
-if command -v cameo >/dev/null 2>&1 \
-   && cameo gpu-status --json 2>/dev/null | grep -q '"training_supported": *true'; then
-  INCLUDE_ROCM=1
+# Whatever the flashed edition carries is what installs. ROCm presence is a
+# property of the image, detected here only to describe the plan honestly.
+if command -v rocminfo >/dev/null 2>&1 || [ -e /opt/rocm ]; then
+  EDITION_DESC="universal (ROCm present; used only on training-capable cards)"
+else
+  EDITION_DESC="lite (Vulkan-only)"
 fi
-PKGS=("${BASE_PKGS[@]}")
-[ "$INCLUDE_ROCM" -eq 1 ] && PKGS+=("${ROCM_PKGS[@]}")
 
 # ---- show the plan ----------------------------------------------------------
 echo
-say "Cameo install plan"
+say "Cameo install plan  (offline — copies the live image, downloads nothing)"
 info "Target disk:   ${C_BOLD}${TARGET}${C_OFF}  (${DISK_SIZE:-?}  ${DISK_MODEL:-unknown})"
 info "Firmware:      ${FIRMWARE^^}  →  GRUB $( [ "$FIRMWARE" = uefi ] && echo 'x86_64-efi' || echo 'i386-pc' )"
 if [ "$FIRMWARE" = "uefi" ]; then
@@ -170,11 +187,11 @@ if [ "$FIRMWARE" = "uefi" ]; then
 else
   info "Partitions:    $(partdev 1)  1M  BIOS-boot         +  $(partdev 2)  rest  root (ext4)"
 fi
+info "Source:        ${COPY_METHOD} $( [ "$COPY_METHOD" = unsquashfs ] && echo "$SFS_SRC" || echo '(live root)' )"
+info "Edition:       ${EDITION_DESC}"
 info "Hostname:      ${HOSTNAME_VAL}"
 info "Admin user:    ${USERNAME_VAL}  (sudo via wheel)"
 info "Timezone:      ${TIMEZONE_VAL}"
-info "ROCm stack:    $( [ "$INCLUDE_ROCM" -eq 1 ] && echo 'yes (Tier 1/2 GPU detected)' || echo 'no (Vulkan-only / Tier 3)' )"
-info "Packages:      ${#PKGS[@]} ($( [ "$INCLUDE_ROCM" -eq 1 ] && echo 'full' || echo 'Vulkan baseline' ))"
 info "Console:       cameod enabled; persistent key written to /etc/cameo/cameod.env"
 echo
 
@@ -190,27 +207,6 @@ printf '%sThis will ERASE ALL DATA on %s.%s\n' "$C_WARN" "$TARGET" "$C_OFF"
 printf '  Type the disk name (%s%s%s) to proceed: ' "$C_BOLD" "$base" "$C_OFF"
 read -r confirm
 [ "$confirm" = "$base" ] || die "confirmation did not match; aborting. Nothing was changed."
-
-# ---- network preflight (BEFORE we touch the disk) ---------------------------
-# pacstrap downloads the whole system from the Arch mirrors, so with no network
-# it fails partway — and if that happens *after* partitioning, the disk is wiped
-# with no OS on it. Prove connectivity first, and refuse (having changed nothing)
-# with guidance if it is missing. This is the single most common install failure
-# on a laptop with no ethernet: wifi is simply not associated yet.
-say "Checking network"
-reach() { curl -fsS --max-time 10 -o /dev/null "$1" 2>/dev/null; }
-if ! reach https://geo.mirror.pkgbuild.com/ && ! reach https://archlinux.org/ \
-   && ! reach https://mirror.rackspace.com/archlinux/; then
-  echo
-  warn "No internet connection — pacstrap cannot download the system."
-  info "Nothing has been changed on ${TARGET}. Connect a network, then re-run."
-  info "  Wired:  plug in ethernet (DHCP is automatic)."
-  info "  Wi-Fi:  ${C_BOLD}iwctl${C_OFF} → 'station wlan0 get-networks' →"
-  info "          'station wlan0 connect <SSID>'  (then re-run cameo-install --commit)."
-  info "  Verify: ${C_BOLD}ping -c1 archlinux.org${C_OFF}"
-  die "network required."
-fi
-info "Network OK."
 
 # ---- partition + format -----------------------------------------------------
 say "Partitioning $TARGET"
@@ -243,25 +239,79 @@ else
   mount "$(partdev 2)" /mnt
 fi
 
-# ---- install the system -----------------------------------------------------
-say "Installing packages (pacstrap) — this downloads a lot; grab a coffee"
-pacstrap -K /mnt "${PKGS[@]}"
-genfstab -U /mnt >> /mnt/etc/fstab
+# ---- copy the system (offline) ----------------------------------------------
+# The whole point: put the running image onto the disk without a single byte from
+# the network. unsquashfs unpacks the pristine airootfs; rsync mirrors the live
+# root as a fallback, skipping virtual and cross-mount paths.
+if [ "$COPY_METHOD" = "unsquashfs" ]; then
+  say "Unpacking the live image onto $TARGET (offline) — grab a coffee"
+  unsquashfs -f -d /mnt "$SFS_SRC"
+else
+  say "Mirroring the live system onto $TARGET (offline) — grab a coffee"
+  rsync -aHAX --numeric-ids --info=progress2 --one-file-system \
+    --exclude='/mnt/*' --exclude='/lost+found' \
+    / /mnt/
+fi
 
-# Carry the Cameo pieces that are not pacman packages: the CLI, the daemon, the
-# console/first-boot units and branding, exactly as configured on this medium.
-say "Copying the Cameo layer into the installed system"
-for f in cameo cameod cameo-firstboot cameo-install; do
-  [ -e "/usr/local/bin/$f" ] && install -Dm755 "/usr/local/bin/$f" "/mnt/usr/local/bin/$f"
-done
-[ -d /etc/cameo ] && cp -a /etc/cameo /mnt/etc/
-for u in cameod.service cameo-firstboot.service; do
-  [ -e "/etc/systemd/system/$u" ] && install -Dm644 "/etc/systemd/system/$u" "/mnt/etc/systemd/system/$u"
-done
-for cfg in /etc/modprobe.d/cameo-amdgpu.conf /etc/sysctl.d/30-cameo.conf /etc/os-release /etc/motd; do
-  [ -e "$cfg" ] && install -Dm644 "$cfg" "/mnt$cfg"
-done
+# The kernel must be on /boot to boot. If the airootfs did not carry it (some
+# builds prune it), lift it straight off the boot medium.
+if [ ! -e /mnt/boot/vmlinuz-linux ] && [ -n "$KERNEL_SRC" ]; then
+  install -Dm644 "$KERNEL_SRC" /mnt/boot/vmlinuz-linux
+fi
+[ -e /mnt/boot/vmlinuz-linux ] || die "no kernel on the target (/boot/vmlinuz-linux missing); cannot proceed."
 
+genfstab -U /mnt > /mnt/etc/fstab
+
+# ---- de-live the copy -------------------------------------------------------
+# The image is built to run as a live USB. Strip the live-only behaviour so the
+# installed box boots like a normal machine: a real initramfs (not the archiso
+# one that hunts for a squashfs), a login prompt (not root autologin), and none
+# of the USB bootstrap units.
+say "Converting the copy into an installed system"
+
+# 1) A normal initramfs. The copied /etc/mkinitcpio.conf uses the `archiso`
+#    hooks, which look for the ISO at boot and would leave the disk unbootable.
+cat > /mnt/etc/mkinitcpio.conf <<'EOF'
+# Cameo installed-system initramfs (generic hooks; no archiso).
+MODULES=()
+BINARIES=()
+FILES=()
+HOOKS=(base udev autodetect microcode modconf kms keyboard keymap consolefont block filesystems fsck)
+EOF
+cat > /mnt/etc/mkinitcpio.d/linux.preset <<'EOF'
+ALL_config="/etc/mkinitcpio.conf"
+ALL_kver="/boot/vmlinuz-linux"
+PRESETS=('default' 'fallback')
+default_image="/boot/initramfs-linux.img"
+fallback_image="/boot/initramfs-linux-fallback.img"
+fallback_options="-S autodetect"
+EOF
+
+# 2) No root autologin on an installed box — it has a real admin account.
+rm -f /mnt/etc/systemd/system/getty@tty1.service.d/autologin.conf
+rmdir /mnt/etc/systemd/system/getty@tty1.service.d 2>/dev/null || true
+
+# 3) Drop live-only unit enablement (leave the unit files; just don't start them).
+#    - cameo-installer: the "install to disk" flow itself (also gated on a kernel
+#      arg the installed system never has, but disable it for good measure).
+#    - cameo-console-init: regenerates a throwaway key each boot; the installed
+#      system uses the persistent one written below.
+#    - cameo-storage-init: live-USB persistence setup, meaningless on a disk.
+#    - releng's boot-time chores that only make sense on live media.
+for unit in cameo-installer.service cameo-console-init.service cameo-storage-init.service \
+            pacman-init.service choose-mirror.service reflector.service \
+            livecd-talk.service; do
+  rm -f "/mnt/etc/systemd/system/multi-user.target.wants/$unit" \
+        "/mnt/etc/systemd/system/$unit" 2>/dev/null || true
+done
+# cameo-installer may also be wired in via a getty drop-in / wants — clear those.
+rm -f /mnt/etc/systemd/system/getty.target.wants/cameo-installer.service 2>/dev/null || true
+
+# 4) Fresh first boot: re-arm the one-shot tier report so the installed box
+#    greets the operator with its tier + console URL on first power-on.
+rm -f /mnt/var/lib/cameo/.firstboot-done 2>/dev/null || true
+
+# ---- console key + model cache ----------------------------------------------
 # A persistent console key, generated once at install (no more per-boot churn).
 say "Writing a persistent console key"
 key="$(head -c 48 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 32)"
@@ -286,7 +336,8 @@ else
   warn "unknown timezone '${TIMEZONE_VAL}' — defaulting to UTC."
   ln -sf /usr/share/zoneinfo/UTC /mnt/etc/localtime
 fi
-echo "en_US.UTF-8 UTF-8" >> /mnt/etc/locale.gen
+grep -q '^en_US.UTF-8 UTF-8' /mnt/etc/locale.gen 2>/dev/null \
+  || echo "en_US.UTF-8 UTF-8" >> /mnt/etc/locale.gen
 echo "LANG=en_US.UTF-8" > /mnt/etc/locale.conf
 echo "$HOSTNAME_VAL" > /mnt/etc/hostname
 cat > /mnt/etc/hosts <<EOF
@@ -322,7 +373,10 @@ arch-chroot /mnt install -d -m 2775 -g wheel /var/lib/cameo/models
 arch-chroot /mnt useradd -m -G wheel -s /bin/bash "$USERNAME_VAL"
 printf '%s:%s\n' "$USERNAME_VAL" "$PASSWORD_VAL" | arch-chroot /mnt chpasswd
 printf 'root:%s\n' "$PASSWORD_VAL" | arch-chroot /mnt chpasswd
-arch-chroot /mnt systemctl enable systemd-networkd systemd-resolved iwd cameod
+# Enable exactly the services an installed box wants; the live-only ones were
+# stripped above. cameo-firstboot prints the tier banner once on first boot.
+arch-chroot /mnt systemctl enable systemd-networkd systemd-resolved iwd cameod cameo-firstboot 2>/dev/null || \
+  arch-chroot /mnt systemctl enable systemd-networkd systemd-resolved iwd cameod
 arch-chroot /mnt mkinitcpio -P
 if [ "$FIRMWARE" = "uefi" ]; then
   arch-chroot /mnt grub-install --target=x86_64-efi --efi-directory=/boot \
@@ -343,4 +397,5 @@ info "Log in as ${C_BOLD}${USERNAME_VAL}${C_OFF} (or root) with the password you
 info "Web console:  http://<this-box-ip>:9090"
 info "Console key:  ${key}"
 info "  (stored in /etc/cameo/cameod.env — stable across reboots now)"
+info "Network is only needed to pull models and to find other Cameo nodes."
 echo

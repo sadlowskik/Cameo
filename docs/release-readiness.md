@@ -76,10 +76,15 @@ project's own plan requires before Phase 2 backend work.
 - **No local desktop/browser.** The image is a headless appliance administered
   remotely (the Proxmox model). A local desktop environment is a deliberate,
   separate size/scope decision, not shipped here.
-- **Install to disk is shipped.** A boot-menu "Install Cameo to disk" entry runs
-  the guided installer (`cameo-install`): it partitions, pacstraps the tier-aware
-  stack, installs GRUB (UEFI/BIOS), creates the admin account, and writes a
-  persistent console key. After install, accounts/models/config persist normally.
+- **Install to disk is shipped, and runs fully offline.** A boot-menu "Install
+  Cameo to disk" entry runs the guided installer (`cameo-install`): it partitions,
+  **copies the live image onto disk** (unsquashfs, no mirrors), installs GRUB
+  (UEFI/BIOS), de-lives the copy (generic initramfs, no autologin, live-only units
+  disabled), creates the admin account, and writes a persistent console key. The
+  flashed edition decides the stack — universal ships ROCm, lite is Vulkan-only —
+  so no package selection happens at install time. After install, accounts/models/
+  config persist normally. Network is only needed later for model pulls and node
+  discovery.
 - **Live-medium persistence.** On the *live USB* the model cache is a RAM overlay
   by default; `cameo-persist-cache` points it at a `CAMEO_DATA` disk that
   `cameo-storage-init` remounts each boot. Accounts/config on a pure live boot
