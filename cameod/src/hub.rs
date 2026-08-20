@@ -10,9 +10,11 @@
 //!
 //! The registry is pure in-memory state with the same shape as
 //! [`crate::sessions::Board`]: a `Mutex<BTreeMap>`, staleness computed on read,
-//! and dead entries pruned. No node cap — the project's funding model is
-//! sustainable-open-source, so the self-hosted hub is free and unlimited; a paid
-//! hosted tier is a future *mode*, not a limit on this one.
+//! and dead entries pruned. There is no *product* node cap — the funding model is
+//! sustainable-open-source, so the self-hosted hub is free and effectively
+//! unlimited — but a high [`MAX_NODES`] safety ceiling (least-recently-seen
+//! eviction) plus per-row size caps keep a farm-token holder from exhausting hub
+//! memory; a paid hosted tier is a future *mode*, not a limit on this one.
 
 use std::collections::BTreeMap;
 use std::sync::Mutex;
@@ -28,9 +30,24 @@ const ONLINE_WINDOW: Duration = Duration::from_secs(45);
 
 /// A node silent for this long is dropped from the farm entirely. Offline nodes
 /// linger until here so the dashboard can show them greyed-out (HiveOS-style)
-/// rather than vanishing the instant they miss a beat — but the window is bounded
-/// so a churn of transient nodes cannot grow the map without limit.
+/// rather than vanishing the instant they miss a beat. This bounds each entry's
+/// *lifetime*, not the entry *count* — the count is bounded by [`MAX_NODES`].
 const DROP_AFTER: Duration = Duration::from_secs(15 * 60);
+
+/// A safety ceiling on enrolled nodes. Unlimited self-hosting is the intent, so
+/// this sits far above any real fleet; it exists only so a farm-token holder
+/// cannot exhaust hub memory by registering endless `node_id`s. At the ceiling
+/// the least-recently-seen node is evicted to make room for a new one.
+const MAX_NODES: usize = 10_000;
+
+/// Cap on a `node_id`'s length: it is derived from client-supplied fields, so an
+/// unbounded id would itself be a memory sink.
+const MAX_NODE_ID_LEN: usize = 256;
+
+/// Cap on the stored `/api/node` self-description. A real one is a few KiB; this
+/// bounds per-row memory well under the 1 MiB HTTP body limit. An oversize blob is
+/// dropped — the row still enrolls, the dashboard just shows no GPU summary.
+const MAX_NODE_BLOB_BYTES: usize = 64 * 1024;
 
 /// What a node sends to `POST /hub/register`. A heartbeat reuses the same shape
 /// but may omit the (larger) `node` description.
@@ -85,20 +102,42 @@ impl Farm {
     /// Register or refresh a node, returning the `node_id` the hub assigned (which
     /// the node echoes back on subsequent heartbeats).
     pub fn register(&self, mut reg: Registration) -> String {
-        let id = pick_id(&reg);
+        let id = cap_id_len(pick_id(&reg));
         reg.node_id = id.clone();
+        // Cap the stored self-description: an oversize blob is dropped rather than
+        // enrolled, so per-row memory stays bounded well under the HTTP body limit.
+        if blob_too_big(&reg.node) {
+            reg.node = Value::Null;
+        }
         let now = Instant::now();
         let mut map = self.inner.lock().unwrap();
         prune(&mut map, now);
-        map.entry(id.clone())
-            .and_modify(|e| {
-                e.reg = reg.clone();
-                e.last_seen = now;
-            })
-            .or_insert(Enrolled {
+        if let Some(e) = map.get_mut(&id) {
+            // First-credential-wins: a re-registration refreshes liveness, name,
+            // version, and the live description — but the callback address and key
+            // are LOCKED to the first enrollment. Otherwise a farm-token holder
+            // could POST another node's `node_id` to overwrite its callback
+            // (redirecting pushes) or its key (capturing the victim's credential).
+            // A node that legitimately changes address/key must be admin-removed
+            // first.
+            e.last_seen = now;
+            e.reg.name = reg.name;
+            e.reg.cameo_version = reg.cameo_version;
+            e.reg.node = reg.node;
+            return id;
+        }
+        // A genuinely new node: hold the line at the safety ceiling by evicting the
+        // least-recently-seen entry before inserting.
+        if map.len() >= MAX_NODES {
+            evict_oldest(&mut map);
+        }
+        map.insert(
+            id.clone(),
+            Enrolled {
                 reg,
                 last_seen: now,
-            });
+            },
+        );
         id
     }
 
@@ -108,11 +147,15 @@ impl Farm {
     pub fn heartbeat(&self, node_id: &str, node: Option<Value>) -> bool {
         let now = Instant::now();
         let mut map = self.inner.lock().unwrap();
+        // Prune here too, not only on reader paths (register/list/dispatch): an
+        // idle hub whose dashboard is closed still reclaims silent nodes off the
+        // beats its live nodes send.
+        prune(&mut map, now);
         match map.get_mut(node_id) {
             Some(e) => {
                 e.last_seen = now;
                 if let Some(n) = node {
-                    if !n.is_null() {
+                    if !n.is_null() && !blob_too_big(&n) {
                         e.reg.node = n;
                     }
                 }
@@ -196,6 +239,43 @@ fn pick_id(reg: &Registration) -> String {
 /// Drop nodes that have been silent past [`DROP_AFTER`].
 fn prune(map: &mut BTreeMap<String, Enrolled>, now: Instant) {
     map.retain(|_, e| now.duration_since(e.last_seen) < DROP_AFTER);
+}
+
+/// Truncate a `node_id` to at most [`MAX_NODE_ID_LEN`] bytes on a char boundary.
+/// The id is client-supplied, so a naive `String::truncate` could panic
+/// mid-codepoint.
+fn cap_id_len(mut s: String) -> String {
+    if s.len() > MAX_NODE_ID_LEN {
+        let mut end = MAX_NODE_ID_LEN;
+        while end > 0 && !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        s.truncate(end);
+    }
+    s
+}
+
+/// Whether a stored self-description exceeds [`MAX_NODE_BLOB_BYTES`] serialized.
+/// A serialization failure counts as "too big" — we do not store what we cannot
+/// measure.
+fn blob_too_big(node: &Value) -> bool {
+    if node.is_null() {
+        return false;
+    }
+    serde_json::to_vec(node)
+        .map(|v| v.len() > MAX_NODE_BLOB_BYTES)
+        .unwrap_or(true)
+}
+
+/// Evict the least-recently-seen node to make room under [`MAX_NODES`].
+fn evict_oldest(map: &mut BTreeMap<String, Enrolled>) {
+    if let Some(oldest) = map
+        .iter()
+        .min_by_key(|(_, e)| e.last_seen)
+        .map(|(k, _)| k.clone())
+    {
+        map.remove(&oldest);
+    }
 }
 
 /// A compact `[{model, vram_mb, tier}]` view of a node's GPUs, read out of its
@@ -326,5 +406,68 @@ mod tests {
         assert!(farm.remove(&id));
         assert!(!farm.remove(&id));
         assert!(farm.list().is_empty());
+    }
+
+    #[test]
+    fn reregistration_cannot_hijack_address_or_key() {
+        let farm = Farm::new();
+        let id = farm.register(reg(json!({
+            "node_id": "n1", "address": "10.0.0.2:9090", "key": "first"
+        })));
+        // An attacker re-POSTs the same node_id with a different callback + key.
+        farm.register(reg(json!({
+            "node_id": "n1", "address": "10.6.6.6:9090", "key": "stolen"
+        })));
+        // The original callback and key are locked in: no redirect, no capture.
+        assert_eq!(
+            farm.push_target(&id),
+            Some(("10.0.0.2:9090".to_string(), Some("first".to_string())))
+        );
+    }
+
+    #[test]
+    fn oversize_node_id_is_capped() {
+        let farm = Farm::new();
+        let huge = "x".repeat(MAX_NODE_ID_LEN * 4);
+        let id = farm.register(reg(json!({ "name": huge, "address": "10.0.0.2:9090" })));
+        assert!(id.len() <= MAX_NODE_ID_LEN);
+    }
+
+    #[test]
+    fn oversize_self_description_is_dropped() {
+        let farm = Farm::new();
+        let big: Vec<Value> = (0..(MAX_NODE_BLOB_BYTES / 4))
+            .map(|_| json!("xxxx"))
+            .collect();
+        let id = farm.register(reg(json!({
+            "name": "box-a", "address": "10.0.0.2:9090", "node": { "junk": big }
+        })));
+        // The blob was over the cap, so it was dropped: the row still enrolls but
+        // shows no GPU summary.
+        assert_eq!(farm.list()[0]["gpus"], json!([]));
+        assert_eq!(id, "box-a");
+    }
+
+    #[test]
+    fn evict_oldest_removes_the_stalest() {
+        let mut map: BTreeMap<String, Enrolled> = BTreeMap::new();
+        map.insert(
+            "old".into(),
+            Enrolled {
+                reg: reg(json!({ "address": "10.0.0.1:9090" })),
+                last_seen: Instant::now(),
+            },
+        );
+        std::thread::sleep(Duration::from_millis(5));
+        map.insert(
+            "new".into(),
+            Enrolled {
+                reg: reg(json!({ "address": "10.0.0.2:9090" })),
+                last_seen: Instant::now(),
+            },
+        );
+        evict_oldest(&mut map);
+        assert!(!map.contains_key("old"), "the stalest node is evicted");
+        assert!(map.contains_key("new"));
     }
 }

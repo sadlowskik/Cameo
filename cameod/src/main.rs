@@ -231,6 +231,11 @@ fn run(args: Args) -> Result<()> {
         farm: hub::Farm::new(),
         hub_enabled: args.hub,
         farm_token: args.farm_token.clone(),
+        // /v1 is only open without a credential on a loopback bind, or when the
+        // operator explicitly opts in. A routable bind with an operator-only key
+        // ring keeps /v1 gated to that key rather than serving the GPU to the LAN.
+        open_inference: is_loopback(&args.host)
+            || std::env::var_os("CAMEO_OPEN_INFERENCE").is_some(),
     });
 
     // Node mode: if told where the hub is, phone home in the background. The agent

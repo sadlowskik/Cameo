@@ -62,6 +62,11 @@ pub struct AppState {
     /// The token a node must present to enroll (`POST /hub/register|heartbeat`).
     /// Required in hub mode — registration fails closed without it.
     pub farm_token: Option<String>,
+    /// Whether `/v1` inference may be reached without any credential. True only
+    /// for a loopback bind (dev) or an explicit `CAMEO_OPEN_INFERENCE` opt-in. On
+    /// a routable bind it is false, so an operator-only key ring still gates `/v1`
+    /// to that operator key instead of serving the GPU to anyone on the network.
+    pub open_inference: bool,
 }
 
 /// A cached detection result: when it was taken, and what it saw.
@@ -237,10 +242,15 @@ fn bearer(req: &Request) -> Option<&str> {
 }
 
 /// Authenticate a `/v1` request. Any valid credential (consumer *or* operator) may
-/// run inference. `None` = allowed. When no consumer key is configured the gateway
-/// is open (loopback dev), mirroring the per-endpoint serving rule.
+/// run inference. `None` = allowed.
+///
+/// `/v1` is only open without a credential where that is deliberately safe: a
+/// loopback bind, or an explicit opt-in, *and* only when no consumer key is
+/// configured to gate it. On a routable bind with an operator-only key ring the
+/// gateway falls closed to that operator key — an unauthenticated public `/v1`
+/// would serve the box's GPU to anyone who can reach the port.
 fn check_serve_auth(state: &Arc<AppState>, req: &Request) -> Option<Response> {
-    if !state.keyring.requires_consumer() {
+    if state.open_inference && !state.keyring.requires_consumer() {
         return None;
     }
     if state.keyring.is_consumer_or_better(bearer(req)) {
@@ -507,9 +517,21 @@ fn node_call(
     let Some((address, key)) = state.farm.push_target(node_id) else {
         return Err((404, format!("no such node '{node_id}'")));
     };
+    // SSRF guard: a node's callback address is self-declared, so refuse to dial a
+    // literal link-local address (169.254.0.0/16 hosts the cloud metadata service;
+    // IPv6 fe80::/10). LAN, loopback, and hostnames are left alone — real nodes
+    // live there (see `push_address_ok`).
+    if !push_address_ok(&address) {
+        return Err((
+            400,
+            format!("refusing to push to node '{node_id}': address {address} is link-local (possible SSRF to a metadata service)"),
+        ));
+    }
     let url = format!("http://{address}{path}");
     let mut cmd = std::process::Command::new("curl");
-    cmd.args(["-s", "--fail", "--max-time", "30", "-X", method]);
+    // --max-time is kept under the inbound IO_TIMEOUT (30s) so a maximally-slow
+    // node cannot consume the entire write budget of the client waiting on us.
+    cmd.args(["-s", "--fail", "--max-time", "20", "-X", method]);
     if let Some(k) = &key {
         cmd.arg("-H").arg(format!("Authorization: Bearer {k}"));
     }
@@ -953,6 +975,34 @@ fn is_loopback(host: &str) -> bool {
             .unwrap_or(false)
 }
 
+/// The host part of a `host:port` (or `[v6]:port`) address.
+fn host_of(address: &str) -> &str {
+    if let Some(rest) = address.strip_prefix('[') {
+        return rest.split(']').next().unwrap_or(address);
+    }
+    match address.rsplit_once(':') {
+        Some((h, _)) => h,
+        None => address,
+    }
+}
+
+/// Whether the hub may dial a node's self-declared callback address. Nodes live on
+/// the operator's LAN/VPN (or loopback when co-located), so those are fine; a
+/// literal link-local address is refused because that range hosts the cloud
+/// metadata service (IPv4 169.254.0.0/16, IPv6 fe80::/10) — a farm-token holder
+/// must not be able to point the hub at instance credentials. Hostnames are left
+/// to the operator's DNS, so this blocks the specific literal-IP SSRF, not LAN use.
+fn push_address_ok(address: &str) -> bool {
+    match host_of(address).parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(ip)) => !(ip.is_link_local() || ip.is_unspecified()),
+        Ok(std::net::IpAddr::V6(ip)) => {
+            !(ip.is_unspecified() || (ip.segments()[0] & 0xffc0) == 0xfe80)
+        }
+        // Not a literal IP: a hostname the operator's DNS resolves — allowed.
+        Err(_) => true,
+    }
+}
+
 /// Map a placement error to an HTTP response with a stable, actionable message.
 fn plan_error_response(e: cameo_placement::Error) -> Response {
     match e {
@@ -965,5 +1015,33 @@ fn plan_error_response(e: cameo_placement::Error) -> Response {
         }
         e @ cameo_placement::Error::InvalidModel(_) => Response::error(400, e.to_string()),
         other => Response::error(500, other.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn host_of_splits_v4_v6_and_bare() {
+        assert_eq!(host_of("10.0.0.2:9090"), "10.0.0.2");
+        assert_eq!(host_of("[fe80::1]:9090"), "fe80::1");
+        assert_eq!(host_of("box.local:9090"), "box.local");
+        assert_eq!(host_of("box.local"), "box.local");
+    }
+
+    #[test]
+    fn push_address_rejects_link_local_allows_lan_and_hosts() {
+        // Link-local / metadata → refused.
+        assert!(!push_address_ok("169.254.169.254:80"));
+        assert!(!push_address_ok("169.254.0.1:9090"));
+        assert!(!push_address_ok("[fe80::1]:9090"));
+        assert!(!push_address_ok("0.0.0.0:9090"));
+        // LAN, loopback (co-located self-host), public, and hostnames → allowed.
+        assert!(push_address_ok("10.0.0.2:9090"));
+        assert!(push_address_ok("192.168.1.5:9090"));
+        assert!(push_address_ok("127.0.0.1:9090"));
+        assert!(push_address_ok("box.local:9090"));
+        assert!(push_address_ok("[2001:db8::1]:9090"));
     }
 }
