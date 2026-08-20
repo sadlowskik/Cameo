@@ -12,6 +12,7 @@ pub mod error;
 pub mod fleet;
 pub mod model;
 pub mod plan;
+pub mod router;
 
 pub use agents::{
     resolve_agent, resolve_agents, AgentRunPlan, AgentSpec, EngineBinding, PlacementTarget,
@@ -21,3 +22,4 @@ pub use error::Error;
 pub use fleet::{place_on_fleet, Cluster, FleetPlacement, FleetPlan, NetworkClass, NodeInfo};
 pub use model::{gib, ModelMeta, QuantLevel};
 pub use plan::{plan, GpuLayers, MemoryBudget, MultiGpu, Offload, PlacementPlan, Task};
+pub use router::{route, Candidate, NodeLoad, RouteChoice, RouteError, RouteRequest};

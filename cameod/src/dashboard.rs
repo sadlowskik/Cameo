@@ -476,3 +476,171 @@ setInterval(()=>{loadServers();loadPlayground();tickDeck();},4000);
 </body>
 </html>
 "##;
+
+/// The fleet-hub dashboard, served at `/` when cameod runs with `--hub`. Lists
+/// every node that has phoned home to `GET /hub/nodes`, and drives a node's
+/// endpoints through the hub's push routes. Self-contained, same palette as
+/// [`INDEX_HTML`]; admin auth is the console key (same store key, so one login
+/// covers a box that is both a hub and a node).
+pub const HUB_HTML: &str = r##"<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cameo Fleet</title>
+<style>
+  :root{
+    --bg:#0e1116; --panel:#161b22; --panel-2:#1c232d; --border:#2a3038;
+    --ink:#e6edf3; --muted:#8b949e; --accent:#ff7f5c; --accent-dim:#3a2a24;
+    --t1:#3fb950; --t2:#d29922; --t3:#39c5cf; --danger:#f85149;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
+  a{color:var(--accent)}
+  header{display:flex;align-items:baseline;gap:16px;padding:20px 28px;
+    border-bottom:1px solid var(--border);background:var(--panel);}
+  .wordmark{font-weight:800;letter-spacing:.5px;font-size:20px;color:var(--accent)}
+  .tagline{color:var(--muted);font-size:13px}
+  .status{margin-left:auto;font-size:12px;color:var(--muted)}
+  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--muted);margin-right:6px;vertical-align:middle}
+  .dot.ok{background:var(--t1)} .dot.bad{background:var(--danger)}
+  main{max-width:1200px;margin:0 auto;padding:24px 28px;display:grid;gap:18px}
+  .grid{display:grid;gap:16px;grid-template-columns:repeat(auto-fill,minmax(320px,1fr))}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:16px}
+  .card.offline{opacity:.55}
+  .card h3{margin:0 0 10px;font-size:16px;display:flex;align-items:center;gap:8px}
+  .card h3 .addr{margin-left:auto;font-size:12px;color:var(--muted);font-weight:400}
+  .kv{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;font-size:12px;color:var(--muted);margin-bottom:10px}
+  .kv b{color:var(--ink);font-weight:500}
+  .gpus{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 12px}
+  .gpu{background:var(--panel-2);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:12px}
+  .badge{font-size:10px;font-weight:700;padding:1px 7px;border-radius:20px;margin-left:6px}
+  .tier1{background:rgba(63,185,80,.15);color:var(--t1)}
+  .tier2{background:rgba(210,153,34,.15);color:var(--t2)}
+  .tier3{background:rgba(57,197,207,.15);color:var(--t3)}
+  .ep{display:flex;align-items:center;gap:8px;font-size:12px;padding:6px 0;border-top:1px solid var(--border)}
+  .ep code{color:var(--muted)}
+  .ep .st{font-size:10px;font-weight:700;padding:1px 7px;border-radius:20px}
+  .st-running{background:rgba(63,185,80,.15);color:var(--t1)}
+  .st-exited,.st-failed{background:rgba(139,148,158,.15);color:var(--muted)}
+  .serve{display:flex;gap:8px;margin-top:12px}
+  input{flex:1;min-width:0;background:var(--bg);border:1px solid var(--border);color:var(--ink);border-radius:6px;padding:7px 9px;font-size:13px}
+  input.port{flex:0 0 78px}
+  input:focus{outline:none;border-color:var(--accent)}
+  button{background:var(--accent);color:#1a1008;border:none;border-radius:6px;padding:8px 14px;font-weight:600;font-size:13px;cursor:pointer}
+  button:hover{filter:brightness(1.08)} button:active{transform:translateY(1px)}
+  button.stop{background:transparent;color:var(--danger);border:1px solid var(--danger);padding:3px 10px;font-size:11px;margin-left:auto}
+  button.ghost{background:transparent;color:var(--muted);border:1px solid var(--border);padding:4px 10px;font-size:12px;margin-top:12px}
+  .flash{padding:10px 14px;border-radius:6px;font-size:13px;display:none}
+  .flash.err{display:block;background:var(--accent-dim);color:var(--accent);border:1px solid var(--accent)}
+  .flash.ok{display:block;background:rgba(63,185,80,.1);color:var(--t1);border:1px solid var(--t1)}
+  .empty{color:var(--muted);font-style:italic;padding:40px;text-align:center;
+    border:1px dashed var(--border);border-radius:10px}
+  .empty code{color:var(--ink)}
+</style>
+</head>
+<body>
+<header>
+  <span class="wordmark">Cameo Fleet</span>
+  <span class="tagline">every node that phoned home, one console</span>
+  <span class="status"><span class="dot" id="dot"></span><span id="status-text">connecting…</span></span>
+</header>
+<main>
+  <div class="flash" id="flash"></div>
+  <div class="grid" id="nodes"></div>
+  <div class="empty" id="empty" style="display:none">
+    No nodes yet. Boot a Cameo node with <code>CAMEO_HUB_URL</code> and the farm token set,
+    and it will appear here on its own.
+  </div>
+</main>
+<script>
+const KEY_STORE='cameo_console_key';
+const getKey=()=>localStorage.getItem(KEY_STORE)||'';
+async function api(path,opts={}){
+  opts.headers=Object.assign({'Content-Type':'application/json'},opts.headers||{});
+  const k=getKey(); if(k) opts.headers['Authorization']='Bearer '+k;
+  let r=await fetch(path,opts);
+  if(r.status===401){
+    const entered=prompt('This hub requires the console key:');
+    if(entered){localStorage.setItem(KEY_STORE,entered); return api(path,opts);}
+  }
+  return r;
+}
+const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function setStatus(ok,text){document.getElementById('dot').className='dot '+(ok?'ok':'bad');document.getElementById('status-text').textContent=text;}
+function flash(kind,msg){const f=document.getElementById('flash');f.className='flash '+kind;f.textContent=msg;if(kind==='ok')setTimeout(()=>{f.className='flash';},4000);}
+function tierNum(t){const m=/([123])/.exec(t||'');return m?m[1]:'';}
+function age(s){if(s<60)return s+'s ago';if(s<3600)return Math.floor(s/60)+'m ago';return Math.floor(s/3600)+'h ago';}
+
+function gpuChip(g){
+  const t=tierNum(g.tier);
+  const vram=g.vram_mb?` · ${(g.vram_mb/1024).toFixed(1)}GB`:'';
+  const badge=t?`<span class="badge tier${t}">T${t}</span>`:'';
+  return `<span class="gpu">${esc(g.model)}${vram}${badge}</span>`;
+}
+function epRow(nid,e){
+  const st=esc(e.state||'?');
+  const stop=e.state==='running'?`<button class="stop" data-nid="${esc(nid)}" data-sid="${esc(e.id)}">Stop</button>`:'';
+  return `<div class="ep"><code>${esc(e.model)}</code><span class="st st-${st}">${st}</span>${stop}</div>`;
+}
+function card(n){
+  const gpus=(n.gpus||[]).map(gpuChip).join('')||'<span class="gpu muted">CPU-only</span>';
+  const eps=(n.endpoints||[]).map(e=>epRow(n.node_id,e)).join('');
+  return `<div class="card ${n.online?'':'offline'}">
+    <h3><span class="dot ${n.online?'ok':'bad'}"></span>${esc(n.name)}<span class="addr">${esc(n.address)}</span></h3>
+    <div class="kv"><span>status</span><b>${n.online?'online':'offline · '+age(n.age_secs)}</b>
+      <span>version</span><b>${esc(n.cameo_version||'?')}</b></div>
+    <div class="gpus">${gpus}</div>
+    ${eps}
+    <div class="serve">
+      <input placeholder="model to serve (e.g. tinyllama)" data-nid="${esc(n.node_id)}" class="model">
+      <input class="port" placeholder="port" value="8080" data-nid="${esc(n.node_id)}">
+      <button class="do-serve" data-nid="${esc(n.node_id)}">Serve</button>
+    </div>
+    <button class="ghost do-forget" data-nid="${esc(n.node_id)}">Forget node</button>
+  </div>`;
+}
+
+async function serve(nid){
+  const model=document.querySelector(`input.model[data-nid="${CSS.escape(nid)}"]`).value.trim();
+  const port=Number(document.querySelector(`input.port[data-nid="${CSS.escape(nid)}"]`).value)||8080;
+  if(!model){flash('err','Enter a model name to serve.');return;}
+  const r=await api('/hub/nodes/'+encodeURIComponent(nid)+'/servers',
+    {method:'POST',body:JSON.stringify({model,host:'127.0.0.1',port})});
+  const d=await r.json().catch(()=>({}));
+  if(r.ok)flash('ok','Serving '+model+' on '+nid);
+  else flash('err',(d.error||'serve failed')+'');
+  load();
+}
+async function stop(nid,sid){
+  const r=await api('/hub/nodes/'+encodeURIComponent(nid)+'/servers/'+encodeURIComponent(sid),{method:'DELETE'});
+  if(r.ok)flash('ok','Stopped '+sid+' on '+nid); else flash('err','stop failed');
+  load();
+}
+async function forget(nid){
+  if(!confirm('Forget '+nid+'? It reappears if it heartbeats again.'))return;
+  const r=await api('/hub/nodes/'+encodeURIComponent(nid),{method:'DELETE'});
+  if(r.ok)flash('ok','Forgot '+nid); load();
+}
+
+async function load(){
+  let r; try{r=await api('/hub/nodes');}catch(e){setStatus(false,'unreachable');return;}
+  if(!r.ok){setStatus(false,'hub error '+r.status);return;}
+  const d=await r.json(); const nodes=d.nodes||[];
+  const online=nodes.filter(n=>n.online).length;
+  setStatus(true,nodes.length+' node'+(nodes.length===1?'':'s')+' · '+online+' online');
+  const grid=document.getElementById('nodes'), empty=document.getElementById('empty');
+  if(!nodes.length){grid.innerHTML='';empty.style.display='block';return;}
+  empty.style.display='none';
+  grid.innerHTML=nodes.map(card).join('');
+  grid.querySelectorAll('.do-serve').forEach(b=>b.onclick=()=>serve(b.dataset.nid));
+  grid.querySelectorAll('.do-forget').forEach(b=>b.onclick=()=>forget(b.dataset.nid));
+  grid.querySelectorAll('.ep .stop').forEach(b=>b.onclick=()=>stop(b.dataset.nid,b.dataset.sid));
+}
+load();
+setInterval(load,5000);
+</script>
+</body>
+</html>
+"##;

@@ -26,9 +26,13 @@ use crate::app::AppState;
 use crate::sessions::Board;
 use crate::supervisor::Supervisor;
 
+mod agent;
 mod app;
+mod auth;
 mod dashboard;
+mod dispatch;
 mod http;
+mod hub;
 mod proxy;
 mod sessions;
 mod supervisor;
@@ -50,14 +54,49 @@ struct Args {
     #[arg(long, default_value_t = 9090, env = "CAMEO_CONSOLE_PORT")]
     port: u16,
 
-    /// Require this key (as `Authorization: Bearer …`) on every `/api` request.
-    /// Mandatory when binding to anything other than loopback.
+    /// The primary **operator** key (as `Authorization: Bearer …`): full control of
+    /// `/api` and `/hub`. Mandatory when binding to anything other than loopback.
     #[arg(long, value_name = "KEY", env = "CAMEO_CONSOLE_KEY")]
     console_key: Option<String>,
+
+    /// Deployment posture: `self-host` (default) lets a co-located harness get
+    /// keyless GPU control via the privileged local socket; `multi-tenant`
+    /// (`enterprise`) disables it and requires an operator key. Reads `CAMEO_POSTURE`.
+    #[arg(long, default_value = "self-host", env = "CAMEO_POSTURE")]
+    posture: String,
+
+    /// A JSON file of additional role-tagged API keys:
+    /// `[{ "key":"…", "role":"operator|consumer", "label":"friend-bob" }]`.
+    /// Consumer keys reach inference (`/v1`) only; operator keys reach the control
+    /// surface. Reads `CAMEO_KEYS_FILE`.
+    #[arg(long, value_name = "FILE", env = "CAMEO_KEYS_FILE")]
+    keys_file: Option<PathBuf>,
 
     /// Load a daemon config file (TOML): backend, hsa_override, serve_api_key, …
     #[arg(long, value_name = "FILE")]
     config: Option<PathBuf>,
+
+    /// Run as a fleet **hub**: serve the central dashboard at `/` and accept nodes
+    /// at `/hub/register`. Requires --farm-token. Reads `CAMEO_HUB`.
+    #[arg(long, env = "CAMEO_HUB")]
+    hub: bool,
+
+    /// The shared farm secret. In hub mode, the token a node must present to
+    /// enroll; on a node with --hub-url, the token this node presents to the hub.
+    #[arg(long, value_name = "TOKEN", env = "CAMEO_FARM_TOKEN")]
+    farm_token: Option<String>,
+
+    /// Phone home to this hub on boot (node mode), e.g. `http://hub.lan:9090`.
+    /// Requires --farm-token. Reads `CAMEO_HUB_URL`.
+    #[arg(long, value_name = "URL", env = "CAMEO_HUB_URL")]
+    hub_url: Option<String>,
+
+    /// The `host:port` the hub should call back to reach this node's `/api`.
+    /// Defaults to this daemon's own host:port, which is wrong when bound to
+    /// `0.0.0.0` — set it to the node's LAN address in that case. Reads
+    /// `CAMEO_ADVERTISE_ADDR`.
+    #[arg(long, value_name = "HOSTPORT", env = "CAMEO_ADVERTISE_ADDR")]
+    advertise: Option<String>,
 
     /// Read `lspci -D -nn` from a file instead of the live system (dev/testing).
     #[arg(long, value_name = "FILE")]
@@ -96,16 +135,6 @@ fn main() {
 }
 
 fn run(args: Args) -> Result<()> {
-    // A routable console with no key is an open door to the machine's GPUs; refuse
-    // it the same way `cameo serve` refuses an unauthenticated public endpoint.
-    if !is_loopback(&args.host) && args.console_key.is_none() {
-        return Err(anyhow!(
-            "refusing to bind the console to {} without --console-key (or CAMEO_CONSOLE_KEY). \
-             Bind to 127.0.0.1 for local administration.",
-            args.host
-        ));
-    }
-
     let captures = Captures {
         lspci: read_opt(&args.lspci_file)?,
         rocminfo: read_opt(&args.rocminfo_file)?,
@@ -131,24 +160,117 @@ fn run(args: Args) -> Result<()> {
         }
     }
 
+    let posture = auth::Posture::parse(&args.posture).ok_or_else(|| {
+        anyhow!(
+            "invalid --posture '{}': use 'self-host' or 'multi-tenant'.",
+            args.posture
+        )
+    })?;
+
+    // Assemble the keyring: the console key is the primary operator credential, the
+    // serve key a consumer credential, plus any role-tagged keys from --keys-file.
+    let mut keys: Vec<auth::ApiKey> = Vec::new();
+    if let Some(k) = &args.console_key {
+        keys.push(auth::ApiKey {
+            key: k.clone(),
+            role: auth::Role::Operator,
+            label: "console".into(),
+        });
+    }
+    if let Some(k) = &settings.serve_api_key {
+        keys.push(auth::ApiKey {
+            key: k.clone(),
+            role: auth::Role::Consumer,
+            label: "serve".into(),
+        });
+    }
+    if let Some(path) = &args.keys_file {
+        keys.extend(auth::load_keys_file(path).map_err(|e| anyhow!("{e}"))?);
+    }
+    for k in &keys {
+        tracing::debug!(role = ?k.role, label = %k.label, "loaded api key");
+    }
+    let keyring = auth::KeyRing::new(keys);
+    let operator_required = keyring.requires_operator();
+
+    // A routable control surface with no operator credential is an open door to the
+    // machine's GPUs; refuse it the same way `cameo serve` refuses a public endpoint.
+    if !is_loopback(&args.host) && !operator_required {
+        return Err(anyhow!(
+            "refusing to bind {} without an operator key (--console-key, or an operator \
+             entry in --keys-file). Bind to 127.0.0.1 for local administration.",
+            args.host
+        ));
+    }
+
+    // Multi-tenant posture must have an operator credential: otherwise the control
+    // surface is open and any tenant could manipulate another's VRAM. Fail closed.
+    if posture == auth::Posture::MultiTenant && !operator_required {
+        return Err(anyhow!(
+            "multi-tenant posture requires at least one operator key (--console-key or an \
+             operator entry in --keys-file), so tenants cannot manipulate the GPU."
+        ));
+    }
+
+    // Hub mode requires a farm token: an open registration endpoint would let any
+    // LAN peer enroll a node and drive the fleet. Fail closed at startup.
+    if args.hub && args.farm_token.is_none() {
+        return Err(anyhow!(
+            "--hub requires --farm-token (or CAMEO_FARM_TOKEN): nodes must authenticate to enroll."
+        ));
+    }
+
     let state = Arc::new(AppState {
         sup: Supervisor::new(),
         captures,
         settings,
-        console_key: args.console_key.clone(),
+        keyring,
+        posture,
         detect_cache: std::sync::Mutex::new(None),
         board: Board::new(),
+        farm: hub::Farm::new(),
+        hub_enabled: args.hub,
+        farm_token: args.farm_token.clone(),
     });
+
+    // Node mode: if told where the hub is, phone home in the background. The agent
+    // sends this box's own /api/node description and heartbeats on an interval.
+    if let Some(hub_url) = args.hub_url.clone() {
+        let token = args.farm_token.clone().ok_or_else(|| {
+            anyhow!(
+                "--hub-url requires --farm-token (or CAMEO_FARM_TOKEN) to authenticate to the hub."
+            )
+        })?;
+        let callback = args
+            .advertise
+            .clone()
+            .unwrap_or_else(|| format!("{}:{}", args.host, args.port));
+        let cfg = agent::HubConfig {
+            hub_url: hub_url.clone(),
+            farm_token: token,
+            node_name: app::node_name(),
+            callback_address: callback,
+            node_key: args.console_key.clone(),
+        };
+        let agent_state = Arc::clone(&state);
+        agent::spawn(cfg, move || app::node_report(&agent_state));
+        eprintln!("cameod: phoning home to hub at {hub_url}");
+    }
 
     let listener = TcpListener::bind((args.host.as_str(), args.port))
         .map_err(|e| anyhow!("binding {}:{}: {e}", args.host, args.port))?;
 
     eprintln!(
-        "cameod: console on http://{}:{}{}",
+        "cameod: {} on http://{}:{} [{}]{}",
+        if args.hub { "fleet hub" } else { "console" },
         args.host,
         args.port,
-        if args.console_key.is_some() {
-            " (console key required)"
+        match posture {
+            auth::Posture::SelfHost => "self-host",
+            auth::Posture::MultiTenant => "multi-tenant",
+        },
+        if operator_required {
+            " (operator key required)"
         } else {
             ""
         }

@@ -49,7 +49,7 @@ pub struct NodeInfo {
 
 impl NodeInfo {
     /// Usable VRAM bytes on this node, and whether every GPU reported its VRAM.
-    fn usable_vram(&self) -> (u64, bool) {
+    pub(crate) fn usable_vram(&self) -> (u64, bool) {
         let known = !self.topology.gpus.is_empty()
             && self.topology.gpus.iter().all(|g| g.vram_mb.is_some());
         let total: u64 = self
@@ -62,7 +62,7 @@ impl NodeInfo {
         ((total as f64 * VRAM_HEADROOM) as u64, known)
     }
 
-    fn training_capable(&self) -> bool {
+    pub(crate) fn training_capable(&self) -> bool {
         self.assessments
             .first()
             .map(|a| a.training_supported)

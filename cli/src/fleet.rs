@@ -244,7 +244,10 @@ mod tests {
         );
         // No matching model → None, which the caller turns into a clean error.
         assert_eq!(server_id_for_model(body, "absent").unwrap(), None);
-        assert_eq!(server_id_for_model(br#"{"servers":[]}"#, "x").unwrap(), None);
+        assert_eq!(
+            server_id_for_model(br#"{"servers":[]}"#, "x").unwrap(),
+            None
+        );
     }
 
     #[test]

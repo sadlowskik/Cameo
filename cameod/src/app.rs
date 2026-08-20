@@ -21,6 +21,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::http::{Request, Response};
+use crate::hub::{Farm, Registration};
 use crate::sessions::{Board, Session};
 use crate::supervisor::{StartError, StartRequest, Supervisor};
 
@@ -37,9 +38,13 @@ pub struct AppState {
     pub captures: Captures,
     /// Resolved settings (backend/HSA override/serve key), applied to every plan.
     pub settings: Settings,
-    /// If set, every `/api/*` request must present this as a bearer token. The
-    /// dashboard at `/` is always reachable so it can prompt for the key.
-    pub console_key: Option<String>,
+    /// Role-tagged credentials. Operator keys gate the control surface (`/api`,
+    /// `/hub`); consumer keys gate inference (`/v1`). The dashboard at `/` is
+    /// always reachable so it can prompt for a key.
+    pub keyring: crate::auth::KeyRing,
+    /// Deployment posture: whether a co-located harness may be granted keyless
+    /// operator power (self-host) or not (multi-tenant).
+    pub posture: crate::auth::Posture,
     /// Short-lived detection snapshot for the machine-driven routes (`/readyz`,
     /// `/metrics`). Probes and scrapers fire on a cadence, and each live
     /// detection shells out to `lspci`/`rocminfo`/`rocm-smi` — caching for a few
@@ -48,6 +53,15 @@ pub struct AppState {
     pub detect_cache: Mutex<Option<DetectSnapshot>>,
     /// Live harness sessions (Knossos soldiers) for the deck.
     pub board: Board,
+    /// The fleet roster, when this daemon runs as a hub. Nodes phone home to
+    /// `/hub/register`; empty and inert on a plain node.
+    pub farm: Farm,
+    /// True when this daemon is a hub: `/` serves the fleet dashboard and the
+    /// `/hub/*` registration routes accept nodes.
+    pub hub_enabled: bool,
+    /// The token a node must present to enroll (`POST /hub/register|heartbeat`).
+    /// Required in hub mode — registration fails closed without it.
+    pub farm_token: Option<String>,
 }
 
 /// A cached detection result: when it was taken, and what it saw.
@@ -134,6 +148,9 @@ pub fn route(state: &Arc<AppState>, req: &Request) -> Response {
     // controller can reach them without the console key — F9/F13).
     if req.method == "GET" {
         match segs.as_slice() {
+            // A hub serves the fleet dashboard at `/`; a plain node serves its own
+            // console. Both are unauthenticated shells that prompt for their key.
+            [] if state.hub_enabled => return Response::html(crate::dashboard::HUB_HTML),
             [] => return Response::html(crate::dashboard::INDEX_HTML),
             ["healthz"] => return Response::json(200, &json!({ "status": "ok" })),
             ["readyz"] => {
@@ -178,6 +195,16 @@ pub fn route(state: &Arc<AppState>, req: &Request) -> Response {
         return route_v1(state, req, &segs[1..]);
     }
 
+    // The hub surface: node-facing enrollment (`register`/`heartbeat`, gated by
+    // the farm token) and admin-facing fleet ops (`nodes`, push, gated by the
+    // console key). Present only in hub mode.
+    if segs.first() == Some(&"hub") {
+        if !state.hub_enabled {
+            return Response::error(404, "this daemon is not a hub");
+        }
+        return route_hub(state, req, &segs[1..]).no_store();
+    }
+
     // Everything under /api is gated by the console key, when one is configured.
     if segs.first() == Some(&"api") {
         if let Some(denied) = check_auth(state, req) {
@@ -202,16 +229,21 @@ fn key_matches(presented: Option<&str>, key: &str) -> bool {
             == 0
 }
 
-/// Authenticate a `/v1` request against the serve key. `None` = allowed. No serve
-/// key configured means the gateway is open (loopback dev), mirroring the
-/// per-endpoint serving rule.
-fn check_serve_auth(state: &Arc<AppState>, req: &Request) -> Option<Response> {
-    let key = state.settings.serve_api_key.as_deref()?;
-    let presented = req
-        .header("authorization")
+/// The bearer token on a request, if any.
+fn bearer(req: &Request) -> Option<&str> {
+    req.header("authorization")
         .and_then(|h| h.strip_prefix("Bearer "))
-        .map(str::trim);
-    if key_matches(presented, key) {
+        .map(str::trim)
+}
+
+/// Authenticate a `/v1` request. Any valid credential (consumer *or* operator) may
+/// run inference. `None` = allowed. When no consumer key is configured the gateway
+/// is open (loopback dev), mirroring the per-endpoint serving rule.
+fn check_serve_auth(state: &Arc<AppState>, req: &Request) -> Option<Response> {
+    if !state.keyring.requires_consumer() {
+        return None;
+    }
+    if state.keyring.is_consumer_or_better(bearer(req)) {
         None
     } else {
         Some(Response::error(401, "missing or invalid api key"))
@@ -303,18 +335,18 @@ fn gateway_proxy(state: &Arc<AppState>, req: &Request) -> Response {
     }
 }
 
-/// Authenticate an `/api` request. `None` means allowed; `Some(resp)` is the
-/// `401` to return. No configured key means the console is open (loopback dev).
+/// Authenticate an operator request (`/api`, `/hub` admin). Requires an **operator**
+/// credential — a consumer/friend key is deliberately refused here, so an inference
+/// user can never manipulate VRAM or the fleet. `None` means allowed; no operator
+/// key configured means the control surface is open (loopback dev).
 fn check_auth(state: &Arc<AppState>, req: &Request) -> Option<Response> {
-    let key = state.console_key.as_deref()?;
-    let presented = req
-        .header("authorization")
-        .and_then(|h| h.strip_prefix("Bearer "))
-        .map(str::trim);
-    if key_matches(presented, key) {
+    if !state.keyring.requires_operator() {
+        return None;
+    }
+    if state.keyring.is_operator(bearer(req)) {
         None
     } else {
-        Some(Response::error(401, "missing or invalid console key"))
+        Some(Response::error(401, "operator credential required"))
     }
 }
 
@@ -357,6 +389,237 @@ fn route_api(state: &Arc<AppState>, req: &Request, rest: &[&str]) -> Response {
             }
         }
         _ => Response::error(404, "unknown API route"),
+    }
+}
+
+// ---- hub (fleet) -----------------------------------------------------------
+
+/// Authenticate a node-facing hub request against the farm token. Fails closed:
+/// a hub with no farm token configured accepts no registrations.
+fn check_farm_auth(state: &Arc<AppState>, req: &Request) -> Option<Response> {
+    let Some(key) = state.farm_token.as_deref() else {
+        return Some(Response::error(
+            403,
+            "hub is not accepting registrations (no farm token configured)",
+        ));
+    };
+    let presented = req
+        .header("authorization")
+        .and_then(|h| h.strip_prefix("Bearer "))
+        .map(str::trim);
+    if key_matches(presented, key) {
+        None
+    } else {
+        Some(Response::error(401, "missing or invalid farm token"))
+    }
+}
+
+/// The `/hub/*` surface. Enrollment routes are gated by the farm token; the
+/// admin/roster routes by the console key (the same credential that guards
+/// `/api`), since they read the fleet and drive nodes.
+fn route_hub(state: &Arc<AppState>, req: &Request, rest: &[&str]) -> Response {
+    match (req.method.as_str(), rest) {
+        // A node phones home. Farm-token gated.
+        ("POST", ["register"]) => {
+            if let Some(denied) = check_farm_auth(state, req) {
+                return denied;
+            }
+            match serde_json::from_slice::<Registration>(&req.body) {
+                Ok(reg) => {
+                    let node_id = state.farm.register(reg);
+                    Response::json(200, &json!({ "node_id": node_id, "known": true }))
+                }
+                Err(e) => Response::error(400, format!("invalid registration: {e}")),
+            }
+        }
+        // A node's liveness beat. Farm-token gated. `known:false` tells the agent
+        // to re-register (the hub had dropped it for silence).
+        ("POST", ["heartbeat"]) => {
+            if let Some(denied) = check_farm_auth(state, req) {
+                return denied;
+            }
+            let Ok(v) = serde_json::from_slice::<Value>(&req.body) else {
+                return Response::error(400, "heartbeat body must be JSON");
+            };
+            let Some(node_id) = v.get("node_id").and_then(Value::as_str) else {
+                return Response::error(400, "heartbeat needs a node_id");
+            };
+            let node = v.get("node").cloned();
+            let known = state.farm.heartbeat(node_id, node);
+            Response::json(200, &json!({ "known": known }))
+        }
+        // Admin: the fleet roster. Console-key gated.
+        ("GET", ["nodes"]) => {
+            if let Some(denied) = check_auth(state, req) {
+                return denied;
+            }
+            Response::json(200, &json!({ "nodes": state.farm.list() }))
+        }
+        // Admin: forget a node.
+        ("DELETE", ["nodes", id]) => {
+            if let Some(denied) = check_auth(state, req) {
+                return denied;
+            }
+            if state.farm.remove(id) {
+                Response::json(200, &json!({ "removed": id }))
+            } else {
+                Response::error(404, "no such node")
+            }
+        }
+        // Admin: push "serve this model" down to a node's own /api/servers — the
+        // central-dashboard action that makes this HiveOS-shaped.
+        ("POST", ["nodes", id, "servers"]) => {
+            if let Some(denied) = check_auth(state, req) {
+                return denied;
+            }
+            push_to_node(state, id, "POST", "/api/servers", Some(&req.body))
+        }
+        // Admin: stop a node's endpoint.
+        ("DELETE", ["nodes", id, "servers", sid]) => {
+            if let Some(denied) = check_auth(state, req) {
+                return denied;
+            }
+            push_to_node(state, id, "DELETE", &format!("/api/servers/{sid}"), None)
+        }
+        // Harness delegation: route a task across the fleet by usage/card/model,
+        // and (when `execute`) serve it on the chosen node. The whole point of the
+        // fleet — one call and the box that should run the work does.
+        ("POST", ["dispatch"]) => {
+            if let Some(denied) = check_auth(state, req) {
+                return denied;
+            }
+            api_dispatch(state, req)
+        }
+        _ => Response::error(404, "unknown hub route"),
+    }
+}
+
+/// Call one node's authenticated `/api` over `curl`, using the callback address
+/// and key it supplied at registration. `Ok(body)` on a 2xx, `Err((status, msg))`
+/// otherwise — the hub is just an HTTP client here, exactly like `cameo fleet`.
+fn node_call(
+    state: &Arc<AppState>,
+    node_id: &str,
+    method: &str,
+    path: &str,
+    body: Option<&[u8]>,
+) -> Result<Vec<u8>, (u16, String)> {
+    let Some((address, key)) = state.farm.push_target(node_id) else {
+        return Err((404, format!("no such node '{node_id}'")));
+    };
+    let url = format!("http://{address}{path}");
+    let mut cmd = std::process::Command::new("curl");
+    cmd.args(["-s", "--fail", "--max-time", "30", "-X", method]);
+    if let Some(k) = &key {
+        cmd.arg("-H").arg(format!("Authorization: Bearer {k}"));
+    }
+    if let Some(b) = body {
+        cmd.args(["-H", "Content-Type: application/json", "-d"])
+            .arg(String::from_utf8_lossy(b).as_ref());
+    }
+    cmd.arg(&url);
+    match cmd.output() {
+        Ok(out) if out.status.success() => Ok(out.stdout),
+        Ok(out) => Err((
+            502,
+            format!(
+                "node '{node_id}' at {address} rejected the request (curl exit {:?})",
+                out.status.code()
+            ),
+        )),
+        Err(e) => Err((502, format!("could not reach node '{node_id}': {e}"))),
+    }
+}
+
+/// Relay an admin action to a node and turn the result into an HTTP response.
+fn push_to_node(
+    state: &Arc<AppState>,
+    node_id: &str,
+    method: &str,
+    path: &str,
+    body: Option<&[u8]>,
+) -> Response {
+    match node_call(state, node_id, method, path, body) {
+        Ok(out) => Response::new(200, "application/json; charset=utf-8", out),
+        Err((status, msg)) => Response::error(status, msg),
+    }
+}
+
+/// `POST /hub/dispatch` — the harness delegation route. Reconstructs the online
+/// fleet, routes the task by usage/card/model, and either advises (`execute:false`)
+/// or serves the model on the chosen node and returns its ready `/v1` endpoint.
+fn api_dispatch(state: &Arc<AppState>, req: &Request) -> Response {
+    let body: crate::dispatch::DispatchBody = match serde_json::from_slice(&req.body) {
+        Ok(b) => b,
+        Err(e) => return Response::error(400, format!("invalid dispatch body: {e}")),
+    };
+
+    let roster = state.farm.online_descriptions();
+    let decision = match crate::dispatch::decide(&roster, &body) {
+        Ok(d) => d,
+        // Nothing eligible is a 409 (the fleet can't currently take the work),
+        // distinct from a 400 (a malformed request).
+        Err(e) => return Response::error(409, e.to_string()),
+    };
+
+    let choice = &decision.choice;
+    let base = json!({
+        "node_id": decision.node_id,
+        "node": choice.node_name,
+        "warm": choice.warm,
+        "reason": choice.reason,
+    });
+
+    if !body.execute {
+        let mut v = base;
+        v["executed"] = json!(false);
+        return Response::json(200, &v);
+    }
+
+    // Execute. A warm node already serves the model — no second llama-server.
+    // A cold node gets a push to its own /api/servers.
+    let address = state
+        .farm
+        .push_target(&decision.node_id)
+        .map(|(a, _)| a)
+        .unwrap_or_default();
+    let endpoint = format!("http://{address}/v1");
+
+    if choice.warm {
+        let mut v = base;
+        v["executed"] = json!(true);
+        v["endpoint"] = json!(endpoint);
+        v["note"] = json!("already serving; reused the resident endpoint");
+        return Response::json(200, &v);
+    }
+
+    let serve_body = json!({
+        "model": body.model, "host": "127.0.0.1", "port": body.port,
+        "params": body.params, "quant": body.quant, "moe": body.moe,
+    })
+    .to_string();
+    match node_call(
+        state,
+        &decision.node_id,
+        "POST",
+        "/api/servers",
+        Some(serve_body.as_bytes()),
+    ) {
+        Ok(out) => {
+            let served: Value = serde_json::from_slice(&out).unwrap_or(json!({}));
+            let mut v = base;
+            v["executed"] = json!(true);
+            v["endpoint"] = json!(endpoint);
+            v["serve"] = served;
+            Response::json(200, &v)
+        }
+        Err((status, msg)) => Response::error(
+            status,
+            format!(
+                "routed to '{}' but the serve failed: {msg}",
+                decision.node_id
+            ),
+        ),
     }
 }
 
@@ -423,20 +686,31 @@ fn api_node(state: &Arc<AppState>) -> Response {
         Ok(pair) => pair,
         Err(resp) => return resp,
     };
-    Response::json(
-        200,
-        &json!({
-            "name": node_name(),
-            "cameo_version": env!("CARGO_PKG_VERSION"),
-            "topology": topo,
-            "gpus": assessments,
-            "endpoints": state.sup.list(),
-        }),
-    )
+    Response::json(200, &node_json(&topo, &assessments, state))
+}
+
+/// The `/api/node` body shape, in one place so `api_node` and the hub agent
+/// ([`node_report`]) send byte-identical self-descriptions.
+fn node_json(topo: &Topology, assessments: &[TierAssessment], state: &Arc<AppState>) -> Value {
+    json!({
+        "name": node_name(),
+        "cameo_version": env!("CARGO_PKG_VERSION"),
+        "topology": topo,
+        "gpus": assessments,
+        "endpoints": state.sup.list(),
+    })
+}
+
+/// This node's current self-description for the hub agent, or `None` when
+/// detection is unavailable (a non-Linux dev host) — in which case the agent
+/// still enrolls, just without a hardware description.
+pub fn node_report(state: &Arc<AppState>) -> Option<Value> {
+    let (topo, assessments) = detect(state).ok()?;
+    Some(node_json(&topo, &assessments, state))
 }
 
 /// This node's name: the OS hostname when we can read it, else a stable fallback.
-fn node_name() -> String {
+pub(crate) fn node_name() -> String {
     std::env::var("HOSTNAME")
         .ok()
         .or_else(|| std::env::var("COMPUTERNAME").ok())
@@ -497,13 +771,24 @@ fn metrics_response(state: &Arc<AppState>) -> Response {
 /// agent-binding resolver (`agents::resolve_agents`) carries serve keys and stays
 /// server-side, consumed by the `cameo fleet` controller — never serialized here.
 fn api_engines(state: &Arc<AppState>) -> Response {
+    let posture = match state.posture {
+        crate::auth::Posture::SelfHost => "self-host",
+        crate::auth::Posture::MultiTenant => "multi-tenant",
+    };
     Response::json(
         200,
         &json!({
             "node": node_name(),
             "openai_base_path": "/v1",
-            "auth_required": state.settings.serve_api_key.is_some(),
+            // /v1 needs a key whenever any consumer credential is configured (the
+            // serve key is folded into the keyring as one), so a harness knows to
+            // present one.
+            "auth_required": state.keyring.requires_consumer(),
             "models": state.sup.served_models(),
+            // Posture tells a harness whether the privileged local seam is on offer
+            // here: only a self-host box grants a co-located harness GPU control.
+            "posture": posture,
+            "local_harness": state.posture.allows_local_harness(),
         }),
     )
 }
