@@ -20,6 +20,16 @@ supervisor, control-plane HTTP + dashboard, CI, containers passthrough,
 execution/serving flags are still unvalidated on a real GPU. Now working the
 remainder in the sequenced order below.
 
+**Audit checkpoint (2026-08-18):** ran architect + security + runtime auditors
+over the fleet/hub work. Access-control core held (no consumer→operator path,
+constant-time compares, startup gates fail closed). Five hub-boundary findings
+remediated in `fbdf57c` (all behind the shared farm token): registry memory caps
++ LRU eviction + heartbeat pruning, link-local SSRF guard on hub→node push,
+first-credential-wins against node-row hijack, `/v1` fail-closed on a routable
+bind, and a push timeout under the inbound IO budget. One perf note deferred
+(per-dispatch roster re-parse — linear only at hundreds of nodes, fine for a
+self-hosted fleet). Workspace green: fmt + clippy `-D warnings` + ~187 tests.
+
 Method (same as the gap assessment): every feature carries **why/damage**,
 **fixable?**, **compatibility** (what it must not break), and a
 **best-of-both-worlds** approach that resolves the tension instead of picking a
