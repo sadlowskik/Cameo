@@ -4,12 +4,12 @@
 <meta charset="utf-8">
 <title>Cameo — LLM serving OS for any AMD GPU</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="An Arch-based OS that turns any AMD GPU into an OpenAI-compatible endpoint. One old Radeon or a nine-card cluster — same two commands.">
+<meta name="description" content="Download Cameo, plug it into any AMD box, set an account, and serve LLMs with no internet. Network is only for fleets, extra models, and reaching the console from outside.">
 <meta name="theme-color" content="#1A1812">
 <meta name="color-scheme" content="dark">
 <link rel="canonical" href="https://cameoconstruct.pages.dev/">
 <meta property="og:title" content="Cameo — LLM serving OS for any AMD GPU">
-<meta property="og:description" content="An Arch-based OS that turns any AMD GPU into an OpenAI-compatible endpoint. One old Radeon or a nine-card cluster — same two commands.">
+<meta property="og:description" content="Download Cameo, plug it into any AMD box, set an account, and serve LLMs with no internet. Network is only for fleets, extra models, and reaching the console from outside.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://cameoconstruct.pages.dev/">
 <meta property="og:image" content="https://cameoconstruct.pages.dev/assets/og.png">
@@ -138,8 +138,9 @@ section{padding:64px 0;border-top:1px solid var(--line);position:relative}
 h2{font-family:var(--disp);font-weight:700;letter-spacing:-.03em;font-size:clamp(26px,4vw,36px);margin:0 0 12px;line-height:1.15;scroll-margin-top:80px}
 .lede{color:var(--body);max-width:48em;margin:0 0 28px}
 
-.steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-bottom:22px}
-@media(max-width:800px){.steps{grid-template-columns:1fr}}
+.steps{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-bottom:22px}
+@media(max-width:980px){.steps{grid-template-columns:1fr 1fr}}
+@media(max-width:640px){.steps{grid-template-columns:1fr}}
 .step{border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:18px 18px 16px;backdrop-filter:blur(10px)}
 .step .n{font-family:var(--mono);font-size:12px;color:var(--ember);letter-spacing:.08em}
 .step h3{font-family:var(--disp);font-size:18px;margin:8px 0 6px;letter-spacing:-.02em}
@@ -197,9 +198,17 @@ h2{font-family:var(--disp);font-weight:700;letter-spacing:-.03em;font-size:clamp
 @keyframes dash{to{stroke-dashoffset:-18}}
 .flow-m{display:none}
 
-.installs{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-@media(max-width:800px){.installs{grid-template-columns:1fr}}
-.install{background:var(--panel);padding:22px 22px 18px;backdrop-filter:blur(10px)}
+.installs{display:grid;grid-template-columns:1fr;gap:14px}
+.install{background:var(--panel);padding:22px 22px 18px;backdrop-filter:blur(10px);margin-bottom:14px}
+.flash-row{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 14px}
+.flash-row span{font-family:var(--mono);font-size:12px;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:6px 12px}
+.netopt,.devbox{margin-top:14px}
+.devbox{margin-top:18px;border:1px solid var(--line);border-radius:12px;padding:16px 18px;background:var(--panel)}
+.devbox summary{cursor:pointer;font-family:var(--mono);font-size:13px;color:var(--muted);list-style:none}
+.devbox summary::-webkit-details-marker{display:none}
+.devbox summary::before{content:"+ ";color:var(--ember)}
+.devbox[open] summary::before{content:"– "}
+.devbox .body{margin-top:12px;padding:0;box-shadow:none}
 .install h3{font-family:var(--disp);font-size:20px;margin:0 0 6px;letter-spacing:-.02em}
 .install p{margin:0 0 14px;color:var(--muted);font-size:15px}
 .install pre{margin:0;padding:14px 14px 12px;background:var(--inset);border:1px solid var(--line);border-radius:8px;
@@ -341,7 +350,7 @@ footer{border-top:1px solid var(--line);padding:44px 0 54px}
   <a class="brand" href="#top"><svg viewBox="0 0 26 26"><use href="#mark"/></svg>cameo</a>
   <a class="l" href="#how">how</a>
   <a class="l" href="#tiers">tiers</a>
-  <a class="l" href="#install">install</a>
+  <a class="l" href="#install">download</a>
   <a class="l gh" href="https://github.com/sadlowskik/cameo" rel="noopener">
     <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg>github</a>
 </div></header>
@@ -350,20 +359,16 @@ footer{border-top:1px solid var(--line);padding:44px 0 54px}
   <section class="hero" id="top" style="border:0"><div class="wrap hero-grid">
     <div>
       <h1 id="h1"><span class="w">any</span> <span class="w">AMD</span> <span class="w">card.</span><br><span class="w">serves</span> <span class="w">LLMs.</span></h1>
-      <p class="sub">Vulkan runs on every AMD card; ROCm only makes the supported ones faster.</p>
+      <p class="sub">Download the OS, plug it into the box, set an account, play. After that the machine does not need the internet — only fleets, extra models, and opening the console from outside the house do.</p>
       <div class="cards" aria-label="Example AMD GPUs">
         <span>RX 580</span><span>RX 6800</span><span>7900 XTX</span><span>MI210</span><span>APUs</span>
       </div>
       <div class="actions">
         <a class="btn-primary" href="#install">
           <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
-          install
+          download
         </a>
         <a class="btn" href="https://github.com/sadlowskik/cameo" rel="noopener">github</a>
-        <button class="chip" type="button" data-copy="cameo gpu-status" aria-label="Copy cameo gpu-status">
-          <span class="cp">$</span>cameo gpu-status
-          <svg class="ico cp" data-copy-icon viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
-        </button>
       </div>
     </div>
     <div>
@@ -382,16 +387,17 @@ footer{border-top:1px solid var(--line);padding:44px 0 54px}
 
   <section id="how"><div class="wrap">
     <p class="eyebrow rise"><span class="ix">01</span>how it works</p>
-    <h2 class="rise">Detect the card. Pull a model. Serve it.</h2>
-    <p class="lede rise">The CLI and the <code style="font-family:var(--mono);font-size:.9em;color:var(--amber)">cameod</code> browser console are thin clients over the same brain. One box, or a list of them — same commands.</p>
+    <h2 class="rise">Download. Plug it in. Set an account. Play.</h2>
+    <p class="lede rise">Cameo is an appliance, not a toolchain. The USB already carries the OS. Install copies that image onto disk — it downloads nothing. After reboot the box serves on your LAN with the cables pulled.</p>
     <div class="steps">
-      <article class="step rise"><span class="n">01</span><h3>Classify</h3><p><code>cameo gpu-status</code> reads the GPU, picks a tier, and chooses Vulkan or ROCm. Every default is overridable.</p></article>
-      <article class="step rise"><span class="n">02</span><h3>Pull</h3><p><code>cameo pull tinyllama</code> fetches a GGUF into the shared cache the daemon and CLI both use.</p></article>
-      <article class="step rise"><span class="n">03</span><h3>Serve</h3><p><code>cameo serve</code> opens an OpenAI-compatible door. Or open <code>:9090</code> and drive it from the console.</p></article>
+      <article class="step rise"><span class="n">01</span><h3>Download</h3><p>One ISO, while you still have a network. Universal if you're unsure; lite if you know the card is Vulkan-only.</p></article>
+      <article class="step rise"><span class="n">02</span><h3>Plug in</h3><p>Flash a USB, boot the AMD machine. <strong>Install Cameo to disk</strong> is the default menu entry.</p></article>
+      <article class="step rise"><span class="n">03</span><h3>Account</h3><p>Pick a disk, set an admin username and password. A console key is written for you.</p></article>
+      <article class="step rise"><span class="n">04</span><h3>Play</h3><p>Open <code>:9090</code> from the LAN. A starter model (<code>qwen2.5-0.5b</code>) is already on disk. Chatting does not need the internet.</p></article>
     </div>
     <div class="term rise">
-      <div class="bar"><i></i><i></i><i></i>&nbsp;&nbsp;forge-01</div>
-<pre><span class="ln"><span class="p">$</span> cameo gpu-status</span><span class="ln"><span class="o">  3 AMD GPUs · tiers 1/2/3 · vulkan OK</span></span><span class="ln">&nbsp;</span><span class="ln"><span class="p">$</span> cameo pull tinyllama</span><span class="ln"><span class="o">  cached · /var/lib/cameo/models</span></span><span class="ln">&nbsp;</span><span class="ln"><span class="p">$</span> cameo serve tinyllama --params 1.1</span><span class="ln"><span class="o">  http://127.0.0.1:8080/v1/chat/completions</span><span class="cur"></span></span></pre>
+      <div class="bar"><i></i><i></i><i></i>&nbsp;&nbsp;first boot · tty1</div>
+<pre><span class="ln"><span class="o">================  Cameo  ================</span></span><span class="ln"><span class="o">  RX 580 8G · Tier 3 · vulkan OK</span></span><span class="ln">&nbsp;</span><span class="ln"><b>Web console:</b>  <span class="em">http://192.168.1.40:9090</span></span><span class="ln"><span class="p">  Console key:</span>  <span class="em">K7m…</span></span><span class="ln"><span class="p">  Log in as the admin you created.</span></span><span class="ln"><span class="o">  No internet required to serve.</span><span class="cur"></span></span></pre>
     </div>
   </div></section>
 
@@ -429,7 +435,7 @@ footer{border-top:1px solid var(--line);padding:44px 0 54px}
   <section id="console"><div class="wrap">
     <p class="eyebrow rise"><span class="ix">03</span>the console</p>
     <h2 class="rise">Administer it from a browser.</h2>
-    <p class="lede rise"><code style="font-family:var(--mono);font-size:.9em;color:var(--amber)">cameod</code> ships in the ISO and starts on boot. It binds <code style="font-family:var(--mono);font-size:.9em;color:var(--amber)">:9090</code> with a key — GPUs, tiers, endpoints, model cache, a playground. No extra web stack.</p>
+    <p class="lede rise"><code style="font-family:var(--mono);font-size:.9em;color:var(--amber)">cameod</code> starts on boot and binds <code style="font-family:var(--mono);font-size:.9em;color:var(--amber)">:9090</code> with a key. GPUs, endpoints, a playground — on your LAN. Drop a GGUF, chat. No cloud, no extra web stack.</p>
     <div class="console-frame rise" role="img" aria-label="Cameo console: three GPU cards by tier and one running endpoint">
       <div class="bar"><i></i><i></i><i></i><span class="ttl">cameod · forge-01 · 0.0.0.0:9090</span></div>
       <div class="console-body">
@@ -443,7 +449,7 @@ footer{border-top:1px solid var(--line);padding:44px 0 54px}
         </div>
         <div>
           <p class="csec">Endpoints</p>
-          <div class="ep"><span class="on" aria-hidden="true"></span><span class="model">tinyllama</span><span class="meta">running · 127.0.0.1:8080 · vulkan · /v1</span></div>
+          <div class="ep"><span class="on" aria-hidden="true"></span><span class="model">qwen2.5-0.5b</span><span class="meta">running · 127.0.0.1:8080 · vulkan · /v1 · offline</span></div>
         </div>
       </div>
     </div>
@@ -452,7 +458,7 @@ footer{border-top:1px solid var(--line);padding:44px 0 54px}
   <section id="scale"><div class="wrap">
     <p class="eyebrow rise"><span class="ix">04</span>one card → a cluster</p>
     <h2 class="rise">Same two commands on 1, 4, or 9 cards.</h2>
-    <p class="lede rise">A single old Radeon, a multi-GPU box, a small cluster: detect, pull, serve. The placement brain picks a node; you start the serve on that node.</p>
+    <p class="lede rise">One box at home stays self-contained. Connecting boxes to each other — a fleet, a map, a console you open from elsewhere — is the part that wants a network.</p>
     <svg class="flow rise" viewBox="0 0 1000 240" role="img" aria-label="One AMD card scaling out to a box, then a cluster">
       <ellipse cx="156" cy="120" rx="115" ry="62" fill="url(#ug)"/>
       <ellipse cx="530" cy="122" rx="135" ry="78" fill="url(#ug)"/>
@@ -494,65 +500,89 @@ footer{border-top:1px solid var(--line);padding:44px 0 54px}
   </div></section>
 
   <section id="install"><div class="wrap">
-    <p class="eyebrow rise"><span class="ix">05</span>install</p>
-    <h2 class="rise">Two ways in.</h2>
-    <p class="lede rise">The container runs on the host’s GPU driver and works anywhere — the recommended path. The ISO is a bootable Arch appliance that <em>is</em> the console: flash it, boot the box, done.</p>
-    <div class="installs">
-      <article class="install rise">
-        <h3>Container <span class="tag-rec">recommended</span></h3>
-        <p>Build the Vulkan image, pass the GPU through, open the console on :9090.</p>
+    <p class="eyebrow rise"><span class="ix">05</span>get it</p>
+    <h2 class="rise">One download. Then the box is self-contained.</h2>
+    <p class="lede rise">You need the internet once, to fetch the ISO. Flashing, installing, setting the account, and serving a model you already have on disk all run with the cable unplugged.</p>
+
+    <article class="install rise">
+      <h3>1 · Download</h3>
+      <p>Pick an image. Unsure of the card? Take universal.</p>
+      <div class="eds">
+        <div class="ed rec">
+          <div class="ed-h"><span class="ed-name">Universal</span><span class="tag-rec">recommended</span></div>
+          <p>Every AMD card. Ships ROCm, boots on Vulkan, turns ROCm on only when the card can train.</p>
+          <a class="btn-primary" href="https://github.com/sadlowskik/cameo/releases" rel="noopener">
+            <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+            download ISO
+          </a>
+        </div>
+        <div class="ed">
+          <div class="ed-h"><span class="ed-name">Lite</span><span class="tag-s">smaller · vulkan only</span></div>
+          <p>RX 580, APUs, anything with no ROCm path. Same OS, none of the training stack it can't use.</p>
+          <a class="btn" href="https://github.com/sadlowskik/cameo/releases" rel="noopener">lite builds</a>
+        </div>
+      </div>
+    </article>
+
+    <article class="install rise">
+      <h3>2 · Flash a USB</h3>
+      <p>Windows: <a href="https://rufus.ie/" rel="noopener" style="color:var(--amber)">Rufus</a> or <a href="https://etcher.balena.io/" rel="noopener" style="color:var(--amber)">Etcher</a>. Linux/macOS: Etcher, or:</p>
+<pre id="cmd-iso">sudo dd if=cameo-*.iso of=/dev/sdX bs=4M status=progress oflag=sync</pre>
+      <button class="chip copy" type="button" data-copy-from="cmd-iso" aria-label="Copy dd command">
+        <svg class="ico cp" data-copy-icon viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+        copy
+      </button>
+    </article>
+
+    <article class="install rise">
+      <h3>3 · Plug it in, set an account</h3>
+      <p>Put the USB in the AMD machine and boot it. <strong>Install Cameo to disk</strong> is already the default entry. It shows the detected GPU and tier, then asks for:</p>
+      <div class="flash-row" aria-label="Installer prompts">
+        <span>which disk to erase</span>
+        <span>admin username</span>
+        <span>admin password</span>
+      </div>
+      <p>Nothing is downloaded. The installer copies the live image onto that disk, writes a console key, and enables <code style="font-family:var(--mono);font-size:.9em;color:var(--amber)">cameod</code>. Type the disk name to confirm, then reboot and pull the USB.</p>
+    </article>
+
+    <article class="install rise">
+      <h3>4 · Play, offline</h3>
+      <p>From a laptop or phone on the same LAN, open the URL printed on the screen (port <code style="font-family:var(--mono);font-size:.9em;color:var(--amber)">9090</code>). Enter the key once. Start <code style="font-family:var(--mono);font-size:.9em;color:var(--amber)">qwen2.5-0.5b</code> — it shipped on the image. Chatting never phones home. Extra models: drop a <code style="font-family:var(--mono);font-size:.9em;color:var(--amber)">.gguf</code> into <code style="font-family:var(--mono);font-size:.9em;color:var(--amber)">/var/lib/cameo/models</code>, or pull later if you want a network.</p>
+    </article>
+
+    <article class="install netopt rise">
+      <h3>When you actually need a network</h3>
+      <p>The box does not. These three things do:</p>
+      <div class="flash-row">
+        <span>extra models — <b style="color:var(--body);font-weight:500">cameo pull</b></span>
+        <span>fleets / extra nodes — LAN or WAN between boxes</span>
+        <span>console from outside the house</span>
+      </div>
+      <p style="margin:12px 0 0">A second Cameo node, a cluster, or opening <code style="font-family:var(--mono);font-size:.9em;color:var(--amber)">:9090</code> from the internet is the optional layer. One machine, one card, one house: stay air-gapped after the ISO download.</p>
+    </article>
+
+    <details class="devbox rise">
+      <summary>Developers: container or build the ISO yourself</summary>
+      <div class="body install">
+        <p class="mini">Container — host owns the GPU driver:</p>
 <pre id="cmd-podman">podman build -f containers/Containerfile -t cameo:vulkan .
 podman run --rm -p 9090:9090 \
   -v cameo-models:/var/lib/cameo/models \
   --device=/dev/kfd --device=/dev/dri \
   --group-add video --group-add render \
   cameo:vulkan</pre>
-        <button class="chip copy" type="button" data-copy-from="cmd-podman" aria-label="Copy container commands">
-          <svg class="ico cp" data-copy-icon viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
-          copy
-        </button>
-      </article>
-      <article class="install rise">
-        <h3>ISO appliance</h3>
-        <p>Flash the image, boot the box. "Install to disk" is the default entry and runs <em>fully offline</em> — it copies the image, downloads nothing. First boot prints your card's tier, the console URL, and a key.</p>
-
-        <div class="eds">
-          <div class="ed rec">
-            <div class="ed-h"><span class="ed-name">Autodetect</span><span class="tag-rec">universal · recommended</span></div>
-            <p>One image for every AMD card. It ships the ROCm stack but boots on Vulkan and only switches ROCm on when it detects a training-capable card. Not sure what you have? Take this.</p>
-            <a class="btn-primary" href="https://github.com/sadlowskik/cameo/releases" rel="noopener">
-              <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
-              download universal ISO (beta)
-            </a>
-          </div>
-          <div class="ed">
-            <div class="ed-h"><span class="ed-name">Known device</span><span class="tag-s">smaller</span></div>
-            <p>Know your card? Take the image matched to its tier — a Vulkan-only card carries none of the ROCm weight it can't use.</p>
-            <div class="ed-picks">
-              <span>Tier 3 · RX 580 / APUs → <b>Lite</b>, Vulkan-only</span>
-              <span>Tier 1–2 · 7900 XTX · MI210 · RX 6800 → the <b>universal</b> image</span>
-            </div>
-            <a class="btn" href="https://github.com/sadlowskik/cameo/releases" rel="noopener">
-              <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
-              lite &amp; matched builds
-            </a>
-          </div>
-        </div>
-
-        <p class="mini">Flash either image, then boot:</p>
-<pre id="cmd-iso">sudo dd if=cameo-*.iso of=/dev/sdX \
-  bs=4M status=progress oflag=sync</pre>
-        <p class="mini">Or build it yourself on an Arch host:</p>
+        <p class="mini">Build the ISO on an Arch host:</p>
 <pre id="cmd-build">git clone https://github.com/sadlowskik/cameo
-sudo ./scripts/build-iso.sh                    # universal · ships ROCm
-sudo CAMEO_EDITION=lite ./scripts/build-iso.sh # lite · Vulkan-only, old cards</pre>
+sudo ./scripts/build-iso.sh
+sudo CAMEO_EDITION=lite ./scripts/build-iso.sh</pre>
         <button class="chip copy" type="button" data-copy-from="cmd-build" aria-label="Copy ISO build commands">
           <svg class="ico cp" data-copy-icon viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
-          copy
+          copy build
         </button>
-      </article>
-    </div>
-    <p class="note rise">Beta, pre-v1 — verify the download against <code style="color:var(--amber)">SHA256SUMS</code> before flashing, and note the disk installer erases the drive you pick. Source, issues, and docs: <a href="https://github.com/sadlowskik/cameo" rel="noopener" style="color:var(--amber)">github.com/sadlowskik/cameo</a>.</p>
+      </div>
+    </details>
+
+    <p class="note rise">Beta, pre-v1. Check <code style="color:var(--amber)">SHA256SUMS</code> before flashing. The disk installer erases the drive you pick. Source: <a href="https://github.com/sadlowskik/cameo" rel="noopener" style="color:var(--amber)">github.com/sadlowskik/cameo</a>.</p>
   </div></section>
 </main>
 

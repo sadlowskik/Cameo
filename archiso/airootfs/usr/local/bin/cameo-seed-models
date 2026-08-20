@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# Publish the starter GGUF into the live model cache.
+#
+# The ISO/container bakes the file at /usr/share/cameo/models (read-only squashfs
+# or image layer). The CLI and console only look in /var/lib/cameo/models. This
+# oneshot, ordered after cameo-storage-init and before cameod, makes the starter
+# visible there:
+#
+#   * overlay/tmpfs (live USB, no CAMEO_DATA) — symlink, so we don't copy 380 MiB
+#     into RAM.
+#   * a real disk (installed root, or a mounted CAMEO_DATA) — copy, so the cache
+#     still works if /usr/share is later hidden or the data disk moves.
+#
+# Missing starter (CAMEO_SKIP_STARTER at image build) is a no-op, not a failure.
+set -euo pipefail
+
+SRC=/usr/share/cameo/models
+DST=/var/lib/cameo/models
+
+[ -d "$SRC" ] || exit 0
+mkdir -p "$DST"
+
+fstype="$(findmnt -n -o FSTYPE --target "$DST" 2>/dev/null | tail -n1 || true)"
+volatile=0
+case "$fstype" in
+  overlay | tmpfs | ramfs | "") volatile=1 ;;
+esac
+
+shopt -s nullglob
+for f in "$SRC"/*.gguf; do
+  base="$(basename "$f")"
+  dest="$DST/$base"
+  if [ -e "$dest" ]; then
+    continue
+  fi
+  if [ "$volatile" -eq 1 ]; then
+    ln -s "$f" "$dest"
+    echo "cameo-seed-models: $base -> $dest (symlink, cache is $fstype)"
+    continue
+  fi
+  need="$(stat -c%s "$f" 2>/dev/null || echo 0)"
+  avail="$(df -P -B1 "$DST" 2>/dev/null | awk 'NR==2 { print $4 }')"
+  if [ -n "$avail" ] && [ "$need" -gt 0 ] && [ "$avail" -gt "$need" ]; then
+    cp -a "$f" "$dest"
+    echo "cameo-seed-models: copied $base ($(printf '%s' "$need") bytes)"
+  else
+    ln -s "$f" "$dest"
+    echo "cameo-seed-models: $base -> $dest (symlink, not enough space to copy)"
+  fi
+done

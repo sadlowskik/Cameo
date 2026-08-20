@@ -13,6 +13,15 @@ on:
   push:
     tags:
       - "v*"
+    # mkarchiso is Linux-only; this branch is the appliance/ISO work, so a
+    # push that touches the image rebuilds it on the Arch-in-Docker runner.
+    branches:
+      - ship/cameod-console
+    paths:
+      - "archiso/**"
+      - "scripts/build-iso.sh"
+      - "scripts/fetch-starter-model.sh"
+      - ".github/workflows/iso.yml"
 
 # The build runs inside a long-lived privileged Arch container driven by
 # `docker exec`, one named step per command. That is deliberate: workflow logs
@@ -84,7 +93,7 @@ jobs:
 
       # librsvg supplies rsvg-convert, which renders the boot splash from SVG.
       - name: Install archiso and rust
-        run: docker exec arch bash -euo pipefail -c "pacman -Syu --noconfirm --needed archiso rust librsvg"
+        run: docker exec arch bash -euo pipefail -c "pacman -Syu --noconfirm --needed archiso rust librsvg curl"
 
       - name: Verify toolchain
         run: docker exec arch bash -euo pipefail -c "mkarchiso -h >/dev/null && cargo --version && rustc --version"
@@ -250,6 +259,30 @@ jobs:
               || { echo "FAIL: $u not enabled"; exit 1; }
           done
           echo "OK: cameod shipped and enabled"
+
+          # Starter GGUF: first chat with no internet. Seed unit must run
+          # before cameod, and the baked file must be in /usr/share/cameo/models.
+          echo "--- starter model ---"
+          sudo test -x "$A/usr/local/bin/cameo-seed-models" \
+            || { echo "FAIL: cameo-seed-models missing"; exit 1; }
+          sudo test -L "$A/etc/systemd/system/multi-user.target.wants/cameo-seed-models.service" \
+            || { echo "FAIL: cameo-seed-models.service not enabled"; exit 1; }
+          STARTER="$A/usr/share/cameo/models/qwen2.5-0.5b.gguf"
+          if sudo test -f "$STARTER"; then
+            SZ=$(sudo stat -c%s "$STARTER")
+            echo "starter: $SZ bytes"
+            # bartowski Q4_K_M is 397808192 bytes; allow a small window in case
+            # the pin is refreshed, but refuse an empty/truncated file.
+            if [ "$SZ" -lt 300000000 ]; then
+              echo "FAIL: starter GGUF is too small ($SZ) — fetch likely truncated"
+              exit 1
+            fi
+            echo "OK: starter GGUF is on the image"
+          else
+            echo "FAIL: qwen2.5-0.5b.gguf not baked into /usr/share/cameo/models"
+            echo "      (CAMEO_SKIP_STARTER must not be set on a release ISO)"
+            exit 1
+          fi
 
           # The mission check. Every serve/run/quantize path spawns one of
           # these; without them the image boots and does nothing it exists for.

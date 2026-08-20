@@ -65,8 +65,16 @@ RUN pacman -Syu --noconfirm --needed \
 COPY --from=builder /src/target/release/cameo  /usr/local/bin/cameo
 COPY --from=builder /src/target/release/cameod /usr/local/bin/cameod
 COPY containers/entrypoint.sh /usr/local/bin/cameo-entrypoint
-RUN chmod +x /usr/local/bin/cameo-entrypoint \
- && install -d -m 0755 /var/lib/cameo/models
+COPY archiso/airootfs/usr/local/bin/cameo-seed-models /usr/local/bin/cameo-seed-models
+COPY scripts/fetch-starter-model.sh /tmp/fetch-starter-model.sh
+# CI passes CAMEO_SKIP_STARTER=1 so every PR does not download ~380 MiB.
+# Release/ISO builds leave it unset and bake qwen2.5-0.5b into the image.
+ARG CAMEO_SKIP_STARTER=0
+RUN chmod +x /usr/local/bin/cameo-entrypoint /usr/local/bin/cameo-seed-models /tmp/fetch-starter-model.sh \
+ && install -d -m 0755 /var/lib/cameo/models /usr/share/cameo/models \
+ && CAMEO_SKIP_STARTER="$CAMEO_SKIP_STARTER" \
+      /tmp/fetch-starter-model.sh --cache /tmp/cameo-models --dest /usr/share/cameo/models \
+ && rm -f /tmp/fetch-starter-model.sh
 
 # Models persist on a mounted volume; the path matches cameo_config and
 # cameo_models::models_dir (F2), so `cameo pull` inside the container lands here.

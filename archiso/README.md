@@ -51,6 +51,12 @@ sudo dd if=archiso/out/cameo-*.iso of=/dev/sdX bs=4M status=progress oflag=sync
   `cameo-storage-init.service` remounts that disk on every later boot, so the
   setup is a one-time step. Never formats without `--format`, and refuses the
   live-USB and root disks.
+- **Starter model** — `scripts/fetch-starter-model.sh` bakes
+  `qwen2.5-0.5b` (~380 MiB Q4_K_M, Apache-2.0) into
+  `/usr/share/cameo/models`. `cameo-seed-models` publishes it into the
+  live cache on boot, so first chat needs no internet. Skip with
+  `CAMEO_SKIP_STARTER=1`. The GGUF is not in git; it is cached under
+  `build/models/` across rebuilds.
 - **The CLI** — `cameo` is on `PATH` in the image, wordmark and all.
 - **The console** — `cameod.service` starts the browser control plane on boot.
   `cameo-console-init` generates a random key and binds all interfaces each boot,

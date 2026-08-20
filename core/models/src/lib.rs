@@ -21,21 +21,26 @@ use anyhow::{anyhow, bail, Result};
 /// A curated alias → (HuggingFace repo, file) table. Weighted toward models that
 /// fit a 4 GB Tier-3 APU, since that is Cameo's proving-ground hardware.
 /// Filenames verified against the HuggingFace model API.
-const ALIASES: &[(&str, &str, &str)] = &[
+/// (alias, huggingface repo, filename, params in billions). The last column
+/// is what the planner uses when the caller omits `--params`.
+const ALIASES: &[(&str, &str, &str, f64)] = &[
     (
         "qwen2.5-0.5b",
         "bartowski/Qwen2.5-0.5B-Instruct-GGUF",
         "Qwen2.5-0.5B-Instruct-Q4_K_M.gguf",
+        0.5,
     ),
     (
         "tinyllama",
         "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF",
         "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        1.1,
     ),
     (
         "llama3.2-3b",
         "bartowski/Llama-3.2-3B-Instruct-GGUF",
         "Llama-3.2-3B-Instruct-Q4_K_M.gguf",
+        3.0,
     ),
 ];
 
@@ -54,8 +59,19 @@ pub struct Alias {
 pub fn aliases() -> Vec<Alias> {
     ALIASES
         .iter()
-        .map(|(name, repo, file)| Alias { name, repo, file })
+        .map(|(name, repo, file, _)| Alias { name, repo, file })
         .collect()
+}
+
+/// Parameter count (billions) for a built-in alias, including a trailing `.gguf`.
+/// Used when the caller did not pass `--params` / a JSON `params` field, so the
+/// starter (`qwen2.5-0.5b`) is not planned as if it were 7B.
+pub fn params_b_for(name: &str) -> Option<f64> {
+    let key = name.strip_suffix(".gguf").unwrap_or(name);
+    ALIASES
+        .iter()
+        .find(|(n, _, _, _)| *n == key)
+        .map(|(_, _, _, p)| *p)
 }
 
 /// Where pulled models live, in precedence order:
@@ -213,7 +229,7 @@ pub fn resolve(name: &str) -> Result<String> {
 /// Accepted forms: a curated alias, a full `http(s)://` URL, or a HuggingFace
 /// `owner/repo:file.gguf` reference.
 fn spec_to_url(spec: &str) -> Result<(String, String)> {
-    if let Some((_, repo, file)) = ALIASES.iter().find(|(a, _, _)| *a == spec) {
+    if let Some((_, repo, file, _)) = ALIASES.iter().find(|(a, _, _, _)| *a == spec) {
         let url = format!("https://huggingface.co/{repo}/resolve/main/{file}");
         // Save under the alias so `cameo serve <alias>` resolves predictably.
         return Ok((url, format!("{spec}.gguf")));
@@ -456,6 +472,9 @@ mod tests {
         let a = aliases();
         assert!(a.iter().any(|x| x.name == "tinyllama"));
         assert!(a.iter().all(|x| x.file.ends_with(".gguf")));
+        assert_eq!(params_b_for("qwen2.5-0.5b"), Some(0.5));
+        assert_eq!(params_b_for("qwen2.5-0.5b.gguf"), Some(0.5));
+        assert_eq!(params_b_for("mystery-model"), None);
     }
 
     #[test]

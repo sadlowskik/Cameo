@@ -29,13 +29,15 @@ if systemctl is-active --quiet cameod 2>/dev/null; then
     [ -n "$shown" ] || shown="<this-box-ip>"
   fi
   echo "Web console:  http://${shown}:${port}"
-  echo "  Open it from your own machine's browser to manage GPUs, models,"
-  echo "  and inference endpoints on this box."
+  echo "  Open it from a browser on this LAN. No internet required."
+  echo "  Starter model qwen2.5-0.5b is on disk — open the console and chat."
+  echo "  Extra GGUFs: drop them in /var/lib/cameo/models (a USB stick is enough)."
   if [ -n "${CAMEO_CONSOLE_KEY:-}" ]; then
     echo "  Console key:  ${CAMEO_CONSOLE_KEY}"
     echo "  (the dashboard asks for this once, then remembers it)"
   fi
   echo "  Settings: /etc/cameo/cameod.env"
+  echo "  Network is later: extra models, other Cameo nodes, console-from-outside."
 else
   echo "Web console (cameod) is not running — start it with: systemctl start cameod"
 fi

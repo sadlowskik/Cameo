@@ -86,8 +86,8 @@ struct ModelRequest {
     host: String,
     #[serde(default = "default_port")]
     port: u16,
-    #[serde(default = "default_params")]
-    params: f64,
+    #[serde(default)]
+    params: Option<f64>,
     #[serde(default = "default_quant")]
     quant: String,
     #[serde(default)]
@@ -107,9 +107,6 @@ fn default_host() -> String {
 fn default_port() -> u16 {
     8080
 }
-fn default_params() -> f64 {
-    7.0
-}
 fn default_quant() -> String {
     "Q4_K_M".into()
 }
@@ -120,10 +117,14 @@ fn default_context() -> u32 {
 impl ModelRequest {
     fn meta(&self) -> ModelMeta {
         let quant = QuantLevel::parse(&self.quant).unwrap_or(QuantLevel::Q4_K_M);
+        let params = self
+            .params
+            .or_else(|| cameo_models::params_b_for(&self.model))
+            .unwrap_or(7.0);
         let mut m = if self.moe {
-            ModelMeta::moe(&self.model, self.params, quant)
+            ModelMeta::moe(&self.model, params, quant)
         } else {
-            ModelMeta::dense(&self.model, self.params, quant)
+            ModelMeta::dense(&self.model, params, quant)
         };
         m.context_len = self.context;
         if self.layers > 0 {
@@ -617,7 +618,8 @@ fn api_dispatch(state: &Arc<AppState>, req: &Request) -> Response {
 
     let serve_body = json!({
         "model": body.model, "host": "127.0.0.1", "port": body.port,
-        "params": body.params, "quant": body.quant, "moe": body.moe,
+        "params": body.params.or_else(|| cameo_models::params_b_for(&body.model)).unwrap_or(7.0),
+        "quant": body.quant, "moe": body.moe,
     })
     .to_string();
     match node_call(
@@ -818,7 +820,14 @@ fn api_engines(state: &Arc<AppState>) -> Response {
 fn api_models() -> Response {
     let aliases: Vec<Value> = cameo_models::aliases()
         .into_iter()
-        .map(|a| json!({ "name": a.name, "repo": a.repo, "file": a.file }))
+        .map(|a| {
+            json!({
+                "name": a.name,
+                "repo": a.repo,
+                "file": a.file,
+                "params_b": cameo_models::params_b_for(a.name),
+            })
+        })
         .collect();
     Response::json(
         200,

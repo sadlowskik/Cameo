@@ -22,7 +22,10 @@ Or directly:
     # generated bearer key on first start (never unauthenticated on a network).
     podman run --rm -p 9090:9090 -v cameo-models:/var/lib/cameo/models cameo:vulkan
 
-    # Use it as the CLI, too:
+    # Starter model is in the image; the entrypoint seeds it into the volume.
+    podman run --rm -v cameo-models:/var/lib/cameo/models cameo:vulkan cameo serve qwen2.5-0.5b
+
+    # Extra models, when you have a network:
     podman run --rm -v cameo-models:/var/lib/cameo/models cameo:vulkan cameo pull tinyllama
 
 ### GPU passthrough (run time, vendor-specific)

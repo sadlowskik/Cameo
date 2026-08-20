@@ -54,6 +54,7 @@ file_permissions=(
   ["/usr/local/bin/cameo-firstboot"]="0:0:755"
   ["/usr/local/bin/cameo-console-init"]="0:0:755"
   ["/usr/local/bin/cameo-storage-init"]="0:0:755"
+  ["/usr/local/bin/cameo-seed-models"]="0:0:755"
   ["/usr/local/bin/cameo-persist-cache"]="0:0:755"
   ["/usr/local/bin/cameo"]="0:0:755"
   ["/usr/local/bin/cameod"]="0:0:755"

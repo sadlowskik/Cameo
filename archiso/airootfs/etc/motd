@@ -1,17 +1,21 @@
 
 Welcome to Cameo — any AMD card -> a working LLM box.
 
-  cameo gpu-status       see your GPU's support tier (1/2/3)
-  cameo pull tinyllama   fetch a small model that fits a 4 GB card
-  cameo serve tinyllama  stand up an OpenAI-compatible endpoint
-  cameo run tinyllama    run inference
-  cameo pull --list      see model aliases and what's cached
-  cameo --help           everything else
+  This box does not need the internet to serve.
+  Network is for extra models, other Cameo nodes, and the console
+  from outside the house.
 
-First time? Try:  cameo pull tinyllama && cameo serve tinyllama
+  cameo gpu-status              your GPU's support tier (1/2/3)
+  cameo serve qwen2.5-0.5b      starter model — already on disk, no network
+  cameo pull --list             more aliases, if you want the network
+  cameo --help                  everything else
 
-Running from the USB? Install Cameo permanently to this machine:
+A starter GGUF (qwen2.5-0.5b) is already in /var/lib/cameo/models.
+Open the web console printed on first boot and chat. Extra models: drop a
+.gguf there, or `cameo pull` when you have a network.
+
+Running from the USB? Install to this machine's disk (offline, copies the image):
+  cameo-install-guided   the installer — account, disk, confirm
   cameo-install          dry run — shows the plan, changes nothing
-  cameo-install --commit installs to a disk you pick (erases it)
 
-Docs & source: https://github.com/korbin/cameo
+Docs & source: https://github.com/sadlowskik/Cameo

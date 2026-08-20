@@ -4,9 +4,9 @@
 
 **Any AMD card. Serves LLMs.**
 
-An Arch-based OS and container that turn any AMD GPU into an OpenAI-compatible
-endpoint — one old Radeon in a drawer, a multi-GPU box, or a small cluster, with
-the same commands.
+An Arch-based OS that turns any AMD GPU into an OpenAI-compatible endpoint.
+Download it, plug it in, set an account, play — no internet after that. Network
+is for extra models, fleets, and opening the console from outside the house.
 
 [![License](https://img.shields.io/badge/license-Apache--2.0-FF7A1A)](LICENSE)
 [![Status](https://img.shields.io/badge/status-beta%20(pre--v1)-FFD08A)](#status)
@@ -39,50 +39,43 @@ it can do, and serves — no CUDA envy, no driver archaeology.
 
 ## Quickstart
 
-### Container (recommended — runs anywhere)
+Download the ISO, flash a USB, plug it into the AMD box, set an account, play.
+After that the machine does not need the internet. Full walkthrough:
+[docs/quickstart.md](docs/quickstart.md).
 
-The container is the hero artifact: it runs on AMD (`kfd`/`dri` passthrough), on
-NVIDIA/Intel or CPU via Vulkan, and the host owns the GPU driver.
+### ISO appliance
 
-```bash
-# build the universal Vulkan image  (or --build-arg EDITION=rocm for AMD acceleration)
-podman build -f containers/Containerfile -t cameo:vulkan .
+Releases: [github.com/sadlowskik/Cameo/releases](https://github.com/sadlowskik/Cameo/releases)
+(universal for any card; lite if you know it's Vulkan-only). Flash with Rufus,
+Etcher, or `dd`. Boot **Install Cameo to disk** — it copies the image offline,
+creates your admin account, writes a console key. Reboot, pull the USB, open
+`http://<the-box>:9090` from anything on the LAN. A starter model
+(`qwen2.5-0.5b`) is already on disk — start it from the console and chat.
+Chatting never phones home. Extra GGUFs go in `/var/lib/cameo/models`.
 
-# run it — models persist in the named volume; AMD GPUs pass through as shown
-podman run --rm -p 9090:9090 -v cameo-models:/var/lib/cameo/models \
-  --device=/dev/kfd --device=/dev/dri --group-add video --group-add render \
-  cameo:vulkan
-```
-
-The entrypoint prints the console URL and a generated key. Open `http://<host>:9090`
-in a browser, or drive it over HTTP:
+Building the ISO yourself still needs an Arch host:
 
 ```bash
-# pull a small model and serve it
-curl -X POST http://<host>:9090/api/servers -H "Authorization: Bearer $KEY" \
-  -d '{"model":"tinyllama","params":1.1}'
-
-# chat through the one OpenAI-compatible door
-curl http://<host>:9090/v1/chat/completions -H "Authorization: Bearer $KEY" \
-  -d '{"model":"tinyllama","messages":[{"role":"user","content":"hi"}]}'
-```
-
-### ISO appliance (the box *is* the console)
-
-Build the branded, bootable ISO on an Arch host, write it to a USB stick, and boot the
-machine with the AMD card in it. First boot prints the card's tier in plain language,
-then the console URL and key.
-
-```bash
-git clone https://github.com/sadlowskik/cameo
-cd cameo
+git clone https://github.com/sadlowskik/Cameo
 sudo ./scripts/build-iso.sh                       # or: sudo CAMEO_EDITION=lite ./scripts/build-iso.sh
 sudo dd if=archiso/out/cameo-*.iso of=/dev/sdX bs=4M status=progress oflag=sync
 ```
 
-"Install Cameo to disk" is the default boot entry; the live "try it" entry sits one
-keystroke below. The disk installer erases a drive but touches nothing until you pick a
-disk, review the plan, and type the disk's name to confirm.
+### When you want a network
+
+`cameo pull` for extra models. `cameo fleet` to front several boxes. The same
+`:9090` console, forwarded, if you want it from outside the house.
+
+### Container (developers)
+
+Host owns the GPU driver. Not the appliance path.
+
+```bash
+podman build -f containers/Containerfile -t cameo:vulkan .
+podman run --rm -p 9090:9090 -v cameo-models:/var/lib/cameo/models \
+  --device=/dev/kfd --device=/dev/dri --group-add video --group-add render \
+  cameo:vulkan
+```
 
 ## The CLI
 
@@ -91,8 +84,8 @@ installed the ISO, ran the container, or built from source.
 
 ```bash
 cameo gpu-status                 # detected GPU(s), topology, tier, chosen backend
-cameo pull tinyllama             # download a model into the shared cache
-cameo serve tinyllama            # persistent OpenAI-compatible endpoint
+cameo serve qwen2.5-0.5b         # starter model, already on the image (no network)
+cameo pull tinyllama             # optional — fetch a model when you have a network
 cameo run   tinyllama            # one-shot inference
 cameo plan  qwen2.5-32b          # show the placement plan without running it
 cameo train mistral-7b           # training run (Tier 1/2 only; refused on Tier 3)
@@ -115,6 +108,8 @@ GPU 0  Radeon RX 580 8G
        Vulkan-only inference, no training.
 -----------------------------------------
 Web console:  http://192.168.1.40:9090
+  Open it from a browser on this LAN. No internet required.
+  Starter model qwen2.5-0.5b is on disk — open the console and chat.
 ```
 
 Even a tier-3 drawer card serves. The tier is a smart default, not a verdict — flags
@@ -172,7 +167,7 @@ docs/                 architecture, tiers, API, definition-of-done
 
 ## Documentation
 
-- [Quickstart](docs/quickstart.md) — run and serve, three ways from one build.
+- [Quickstart](docs/quickstart.md) — download, plug in, account, play offline.
 - [HTTP API reference](docs/api-reference.md) — the `cameod` control-plane surface.
 - [Harness integration](docs/harness-integration.md) — point Knossos at Cameo.
 - [Updating](docs/updating.md) — container / installed / ISO update paths.

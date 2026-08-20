@@ -1,0 +1,5 @@
+Starter GGUF files land here at image-build time (`scripts/fetch-starter-model.sh`).
+`cameo-seed-models` publishes them into /var/lib/cameo/models on boot.
+
+Default starter: qwen2.5-0.5b (Qwen2.5-0.5B-Instruct Q4_K_M, Apache-2.0).
+The file itself is not in git.

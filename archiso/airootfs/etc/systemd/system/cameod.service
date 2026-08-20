@@ -3,8 +3,8 @@ Description=Cameo control-plane console (cameod)
 Documentation=https://github.com/sadlowskik/Cameo
 # Detection reads local tools (lspci/rocminfo/rocm-smi) and binds a socket. The
 # generated env below binds all interfaces with a key, so wait for the network.
-After=network.target cameo-console-init.service cameo-storage-init.service
-Wants=network.target cameo-storage-init.service
+After=network.target cameo-console-init.service cameo-storage-init.service cameo-seed-models.service
+Wants=network.target cameo-storage-init.service cameo-seed-models.service
 
 [Service]
 Type=simple

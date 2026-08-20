@@ -8,6 +8,7 @@
 //! existing push to the node's `/api/servers`, done in [`crate::app`].
 
 use cameo_gpu_detect::{TierAssessment, Topology};
+use cameo_models;
 use cameo_placement::{
     route, Candidate, ModelMeta, NodeInfo, NodeLoad, QuantLevel, RouteChoice, RouteError,
     RouteRequest, Task,
@@ -19,8 +20,8 @@ use serde_json::Value;
 #[derive(Deserialize)]
 pub struct DispatchBody {
     pub model: String,
-    #[serde(default = "default_params")]
-    pub params: f64,
+    #[serde(default)]
+    pub params: Option<f64>,
     #[serde(default = "default_quant")]
     pub quant: String,
     #[serde(default)]
@@ -39,9 +40,6 @@ pub struct DispatchBody {
     pub port: u16,
 }
 
-fn default_params() -> f64 {
-    7.0
-}
 fn default_quant() -> String {
     "Q4_K_M".into()
 }
@@ -52,10 +50,14 @@ fn default_port() -> u16 {
 impl DispatchBody {
     fn model_meta(&self) -> ModelMeta {
         let quant = QuantLevel::parse(&self.quant).unwrap_or(QuantLevel::Q4_K_M);
+        let params = self
+            .params
+            .or_else(|| cameo_models::params_b_for(&self.model))
+            .unwrap_or(7.0);
         if self.moe {
-            ModelMeta::moe(&self.model, self.params, quant)
+            ModelMeta::moe(&self.model, params, quant)
         } else {
-            ModelMeta::dense(&self.model, self.params, quant)
+            ModelMeta::dense(&self.model, params, quant)
         }
     }
 
@@ -192,7 +194,7 @@ mod tests {
     fn body(model: &str, execute: bool) -> DispatchBody {
         DispatchBody {
             model: model.into(),
-            params: 7.0,
+            params: Some(7.0),
             quant: "Q4_K_M".into(),
             moe: false,
             task: None,

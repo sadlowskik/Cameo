@@ -193,6 +193,8 @@ ln -sf /etc/systemd/system/cameo-console-init.service "$WANTS/cameo-console-init
 # so persistence set up via cameo-persist-cache survives reboots (F2). A no-op
 # when no such disk exists, so it is always safe to enable.
 ln -sf /etc/systemd/system/cameo-storage-init.service "$WANTS/cameo-storage-init.service"
+# Publish the baked-in starter GGUF into /var/lib/cameo/models before cameod.
+ln -sf /etc/systemd/system/cameo-seed-models.service "$WANTS/cameo-seed-models.service"
 # The guided disk installer. Gated by ConditionKernelCommandLine=cameo.install, so
 # it activates only for the "Install Cameo to disk" boot entry and is inert on a
 # normal live boot. Enabling it here is therefore always safe.
@@ -207,7 +209,7 @@ ln -sf /usr/lib/systemd/system/systemd-resolved.service "$WANTS/systemd-resolved
 ln -sf /etc/systemd/system/pacman-init.service "$WANTS/pacman-init.service"
 # Wireless association. Package is in packages.x86_64, so this cannot dangle.
 ln -sf /usr/lib/systemd/system/iwd.service "$WANTS/iwd.service"
-log "Enabled cameo-firstboot, cameo-console-init, cameo-storage-init, cameo-installer, cameod, networkd, resolved, pacman-init, iwd"
+log "Enabled cameo-firstboot, cameo-console-init, cameo-storage-init, cameo-seed-models, cameo-installer, cameod, networkd, resolved, pacman-init, iwd"
 
 # Clock. A laptop with a flat CMOS battery boots with a wrong time, which
 # breaks TLS on model downloads and pacman signature validity before anything
@@ -493,6 +495,20 @@ if [ "$EDITION" = "lite" ]; then
   # a dependency of the compute backend.
   grep -viE '^(rocm|python-pytorch|ggml-hip)' "$PROFILE/packages.x86_64" > "$BUILD/packages.x86_64"
   log "Lite edition: ROCm/PyTorch excluded — Vulkan baseline only."
+fi
+
+# 3b. Starter model: bake a small GGUF so first boot can chat with no internet.
+#
+# ~380 MiB, not in git. Cached under $WORK/models across rebuilds. Skip with
+# CAMEO_SKIP_STARTER=1 (CI / air-gapped rebuild of an already-cached tree).
+if [ "${CAMEO_SKIP_STARTER:-}" = "1" ]; then
+  log "CAMEO_SKIP_STARTER=1 — ISO will not include a starter GGUF."
+else
+  log "Fetching starter model (qwen2.5-0.5b, ~380 MiB, cached after the first build)…"
+  chmod +x "$REPO/scripts/fetch-starter-model.sh"
+  "$REPO/scripts/fetch-starter-model.sh" \
+    --cache "$WORK/models" \
+    --dest "$BUILD/airootfs/usr/share/cameo/models"
 fi
 
 # 4. Build the ISO.

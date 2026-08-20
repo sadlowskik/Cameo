@@ -7,6 +7,12 @@
 #   podman run --rm cameo:vulkan cameo pull tinyllama
 set -eu
 
+# Publish the baked-in starter GGUF into the (often empty) volume so
+# `cameo serve qwen2.5-0.5b` works offline on first start.
+if [ -x /usr/local/bin/cameo-seed-models ]; then
+    /usr/local/bin/cameo-seed-models || true
+fi
+
 # An explicit command (not a flag) runs verbatim instead of the daemon.
 if [ "$#" -gt 0 ]; then
     case "$1" in

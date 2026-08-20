@@ -1,0 +1,16 @@
+[Unit]
+Description=Cameo starter model (seed the local cache)
+Documentation=https://github.com/sadlowskik/Cameo
+# After storage-init so a mounted CAMEO_DATA disk is the destination we seed.
+# Before cameod so the console lists the starter on first paint.
+After=local-fs.target cameo-storage-init.service
+Before=cameod.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/cameo-seed-models
+StandardOutput=journal+console
+
+[Install]
+WantedBy=multi-user.target

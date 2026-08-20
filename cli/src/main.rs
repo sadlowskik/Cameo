@@ -286,9 +286,10 @@ struct FleetCommon {
 /// the planner size memory; sane defaults keep commands working for `--dry-run`.
 #[derive(clap::Args, Clone)]
 struct ModelOpts {
-    /// Total parameters, in billions (for memory planning).
-    #[arg(long, default_value_t = 7.0)]
-    params: f64,
+    /// Total parameters, in billions (for memory planning). Omit to use the
+    /// built-in alias size (e.g. 0.5 for `qwen2.5-0.5b`) or 7.0 if unknown.
+    #[arg(long)]
+    params: Option<f64>,
     /// Quantization level: F16, Q8_0, Q6_K, Q5_K_M, Q4_K_M, Q4_0.
     #[arg(long, default_value = "Q4_K_M")]
     quant: String,
@@ -533,10 +534,14 @@ fn settings_from(cli: &Cli, backend: Option<Backend>) -> Result<Settings> {
 
 fn model_meta(name: &str, o: &ModelOpts) -> ModelMeta {
     let quant = QuantLevel::parse(&o.quant).unwrap_or(QuantLevel::Q4_K_M);
+    let params = o
+        .params
+        .or_else(|| cameo_models::params_b_for(name))
+        .unwrap_or(7.0);
     let mut m = if o.moe {
-        ModelMeta::moe(name, o.params, quant)
+        ModelMeta::moe(name, params, quant)
     } else {
-        ModelMeta::dense(name, o.params, quant)
+        ModelMeta::dense(name, params, quant)
     };
     m.context_len = o.context;
     if o.layers > 0 {
