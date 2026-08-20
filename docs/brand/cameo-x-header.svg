@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="500" viewBox="0 0 1500 500" role="img" aria-label="Cameo — any AMD card, a working LLM box">
+<title>Cameo</title>
+<defs>
+<radialGradient id="bg" cx="50%" cy="38%" r="75%">
+<stop offset="0%" stop-color="#221E26"/>
+<stop offset="60%" stop-color="#16141A"/>
+<stop offset="100%" stop-color="#0C0B0E"/>
+</radialGradient>
+</defs>
+<rect width="1500" height="500" fill="url(#bg)"/>
+
+<!-- the Cameo mark, scaled from docs/brand/cameo-mark.svg (480x480) to 210px, vertically centred -->
+<g transform="translate(452,145) scale(0.4375)">
+  <circle cx="240" cy="240" r="240" fill="#1C1920"/>
+  <circle cx="240" cy="240" r="232" fill="none" stroke="#3A343C" stroke-width="17" stroke-dasharray="4 8"/>
+  <path d="M 240 8 A 232 232 0 0 0 8 240" fill="none" stroke="#6E6472" stroke-width="17" stroke-dasharray="4 8" opacity="0.55"/>
+  <circle cx="240" cy="240" r="222" fill="#221E26"/>
+  <circle cx="240" cy="240" r="222" fill="none" stroke="#0C0B0E" stroke-width="3"/>
+  <path d="M 240 18 A 222 222 0 0 0 18 240" fill="none" stroke="#8A8090" stroke-width="2" opacity="0.5"/>
+  <circle cx="240" cy="240" r="210" fill="#16141A"/>
+  <g opacity="0.5">
+    <circle cx="240" cy="240" r="203" fill="none" stroke="#B4472F" stroke-width="9" stroke-dasharray="2 40"/>
+    <circle cx="240" cy="240" r="203" fill="none" stroke="#7C4B3A" stroke-width="9" stroke-dasharray="14 26" opacity="0.45"/>
+  </g>
+  <circle cx="240" cy="240" r="194" fill="none" stroke="#0B0A0D" stroke-width="2"/>
+  <g fill="none" stroke-linecap="butt">
+    <path d="M 308.8 141.7 A 120 120 0 1 0 308.8 338.3" stroke="#0A090C" stroke-width="46" transform="translate(5,6)" opacity="0.9"/>
+    <path d="M 308.8 141.7 A 120 120 0 1 0 308.8 338.3" stroke="#FFFFFF" stroke-width="46" transform="translate(-3,-4)" opacity="0.6"/>
+    <path d="M 308.8 141.7 A 120 120 0 1 0 308.8 338.3" stroke="#E8E1D5" stroke-width="46"/>
+    <path d="M 308.8 141.7 A 120 120 0 0 1 351.3 195.1" stroke="#E8E1D5" stroke-width="46" stroke-dasharray="7 11"/>
+    <path d="M 308.8 338.3 A 120 120 0 0 0 351.3 284.9" stroke="#E8E1D5" stroke-width="46" stroke-dasharray="7 11"/>
+  </g>
+  <circle cx="360" cy="240" r="18" fill="#7A2E12" opacity="0.55"/>
+  <circle cx="360" cy="240" r="12" fill="#FF7A1A"/>
+  <circle cx="358" cy="237" r="6" fill="#FFD08A"/>
+  <circle cx="374" cy="208" r="3" fill="#FF9A3C" opacity="0.85"/>
+</g>
+
+<!-- wordmark + tagline -->
+<text x="690" y="258" fill="#E8E1D5" font-family="Inter, 'DejaVu Sans', 'Segoe UI', Helvetica, Arial, sans-serif" font-size="128" font-weight="600" letter-spacing="2">cameo</text>
+<text x="696" y="318" fill="#FF7A1A" font-family="Inter, 'DejaVu Sans', 'Segoe UI', Helvetica, Arial, sans-serif" font-size="34" font-weight="500" letter-spacing="1">any AMD card &#8594; a working LLM box</text>
+<text x="696" y="356" fill="#8A8090" font-family="Inter, 'DejaVu Sans', 'Segoe UI', Helvetica, Arial, sans-serif" font-size="24" font-weight="400" letter-spacing="1">Vulkan baseline · ROCm when it's there · CPU floor</text>
+</svg>

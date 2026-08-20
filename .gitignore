@@ -22,3 +22,9 @@ Thumbs.db
 
 # CI build log (produced inside the runner workspace)
 build.log
+
+# Cloudflare Pages / Wrangler (local state + scaffolds + build artifacts)
+.wrangler/
+cameo-site.zip
+/worker/
+/my-worker/

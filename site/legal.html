@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<!--
+  NOTE TO THE MAINTAINER (not shown on the page):
+  Proportionate, good-faith legal page for a static, open-source, no-tracking
+  marketing site — a starting point, NOT legal advice. Have counsel review
+  before treating this as a launch-ready terms of service.
+  If you later add analytics, comments, accounts, forms, or payments, the
+  Privacy section is no longer accurate.
+-->
+<meta charset="utf-8">
+<title>Cameo — Legal &amp; Licensing</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Terms of use, privacy, trademark notices and open-source licensing for the Cameo project website.">
+<meta name="robots" content="index,follow">
+<meta name="theme-color" content="#1A1812">
+<meta name="color-scheme" content="dark">
+<link rel="canonical" href="https://cameoconstruct.pages.dev/legal.html">
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png">
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+<style>
+@font-face{font-family:"Plus Jakarta Sans";src:url("assets/fonts/plus-jakarta-sans-latin-wght-normal.woff2") format("woff2");font-weight:200 800;font-style:normal;font-display:swap}
+@font-face{font-family:"IBM Plex Sans";src:url("assets/fonts/ibm-plex-sans-latin-wght-normal.woff2") format("woff2");font-weight:100 700;font-style:normal;font-display:swap}
+@font-face{font-family:"IBM Plex Mono";src:url("assets/fonts/ibm-plex-mono-latin-400-normal.woff2") format("woff2");font-weight:400;font-style:normal;font-display:swap}
+@font-face{font-family:"IBM Plex Mono";src:url("assets/fonts/ibm-plex-mono-latin-500-normal.woff2") format("woff2");font-weight:500;font-style:normal;font-display:swap}
+:root{
+  --bg:#1A1812; --panel:rgba(44,43,39,.55); --inset:rgba(24,23,21,.5);
+  --line:#3F3C36; --line-2:#524E46;
+  --ink:#F6F4F2; --body:#D8D2C8; --grey:#B8B1A6; --faint:#A39C91; --ember:#FF7A1A; --amber:#FFD08A;
+  --disp:"Plus Jakarta Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --sans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Consolas,monospace;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%;scroll-behavior:smooth}
+body{margin:0;background:#1A1812;color:var(--ink);font-family:var(--sans);
+  font-size:16px;line-height:1.62;-webkit-font-smoothing:antialiased}
+body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
+  background:
+    radial-gradient(1000px 700px at 82% -8%, rgba(255,166,90,.10), transparent 60%),
+    radial-gradient(760px 620px at 4% 104%, rgba(180,71,47,.09), transparent 55%),
+    linear-gradient(160deg,#211E17,#17150E 60%,#1A1812)}
+a{color:var(--amber);text-decoration:none}
+a:hover{text-decoration:underline}
+:focus-visible{outline:2px solid var(--ember);outline-offset:2px}
+.skip{position:absolute;left:-999px;top:8px;background:var(--ember);color:#1A1008;
+  font-family:var(--mono);font-size:13px;padding:8px 12px;border-radius:8px;z-index:80}
+.skip:focus{left:8px}
+.wrap{width:100%;max-width:820px;margin-inline:auto;padding:0 26px}
+header{position:sticky;top:0;z-index:5;background:rgba(26,24,18,.8);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+.nav{display:flex;align-items:center;height:58px;gap:16px}
+.brand{display:flex;align-items:center;gap:10px;font-family:var(--disp);font-weight:800;font-size:18px;letter-spacing:-.02em;margin-right:auto;color:var(--ink);text-decoration:none}
+.brand svg{width:24px;height:24px}
+.nav a.l{font-family:var(--mono);font-size:12.5px;color:var(--grey)}
+.nav a.l:hover{color:var(--ink);text-decoration:none}
+.hero{padding:56px 0 30px}
+.hero .kick{font-family:var(--mono);font-size:12px;letter-spacing:.18em;text-transform:uppercase;color:var(--faint);margin:0 0 14px}
+h1{font-family:var(--disp);font-weight:800;letter-spacing:-.03em;font-size:clamp(34px,6vw,52px);margin:0;line-height:1}
+.updated{font-family:var(--mono);font-size:12.5px;color:var(--faint);margin-top:14px}
+.tldr{margin:30px 0 8px;border:1px solid var(--line);border-radius:12px;background:var(--panel);backdrop-filter:blur(10px);padding:22px 24px}
+.tldr h2{font-family:var(--mono);font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--amber);margin:0 0 12px}
+.tldr ul{margin:0;padding-left:20px}
+.tldr li{margin:7px 0;color:var(--grey)}
+.tldr li b{color:var(--ink);font-weight:500}
+.toc{display:flex;flex-wrap:wrap;gap:8px;margin:26px 0 10px}
+.toc a{font-family:var(--mono);font-size:12.5px;color:var(--grey);border:1px solid var(--line);border-radius:20px;padding:6px 13px}
+.toc a:hover{color:var(--ink);border-color:var(--line-2);text-decoration:none}
+main{padding:20px 0 40px}
+section.doc{padding:34px 0;border-top:1px solid var(--line)}
+section.doc h2{font-family:var(--disp);font-weight:700;letter-spacing:-.01em;font-size:clamp(22px,3.4vw,28px);margin:0 0 6px;scroll-margin-top:74px}
+section.doc h2 .n{font-family:var(--mono);font-size:13px;color:var(--ember);font-weight:500;margin-right:10px;vertical-align:middle}
+section.doc h3{font-family:var(--disp);font-weight:600;font-size:17px;margin:22px 0 6px;color:var(--ink)}
+section.doc p,section.doc li{color:var(--grey)}
+section.doc p{margin:10px 0}
+section.doc ul{margin:10px 0;padding-left:22px}
+section.doc li{margin:5px 0}
+section.doc strong{color:var(--ink);font-weight:500}
+code{font-family:var(--mono);font-size:.9em;background:var(--inset);border:1px solid var(--line);border-radius:5px;padding:1px 6px;color:var(--amber)}
+.licgrid{width:100%;border-collapse:collapse;margin:14px 0;font-size:14px;display:block;overflow-x:auto}
+th,td{text-align:left;padding:11px 14px;border-bottom:1px solid var(--line);vertical-align:top}
+thead th{font-family:var(--mono);font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--faint);font-weight:500}
+td{color:var(--grey)}
+td .mono{font-family:var(--mono);font-size:12.5px;color:var(--ink)}
+footer{border-top:1px solid var(--line);padding:36px 0 50px;margin-top:20px}
+.foot{display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap;align-items:center}
+.foot .tag{font-family:var(--mono);font-size:12px;color:var(--faint)}
+.foot a{font-family:var(--mono);font-size:12.5px;color:var(--grey)}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+<g id="mark" transform="scale(0.05)">
+  <circle cx="240" cy="240" r="234" fill="#302F2B"/>
+  <circle cx="240" cy="240" r="228" fill="none" stroke="#454339" stroke-width="10" stroke-dasharray="3 9"/>
+  <circle cx="240" cy="240" r="208" fill="#1C1B18"/>
+  <g fill="none" stroke-linecap="butt">
+    <path d="M 308.8 141.7 A 120 120 0 1 0 308.8 338.3" stroke="#F6F4F2" stroke-width="48"/>
+    <path d="M 308.8 141.7 A 120 120 0 0 1 351.3 195.1" stroke="#F6F4F2" stroke-width="48" stroke-dasharray="7 11"/>
+    <path d="M 308.8 338.3 A 120 120 0 0 0 351.3 284.9" stroke="#F6F4F2" stroke-width="48" stroke-dasharray="7 11"/>
+  </g>
+  <circle cx="360" cy="240" r="12" fill="#FF7A1A"/>
+</g></defs></svg>
+
+<header><div class="wrap nav">
+  <a class="brand" href="index.html"><svg viewBox="0 0 24 24"><use href="#mark"/></svg>cameo</a>
+  <a class="l" href="index.html">← home</a>
+  <a class="l" href="#trademarks">trademarks</a>
+  <a class="l" href="#licenses">licenses</a>
+</div></header>
+
+<main id="main">
+  <div class="wrap">
+    <div class="hero">
+      <p class="kick">legal &amp; licensing</p>
+      <h1>Terms, privacy &amp; licenses</h1>
+      <p class="updated">Last updated: 20 August 2026 · applies to this website (<code>cameoconstruct.pages.dev</code>) and the Cameo project.</p>
+    </div>
+
+    <div class="tldr">
+      <h2>The short version</h2>
+      <ul>
+        <li><b>Open source.</b> The Cameo software is licensed under <b>Apache&nbsp;2.0</b>. Use it, fork it, ship it — keep the notices.</li>
+        <li><b>No tracking.</b> This site sets <b>no cookies</b>, runs <b>no analytics</b>, has <b>no accounts or forms</b>, and collects <b>no personal data</b>.</li>
+        <li><b>Independent project.</b> Cameo is <b>not affiliated with, sponsored by, or endorsed by</b> AMD, Arch Linux, the Khronos Group, Meta, or any other trademark owner named here.</li>
+        <li><b>As-is.</b> Cameo is pre-release software provided <b>without warranty</b>. Run it at your own risk, especially the disk installer.</li>
+      </ul>
+      <p style="margin:14px 0 0;color:var(--faint);font-size:13.5px">The sections below are the full terms. Where they conflict with this summary, the full text controls.</p>
+    </div>
+
+    <div class="toc">
+      <a href="#terms">1 · Terms of use</a>
+      <a href="#privacy">2 · Privacy</a>
+      <a href="#trademarks">3 · Trademarks</a>
+      <a href="#licenses">4 · Open-source licenses</a>
+      <a href="#disclaimer">5 · Disclaimer &amp; liability</a>
+      <a href="#contact">6 · Changes &amp; contact</a>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <section class="doc" id="terms">
+      <h2><span class="n">01</span>Terms of use</h2>
+      <p>By accessing this website (currently published at <code>cameoconstruct.pages.dev</code>, the “Site”) you agree to these Terms. If you do not agree, please do not use the Site.</p>
+      <h3>The Site vs. the software</h3>
+      <p>These Terms govern your use of the <strong>website</strong> — its pages, text, and graphics. Your use of the <strong>Cameo software</strong> is governed separately by its open-source license (see <a href="#licenses">Open-source licenses</a>), not by these Terms.</p>
+      <h3>Acceptable use</h3>
+      <p>You may view, share, and link to the Site. You agree not to: (a) attempt to breach or probe the Site’s security or disrupt its availability; (b) scrape or reproduce the Site’s design or written content wholesale as your own; or (c) use the Site to break any applicable law.</p>
+      <h3>Site content</h3>
+      <p>Unless a file states otherwise, the written copy and visual design of the Site are © the Cameo maintainers. The Cameo <strong>source code</strong> (including this site’s source) is offered under the Apache&nbsp;2.0 license. Third-party names, logos, and marks remain the property of their owners (see <a href="#trademarks">Trademarks</a>).</p>
+      <h3>External links</h3>
+      <p>The Site links to third-party sites (e.g. GitHub, documentation, package repositories). We do not control and are not responsible for their content, policies, or availability.</p>
+      <h3>Availability</h3>
+      <p>The Site is provided on an “as available” basis. It is a pre-release project and may change, break, or go offline at any time without notice.</p>
+    </section>
+
+    <section class="doc" id="privacy">
+      <h2><span class="n">02</span>Privacy</h2>
+      <p>We designed this Site to need as little of your data as possible. As currently published, it is a <strong>static website</strong>:</p>
+      <ul>
+        <li>It sets <strong>no cookies</strong> and uses no local/session storage for tracking.</li>
+        <li>It runs <strong>no analytics</strong>, no advertising, and no third-party trackers or pixels.</li>
+        <li>It has <strong>no accounts, logins, comment threads, or contact forms</strong>, so we do not ask for or store your name, email, or any personal information.</li>
+        <li>Typefaces are <strong>self-hosted</strong> on this origin. The page does not call Google Fonts or any other third-party font host.</li>
+      </ul>
+      <h3>Server logs</h3>
+      <p>Our hosting provider (for the production site, <strong>Cloudflare Pages</strong>) may automatically process standard technical data — such as your IP address, user-agent, and requested URL — transiently to serve the Site, guard against abuse, and keep it online. This processing is performed by the host under its own privacy and data-processing terms; we do not build profiles from it.</p>
+      <h3>Your rights</h3>
+      <p>Because we do not collect or store personal data ourselves, there is nothing for us to access, correct, or delete. If that changes — for example if we add analytics or a form — we will update this policy first and, where required (EU/UK/California and similar), provide the appropriate notices and choices.</p>
+      <p style="color:var(--faint);font-size:13.5px">This policy describes the Site only. It does not cover the Cameo software you install and run on your own hardware, which stays on your machines and phones home to nothing unless you configure it to.</p>
+    </section>
+
+    <section class="doc" id="trademarks">
+      <h2><span class="n">03</span>Trademark notice</h2>
+      <p>Cameo is an <strong>independent, community project</strong>. It is not affiliated with, sponsored by, authorized by, or endorsed by any of the companies or projects below. Their names and marks are used only <strong>nominatively</strong> — to describe, truthfully, what hardware and software Cameo works with.</p>
+      <p>All trademarks, service marks, and product names are the property of their respective owners, including:</p>
+      <ul>
+        <li><strong>AMD</strong>, <strong>Radeon</strong>, <strong>Ryzen</strong>, and <strong>ROCm</strong> — trademarks of Advanced Micro Devices, Inc.</li>
+        <li><strong>Vulkan</strong> — a trademark of the Khronos Group Inc.</li>
+        <li><strong>Linux</strong> — a registered trademark of Linus Torvalds. <strong>Arch Linux</strong> — a trademark of its respective owner.</li>
+        <li><strong>Llama</strong> — a trademark of Meta Platforms, Inc. <strong>Qwen</strong> — a mark of Alibaba Group. Model names are referenced illustratively.</li>
+        <li><strong>Kubernetes</strong> — a trademark of The Linux Foundation. <strong>Cloudflare</strong> and <strong>Cloudflare Pages</strong> — trademarks of Cloudflare, Inc.</li>
+        <li><strong>llama.cpp</strong>, <strong>GGUF</strong>, and <strong>ggml</strong> — projects/marks of their respective maintainers.</li>
+      </ul>
+      <p>“<strong>Cameo</strong>” and the Cameo mark refer to this project. Use of any third-party mark here does not imply any partnership or endorsement in either direction. If you own one of these marks and would like a correction to how it is presented, please <a href="#contact">contact us</a>.</p>
+    </section>
+
+    <section class="doc" id="licenses">
+      <h2><span class="n">04</span>Open-source &amp; third-party licenses</h2>
+      <h3>Cameo software</h3>
+      <p>The Cameo project — the <code>cameo</code> CLI, the <code>cameod</code> daemon, the Rust core, the ISO profile, and the source of this website — is licensed under the <strong>Apache License, Version 2.0</strong>. A copy ships in the repository as <code>LICENSE</code>. You may use, modify, and redistribute it under those terms; retain the copyright and license notices.</p>
+      <h3>Fonts</h3>
+      <p>This Site self-hosts open-source typefaces under the <strong>SIL Open Font License 1.1</strong>:</p>
+      <div class="licgrid"><table>
+        <thead><tr><th>Component</th><th>Author</th><th>License</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">Plus Jakarta Sans</td><td>Tokotype</td><td>SIL OFL 1.1</td></tr>
+          <tr><td class="mono">IBM Plex Sans / Mono</td><td>IBM</td><td>SIL OFL 1.1</td></tr>
+        </tbody>
+      </table></div>
+      <p>Font files live under <code>assets/fonts/</code> with their license texts.</p>
+      <h3>Bundled &amp; downstream software</h3>
+      <p>The Cameo OS image and containers assemble software from the Arch Linux ecosystem and upstream projects — including the Linux kernel and <code>amdgpu</code> driver, Mesa/Vulkan userspace, ROCm, <code>llama.cpp</code>/<code>ggml</code>, and PyTorch — each under its own license (GPL-2.0, MIT, Apache-2.0, BSD, and others). Those licenses govern those components; consult each project for its terms. Cameo does not relicense any third-party software.</p>
+    </section>
+
+    <section class="doc" id="disclaimer">
+      <h2><span class="n">05</span>Disclaimer &amp; limitation of liability</h2>
+      <p><strong>No warranty.</strong> The Site and the Cameo software are provided <strong>“AS IS” and “AS AVAILABLE”, without warranties of any kind</strong>, express or implied, including but not limited to merchantability, fitness for a particular purpose, title, and non-infringement. Cameo is <strong>pre-release</strong> software.</p>
+      <p><strong>Hardware &amp; data risk.</strong> Cameo detects hardware, tunes low-level settings, serves models over the network, and includes a <strong>disk installer that can erase a drive</strong>. You are responsible for backing up your data, understanding what a command does before running it, and operating your own hardware and network safely. Run the installer’s dry run and read it before committing.</p>
+      <p><strong>Limitation of liability.</strong> To the maximum extent permitted by law, the Cameo maintainers and contributors shall not be liable for any indirect, incidental, special, consequential, or exemplary damages, or for any loss of data, hardware, profits, or goodwill, arising out of or relating to your use of the Site or the software — even if advised of the possibility. This section does not limit any liability that cannot be limited under applicable law.</p>
+    </section>
+
+    <section class="doc" id="contact">
+      <h2><span class="n">06</span>Changes &amp; contact</h2>
+      <p>We may update these terms as the project evolves. Material changes will be reflected here with a new “last updated” date. Continued use of the Site after a change means you accept the revised terms.</p>
+      <p><strong>Governing law.</strong> The Cameo software is licensed under Apache-2.0. These website terms are a notice for a static, unauthenticated page, not a negotiated contract. No governing-law jurisdiction has been designated; mandatory consumer protections in your country still apply.</p>
+      <p><strong>Contact.</strong> Questions about these terms, privacy, trademark use, or security: open an issue at <a href="https://github.com/sadlowskik/Cameo/issues">github.com/sadlowskik/Cameo/issues</a>. Project and source: <a href="https://github.com/sadlowskik/Cameo">github.com/sadlowskik/Cameo</a>.</p>
+    </section>
+  </div>
+</main>
+
+<footer><div class="wrap foot">
+  <span class="tag">© 2026 Cameo · Apache-2.0 · not affiliated with AMD</span>
+  <a href="index.html">← back to cameo</a>
+</div></footer>
+</body>
+</html>

@@ -1,32 +1,152 @@
+<div align="center">
+
 # Cameo
 
-> **Get real use out of any AMD hardware — from one old card in a drawer to a cluster — without fighting the stack.**
+**Any AMD card. Serves LLMs.**
 
-Cameo is an Arch Linux respin that runs, **serves**, and (on capable cards) trains LLMs on
-AMD GPUs. It meets your hardware where it is and scales along one continuum — a single old
-Radeon, a multi-GPU box, up to a cluster — with the same commands.
+An Arch-based OS and container that turn any AMD GPU into an OpenAI-compatible
+endpoint — one old Radeon in a drawer, a multi-GPU box, or a small cluster, with
+the same commands.
 
-- **Meets the hardware where it is.** Vulkan is the universal baseline that works on *any*
-  AMD card; ROCm is the optional accelerator on supported ones. Nothing *requires* ROCm.
-- **Auto-detect, always overridable.** Every smart default (tier, backend, placement) has
-  a manual override.
-- **One core, many frontends.** All logic lives in the Rust `core/`; the `cameo` CLI and
-  the `cameod` browser console are thin clients over the same detection/placement brain.
-- **Administer it from a browser.** `cameod` serves a self-contained control plane — see
-  every GPU and tier, define/start/stop inference endpoints, watch the model cache — with
-  no external web stack. It ships in the ISO and starts on boot.
+[![License](https://img.shields.io/badge/license-Apache--2.0-FF7A1A)](LICENSE)
+[![Status](https://img.shields.io/badge/status-beta%20(pre--v1)-FFD08A)](#status)
+[![Backends](https://img.shields.io/badge/backends-Vulkan%20·%20ROCm-3A3833)](#gpu-tiers)
+[![Site](https://img.shields.io/badge/site-cameoconstruct.pages.dev-3A3833)](https://cameoconstruct.pages.dev/)
 
-See [`CAMEO_PROJECT_PLAN.md`](CAMEO_PROJECT_PLAN.md) for the full build plan.
+</div>
 
-## Status
+---
 
-Pre-v1, greenfield. This tree currently contains the **hardware-independent** scaffolding:
-core detection logic, the internal API contract, the CLI, and the automated **Phase 1**
-hardware-validation runbook. Real Vulkan/ROCm execution is validated on AMD hardware
-(a cloud AMD instance) via [`scripts/phase1/`](scripts/phase1/) — see that directory's
-`RUNBOOK.md`.
+Cameo meets your hardware where it is. **Vulkan is the universal baseline** — it
+runs on *any* AMD card. **ROCm is an optional accelerator** that only ever makes the
+supported cards faster; nothing requires it. Cameo detects the card, classifies what
+it can do, and serves — no CUDA envy, no driver archaeology.
 
-## Repository layout
+- **Runs on the card you already have.** A gfx803 RX 580 from 2017 serves inference
+  over Vulkan. A 7900 XTX or MI210 trains and serves over ROCm. Same tool.
+- **Auto-detect, always overridable.** Every default — tier, backend, placement — is
+  chosen for you and can be forced by a flag or config.
+- **One core, many frontends.** All logic lives in the Rust `core/`; the `cameo` CLI
+  and the `cameod` browser console are thin clients over the same brain.
+- **Administer it from a browser.** `cameod` ships in the image, starts on boot, and
+  serves a self-contained control plane on `:9090` — GPUs, tiers, endpoints, and the
+  model cache — with no external web stack.
+
+> **Status: beta, pre-v1.** The core (detection, placement, CLI, console, container,
+> ISO) is built and the command surface below is real. GPU execution is validated on
+> AMD hardware through the [Phase 1 runbook](scripts/phase1/RUNBOOK.md); treat pinned
+> releases as the stable line and `main` as moving. See [Status](#status).
+
+## Quickstart
+
+### Container (recommended — runs anywhere)
+
+The container is the hero artifact: it runs on AMD (`kfd`/`dri` passthrough), on
+NVIDIA/Intel or CPU via Vulkan, and the host owns the GPU driver.
+
+```bash
+# build the universal Vulkan image  (or --build-arg EDITION=rocm for AMD acceleration)
+podman build -f containers/Containerfile -t cameo:vulkan .
+
+# run it — models persist in the named volume; AMD GPUs pass through as shown
+podman run --rm -p 9090:9090 -v cameo-models:/var/lib/cameo/models \
+  --device=/dev/kfd --device=/dev/dri --group-add video --group-add render \
+  cameo:vulkan
+```
+
+The entrypoint prints the console URL and a generated key. Open `http://<host>:9090`
+in a browser, or drive it over HTTP:
+
+```bash
+# pull a small model and serve it
+curl -X POST http://<host>:9090/api/servers -H "Authorization: Bearer $KEY" \
+  -d '{"model":"tinyllama","params":1.1}'
+
+# chat through the one OpenAI-compatible door
+curl http://<host>:9090/v1/chat/completions -H "Authorization: Bearer $KEY" \
+  -d '{"model":"tinyllama","messages":[{"role":"user","content":"hi"}]}'
+```
+
+### ISO appliance (the box *is* the console)
+
+Build the branded, bootable ISO on an Arch host, write it to a USB stick, and boot the
+machine with the AMD card in it. First boot prints the card's tier in plain language,
+then the console URL and key.
+
+```bash
+git clone https://github.com/sadlowskik/cameo
+cd cameo
+sudo ./scripts/build-iso.sh                       # or: sudo CAMEO_EDITION=lite ./scripts/build-iso.sh
+sudo dd if=archiso/out/cameo-*.iso of=/dev/sdX bs=4M status=progress oflag=sync
+```
+
+"Install Cameo to disk" is the default boot entry; the live "try it" entry sits one
+keystroke below. The disk installer erases a drive but touches nothing until you pick a
+disk, review the plan, and type the disk's name to confirm.
+
+## The CLI
+
+`cameo` is a thin client over the core. Every command works identically whether you
+installed the ISO, ran the container, or built from source.
+
+```bash
+cameo gpu-status                 # detected GPU(s), topology, tier, chosen backend
+cameo pull tinyllama             # download a model into the shared cache
+cameo serve tinyllama            # persistent OpenAI-compatible endpoint
+cameo run   tinyllama            # one-shot inference
+cameo plan  qwen2.5-32b          # show the placement plan without running it
+cameo train mistral-7b           # training run (Tier 1/2 only; refused on Tier 3)
+cameo quantize model.gguf Q4_K_M # quantize to a target level
+cameo model ls                   # list the local model cache
+cameo fleet place qwen2.5-32b    # front several cameod nodes as one fleet
+cameo install                    # print the install plan for the detected hardware
+```
+
+## What first boot prints
+
+```
+================  Cameo  ================
+GPU 0  Radeon RX 580 8G
+  pci  0000:01:00.0
+  vram 8192 MiB
+  arch gfx803
+  tier ● Tier 3   no training
+  why  gfx803 has no usable ROCm path:
+       Vulkan-only inference, no training.
+-----------------------------------------
+Web console:  http://192.168.1.40:9090
+```
+
+Even a tier-3 drawer card serves. The tier is a smart default, not a verdict — flags
+and config always win.
+
+## GPU tiers
+
+Cameo never silently fails on unsupported hardware. It classifies the card and says so.
+
+| Tier | Meaning | Capability |
+|---|---|---|
+| **1** | ROCm officially supported (7900 XTX, MI210, …) | Full training + inference (Vulkan fallback) |
+| **2** | ROCm workable via `HSA_OVERRIDE_GFX_VERSION` (RX 6800, 6700 XT, …) | Inference; training community-tested |
+| **3** | No usable ROCm path (RX 580, APUs, …) | Vulkan-only inference; no training |
+
+Check yours with `cameo gpu-status`.
+
+## One card → a cluster
+
+The same two commands run on 1, 4, or 9 cards. A single old Radeon, a multi-GPU box, or
+a small cluster: `cameo` detects, pulls, and serves; the placement brain picks a node,
+and `cameo fleet` fronts several `cameod` nodes as one surface.
+
+## Building from source
+
+```bash
+cargo build --workspace
+cargo test  --workspace
+```
+
+Pure-logic crates build and test on any OS. Linux-only paths (the Unix-socket daemon,
+`/sys` collectors, backend execution) are `#[cfg(target_os = "linux")]`-gated.
 
 ```
 core/                 Rust — all real logic
@@ -35,39 +155,20 @@ core/                 Rust — all real logic
   placement/          the brain: (topology × model × task) → plan → command
   models/             model cache + acquisition (cameo pull), shared by CLI + daemon
   containers/         AMD GPU passthrough recipe for Podman/Docker
-  api/                versioned JSON-RPC message types (the contract; transport is Phase 2)
+  api/                versioned JSON-RPC message types (the control-plane contract)
   backend-vulkan/     llama.cpp Vulkan executor (universal baseline)
   backend-rocm/       llama.cpp ROCm + PyTorch training executor (Tier 1/2)
   quant-tools/        GGUF quantization (wraps llama-quantize)
-  moe-harness/        MoE expert offloading                   (stub — Phase 3)
-  net-strategy/       multi-node networking strategy          (stub — v2)
-cli/                  `cameo` command-line tool (thin client over core)
+  moe-harness/        MoE expert offloading                   (Phase 3)
+  net-strategy/       multi-node networking strategy          (v2)
+cli/                  `cameo` command-line tool
 cameod/               `cameod` control-plane daemon: browser console + JSON API
 archiso/              Arch ISO build profile (ships cameo + cameod)
-containers/           container tooling notes (passthrough logic is core/containers)
+containers/           Containerfile + entrypoint (the recommended delivery)
 k8s/                  device plugin / Helm charts             (v2)
 scripts/phase1/       automated Phase 1 hardware validation
 docs/                 architecture, tiers, API, definition-of-done
-tests/                cross-crate integration tests
 ```
-
-## GPU compatibility tiers
-
-| Tier | Meaning | Capability |
-|---|---|---|
-| **1** | ROCm officially supported | Full training + inference (Vulkan as fallback) |
-| **2** | ROCm workable via `HSA_OVERRIDE_GFX_VERSION` | Inference; training community-tested |
-| **3** | No usable ROCm path | Vulkan-only inference; no training |
-
-## Building
-
-```bash
-cargo build --workspace
-cargo test  --workspace
-```
-
-Pure-logic crates build and test on any OS. Linux-only paths (Unix-socket daemon,
-`/sys` collectors, backend execution) are `#[cfg(target_os = "linux")]`-gated.
 
 ## Documentation
 
@@ -78,6 +179,20 @@ Pure-logic crates build and test on any OS. Linux-only paths (Unix-socket daemon
 - [Secure Boot](docs/secure-boot.md) — the shim chain, and the fallback that works now.
 - [Architecture](docs/architecture.md) · [Tiers](docs/tiers.md) · [Road to v1](docs/remediation-plan.md)
 
+## Status
+
+The hardware-independent core is complete: GPU detection and tier classification,
+override precedence, the placement engine, the model cache, the CLI, the `cameod`
+console and its versioned API, the container, and the ISO profile. Vulkan and ROCm
+execution is validated on a cloud AMD instance through the automated
+[Phase 1 runbook](scripts/phase1/RUNBOOK.md). MoE expert offloading (Phase 3) and
+multi-node networking / Kubernetes (v2) are in progress. See
+[`CAMEO_PROJECT_PLAN.md`](CAMEO_PROJECT_PLAN.md) for the full plan.
+
 ## License
 
 Apache-2.0. See [`LICENSE`](LICENSE).
+
+AMD, Radeon, and ROCm are trademarks of Advanced Micro Devices, Inc. Vulkan is a
+trademark of the Khronos Group. Cameo is an independent project, not affiliated with or
+endorsed by AMD or any trademark owner.
