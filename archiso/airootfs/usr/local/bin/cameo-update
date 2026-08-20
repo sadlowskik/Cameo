@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# cameo-update — update an installed Cameo, pinned to its release's Arch archive
+# snapshot so the transaction matches a known-good release rather than "whatever is
+# newest today" (F5; see docs/updating.md). Deliberately thin and auditable.
+#
+# Container and ISO deliveries update differently (pull-and-restart / re-flash) —
+# this wrapper is only for a bare-metal install.
+#
+#   sudo cameo-update            # pin to the recorded snapshot, then pacman -Syu
+#   CAMEO_ARCH_SNAPSHOT=2026/08/01 sudo -E cameo-update   # override the snapshot
+set -euo pipefail
+
+if [ "$(id -u)" -ne 0 ]; then
+  echo "cameo-update: run as root (sudo cameo-update)." >&2
+  exit 1
+fi
+
+# The release's pinned snapshot: an explicit env wins, else the file the build
+# recorded, else empty = track rolling Arch (with a warning).
+snapshot="${CAMEO_ARCH_SNAPSHOT:-}"
+if [ -z "$snapshot" ] && [ -r /etc/cameo/snapshot ]; then
+  snapshot="$(tr -d '[:space:]' < /etc/cameo/snapshot)"
+fi
+
+mirrorlist=/etc/pacman.d/mirrorlist
+if [ -n "$snapshot" ]; then
+  case "$snapshot" in
+  [0-9][0-9][0-9][0-9]/[0-9][0-9]/[0-9][0-9]) : ;;
+  *)
+    echo "cameo-update: ignoring malformed snapshot '$snapshot' (want YYYY/MM/DD)." >&2
+    snapshot=""
+    ;;
+  esac
+fi
+
+if [ -n "$snapshot" ]; then
+  echo "cameo-update: pinning packages to Arch archive snapshot $snapshot"
+  # Back up the mirrorlist once so a plain reinstall can restore rolling mirrors.
+  [ -f "$mirrorlist.cameo-bak" ] || cp -a "$mirrorlist" "$mirrorlist.cameo-bak"
+  printf 'Server=https://archive.archlinux.org/repos/%s/$repo/os/$arch\n' "$snapshot" \
+    >"$mirrorlist"
+else
+  echo "cameo-update: WARNING no pinned snapshot (set CAMEO_ARCH_SNAPSHOT or write" \
+       "/etc/cameo/snapshot); tracking rolling Arch." >&2
+fi
+
+echo "cameo-update: tip — take a btrfs/ZFS snapshot first if your root supports it,"
+echo "              then a bad update is one rollback away."
+echo "cameo-update: running pacman -Syu ..."
+pacman -Syu
+
+echo "cameo-update: done. Restart the daemon to run the new build:"
+echo "              systemctl restart cameod"

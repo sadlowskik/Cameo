@@ -110,6 +110,15 @@ if [ -d "$RELENG/airootfs" ]; then
   rm -rf "$BUILD/airootfs"
   mv "$MERGED" "$BUILD/airootfs"
   log "Merged airootfs: releng base, Cameo overlay"
+
+  # Record the pinned snapshot into the image (F5): cameo-update on an installed
+  # system reads /etc/cameo/snapshot to pin the same release, and cameo-install
+  # copies /etc/cameo to the target. Rolling builds leave no file (rolling update).
+  if [ -n "${CAMEO_ARCH_SNAPSHOT:-}" ]; then
+    install -d "$BUILD/airootfs/etc/cameo"
+    printf '%s\n' "$CAMEO_ARCH_SNAPSHOT" >"$BUILD/airootfs/etc/cameo/snapshot"
+    log "Recorded snapshot ${CAMEO_ARCH_SNAPSHOT} to /etc/cameo/snapshot"
+  fi
 fi
 
 # 1a½. Guarantee the console login path instead of inheriting it.

@@ -59,4 +59,5 @@ file_permissions=(
   ["/usr/local/bin/cameod"]="0:0:755"
   ["/usr/local/bin/cameo-install"]="0:0:755"
   ["/usr/local/bin/cameo-install-guided"]="0:0:755"
+  ["/usr/local/bin/cameo-update"]="0:0:755"
 )

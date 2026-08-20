@@ -52,6 +52,8 @@ on the medium, so re-flashing does not lose models or config.
 - A serving box is never updated mid-flight by Cameo: you pull/restart (container),
   run the pinned transaction (installed), or re-flash (ISO) deliberately.
 
-> Status: the `/api/version` endpoint ships now. The `cameo-update` wrapper and the
-> published image tags land with F4's snapshot pin and the container registry
-> publish; this document is the contract they implement.
+> Status: the `/api/version` endpoint and the `cameo-update` wrapper both ship now
+> (the wrapper reads the snapshot the build recorded at `/etc/cameo/snapshot`, or
+> `CAMEO_ARCH_SNAPSHOT`, and falls back to a rolling update with a warning). What
+> remains is delivery-layer, not code: publishing the pinned `ghcr.io` image tags
+> the container path pulls.
