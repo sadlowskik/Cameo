@@ -442,3 +442,23 @@ jobs:
             archiso/out/SHA256SUMS
           if-no-files-found: warn
           retention-days: 14
+
+      # On a version tag, publish the ISO + checksums as a public GitHub Release
+      # so there is a permanent, unauthenticated download the website can link to.
+      # Marked --prerelease while the project is pre-v1; `gh` ships on the runner
+      # and `permissions: contents: write` above is what lets it create the release.
+      - name: Publish ISO to a GitHub Release
+        if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/') }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if ! ls archiso/out/*.iso >/dev/null 2>&1; then
+            echo "no ISO produced — skipping release"; exit 0
+          fi
+          gh release create "${GITHUB_REF_NAME}" \
+            archiso/out/*.iso archiso/out/SHA256SUMS \
+            --title "Cameo ${GITHUB_REF_NAME}" \
+            --prerelease \
+            --notes "Cameo ${GITHUB_REF_NAME} (${{ github.event.inputs.edition || 'lite' }} edition). Beta, pre-v1 — validate on real hardware per scripts/phase1. Verify the download against SHA256SUMS before flashing." \
+            || gh release upload "${GITHUB_REF_NAME}" \
+                 archiso/out/*.iso archiso/out/SHA256SUMS --clobber

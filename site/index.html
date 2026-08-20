@@ -198,6 +198,9 @@ h2{font-family:var(--disp);font-weight:700;letter-spacing:-.03em;font-size:clamp
 .install pre{margin:0;padding:14px 14px 12px;background:var(--inset);border:1px solid var(--line);border-radius:8px;
   font-family:var(--mono);font-size:12.5px;line-height:1.7;overflow-x:auto;color:var(--ink)}
 .install .copy{margin-top:10px}
+.install .mini{margin:14px 0 6px;color:var(--faint);font-family:var(--mono);font-size:12px;letter-spacing:.02em}
+.tag-rec{font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--ember-ink);background:var(--ember);border-radius:20px;padding:2px 8px;vertical-align:middle;margin-left:8px}
 
 footer{border-top:1px solid var(--line);padding:44px 0 54px}
 .foot{display:flex;justify-content:space-between;gap:30px;flex-wrap:wrap;align-items:center}
@@ -270,7 +273,7 @@ footer{border-top:1px solid var(--line);padding:44px 0 54px}
   <a class="l" href="#how">how</a>
   <a class="l" href="#tiers">tiers</a>
   <a class="l" href="#install">install</a>
-  <a class="l gh" href="https://github.com/sadlowskik/Cameo" rel="noopener">
+  <a class="l gh" href="https://github.com/sadlowskik/cameo" rel="noopener">
     <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg>github</a>
 </div></header>
 
@@ -287,7 +290,7 @@ footer{border-top:1px solid var(--line);padding:44px 0 54px}
           <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
           install
         </a>
-        <a class="btn" href="https://github.com/sadlowskik/Cameo" rel="noopener">github</a>
+        <a class="btn" href="https://github.com/sadlowskik/cameo" rel="noopener">github</a>
         <button class="chip" type="button" data-copy="cameo gpu-status" aria-label="Copy cameo gpu-status">
           <span class="cp">$</span>cameo gpu-status
           <svg class="ico cp" data-copy-icon viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
@@ -423,11 +426,11 @@ footer{border-top:1px solid var(--line);padding:44px 0 54px}
 
   <section id="install"><div class="wrap">
     <p class="eyebrow rise"><span class="ix">05</span>install</p>
-    <h2 class="rise">Container first. ISO if you want the box.</h2>
-    <p class="lede rise">Pre-v1. The container is the recommended path — it runs on the host’s GPU driver. The ISO is an Arch appliance that <em>is</em> the console.</p>
+    <h2 class="rise">Two ways in.</h2>
+    <p class="lede rise">The container runs on the host’s GPU driver and works anywhere — the recommended path. The ISO is a bootable Arch appliance that <em>is</em> the console: flash it, boot the box, done.</p>
     <div class="installs">
       <article class="install rise">
-        <h3>Container</h3>
+        <h3>Container <span class="tag-rec">recommended</span></h3>
         <p>Build the Vulkan image, pass the GPU through, open the console on :9090.</p>
 <pre id="cmd-podman">podman build -f containers/Containerfile -t cameo:vulkan .
 podman run --rm -p 9090:9090 \
@@ -442,18 +445,26 @@ podman run --rm -p 9090:9090 \
       </article>
       <article class="install rise">
         <h3>ISO appliance</h3>
-        <p>Build on Arch, write the image, boot it. First boot prints the tier, the console URL, and a key.</p>
-<pre id="cmd-iso">git clone https://github.com/sadlowskik/Cameo
-sudo ./scripts/build-iso.sh
-sudo dd if=archiso/out/cameo-*.iso of=/dev/sdX \
+        <p>Flash the image, boot the box. "Install to disk" is the default entry; first boot prints your card's tier, the console URL, and a key.</p>
+        <div class="actions" style="margin:0 0 12px">
+          <a class="btn-primary" href="https://github.com/sadlowskik/cameo/releases" rel="noopener">
+            <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+            download ISO (beta)
+          </a>
+        </div>
+        <p class="mini">Flash it, then boot:</p>
+<pre id="cmd-iso">sudo dd if=cameo-*.iso of=/dev/sdX \
   bs=4M status=progress oflag=sync</pre>
-        <button class="chip copy" type="button" data-copy-from="cmd-iso" aria-label="Copy ISO commands">
+        <p class="mini">Or build it yourself on an Arch host:</p>
+<pre id="cmd-build">git clone https://github.com/sadlowskik/cameo
+sudo ./scripts/build-iso.sh   # CAMEO_EDITION=lite for old cards</pre>
+        <button class="chip copy" type="button" data-copy-from="cmd-build" aria-label="Copy ISO build commands">
           <svg class="ico cp" data-copy-icon viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
           copy
         </button>
       </article>
     </div>
-    <p class="note rise">Source, issues, and docs: <a href="https://github.com/sadlowskik/Cameo" rel="noopener" style="color:var(--amber)">github.com/sadlowskik/Cameo</a>. The disk installer can erase a drive — read it before committing.</p>
+    <p class="note rise">Beta, pre-v1 — verify the download against <code style="color:var(--amber)">SHA256SUMS</code> before flashing, and note the disk installer erases the drive you pick. Source, issues, and docs: <a href="https://github.com/sadlowskik/cameo" rel="noopener" style="color:var(--amber)">github.com/sadlowskik/cameo</a>.</p>
   </div></section>
 </main>
 
@@ -465,7 +476,7 @@ sudo dd if=archiso/out/cameo-*.iso of=/dev/sdX \
       <a href="legal.html#terms">terms</a>
       <a href="legal.html#privacy">privacy</a>
       <a href="legal.html">legal</a>
-      <a class="gh" href="https://github.com/sadlowskik/Cameo" rel="noopener">github</a>
+      <a class="gh" href="https://github.com/sadlowskik/cameo" rel="noopener">github</a>
     </div>
   </div>
   <p class="foot-legal">AMD, Radeon and ROCm are trademarks of Advanced Micro Devices, Inc. Vulkan is a trademark of the Khronos Group. Cameo is an independent project — not affiliated with or endorsed by AMD or any trademark owner. Software under Apache-2.0. See <a href="legal.html">legal &amp; licensing</a>.</p>
