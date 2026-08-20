@@ -29,7 +29,9 @@ sudo dd if=cameo-*.iso of=/dev/sdX bs=4M status=progress oflag=sync
 Boot the AMD machine from the USB. **Install Cameo to disk** is the default
 menu entry. The installer is offline: it copies the live image, it downloads
 nothing. It shows the detected GPU and tier, then asks for a disk, an admin
-username, and a password. Type the disk name to confirm. Reboot, remove the USB.
+username, and a password. Type the disk name to confirm. Reboot *first* — leave
+the USB in until the screen goes dark, then unplug it. Pulling it while the
+installer is still on screen kills the live OS.
 
 The same flow from a live shell:
 

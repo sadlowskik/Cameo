@@ -384,7 +384,17 @@ if [ "$FIRMWARE" = "uefi" ]; then
 else
   arch-chroot /mnt grub-install --target=i386-pc "$TARGET"
 fi
-arch-chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg
+# The live USB is still plugged in. os-prober would add it as a boot entry and
+# grub-mkconfig can emit an archiso/squashfs menu that keeps depending on the
+# stick — then "remove USB and reboot" explodes into SQUASHFS read errors.
+arch-chroot /mnt env GRUB_DISABLE_OS_PROBER=true grub-mkconfig -o /boot/grub/grub.cfg
+grub_cfg=""
+for g in /mnt/boot/grub/grub.cfg /mnt/grub/grub.cfg; do
+  [ -f "$g" ] && grub_cfg="$g" && break
+done
+if [ -n "$grub_cfg" ] && grep -qiE 'archiso|airootfs\.sfs|archisobasedir' "$grub_cfg"; then
+  die "grub.cfg still points at the live ISO ($grub_cfg). Not safe to unplug the USB."
+fi
 
 # ---- finish -----------------------------------------------------------------
 sync
@@ -392,7 +402,9 @@ umount -R /mnt 2>/dev/null || true
 
 echo
 say "Cameo is installed on ${TARGET}."
-info "Remove the USB and reboot."
+info "Leave the USB plugged in. Reboot first."
+info "When the screen goes dark or you see the firmware logo, THEN unplug the USB."
+info "Pulling it now kills the live OS (SQUASHFS unable to read page/block …)."
 info "Log in as ${C_BOLD}${USERNAME_VAL}${C_OFF} (or root) with the password you set."
 info "Web console:  http://<this-box-ip>:9090"
 info "Console key:  ${key}"

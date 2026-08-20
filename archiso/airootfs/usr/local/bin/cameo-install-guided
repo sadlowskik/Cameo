@@ -61,8 +61,14 @@ esac
 # through to a shell.
 if cameo-install --commit; then
   echo
-  printf '%sCameo is installed.%s Remove the USB, then type %sreboot%s.\n' \
+  printf '%sCameo is installed.%s Leave the USB in. Type %sreboot%s now.\n' \
     "$C_ACCENT" "$C_OFF" "$C_BOLD" "$C_OFF"
+  echo "Unplug the USB only after the screen goes dark (or at the firmware logo)."
+  echo "Pulling it while this live session is still running is what prints"
+  echo "'SQUASHFS unable to read page, block …'."
+  printf '  %sPress Enter to reboot%s (USB stays in): ' "$C_BOLD" "$C_OFF"
+  read -r _ || true
+  reboot || systemctl reboot || echo "type: reboot"
 else
   echo
   echo "The installer did not complete (it may have changed nothing)."
