@@ -4,12 +4,13 @@ on:
   workflow_dispatch:
     inputs:
       edition:
-        description: "Cameo edition to build"
+        description: "Which image(s) to build"
         type: choice
         options:
+          - both
           - lite
           - full
-        default: lite
+        default: both
   # Tags always publish a GitHub Release. Do not AND this with `paths`: a tag
   # of an existing commit has no path diff, and GitHub would skip the build.
   push:
@@ -21,11 +22,34 @@ on:
 # require authentication to read, but per-step conclusions are public API, so
 # granular step names make a failure diagnosable from outside.
 jobs:
+  # Tags and "both" build lite + universal in parallel. A single-edition
+  # dispatch is for a cheaper re-run when only one image failed.
+  editions:
+    runs-on: ubuntu-latest
+    outputs:
+      list: ${{ steps.pick.outputs.list }}
+    steps:
+      - id: pick
+        run: |
+          e="${{ github.event.inputs.edition || 'both' }}"
+          case "$e" in
+            lite) echo 'list=["lite"]' >> "$GITHUB_OUTPUT" ;;
+            full) echo 'list=["full"]' >> "$GITHUB_OUTPUT" ;;
+            *)    echo 'list=["lite","full"]' >> "$GITHUB_OUTPUT" ;;
+          esac
+
   build:
+    needs: editions
+    strategy:
+      fail-fast: false
+      matrix:
+        edition: ${{ fromJSON(needs.editions.outputs.list) }}
     runs-on: ubuntu-latest
     timeout-minutes: 180
     permissions:
       contents: write
+    env:
+      EDITION: ${{ matrix.edition }}
     steps:
       - uses: actions/checkout@v4
 
@@ -108,8 +132,6 @@ jobs:
       # tee on the host, not in the container: this also captures docker exec's
       # own failures, which a container-side redirect would miss entirely.
       - name: Build ISO
-        env:
-          EDITION: ${{ github.event.inputs.edition || 'lite' }}
         run: |
           set -o pipefail
           # Arch mirrors have failed transiently on three runs -- once as a
@@ -427,20 +449,24 @@ jobs:
         if: always()
         run: |
           rm -rf /tmp/logpub && mkdir -p /tmp/logpub
-          cp build.log /tmp/logpub/build.log 2>/dev/null || echo "no build.log produced" > /tmp/logpub/build.log
+          log="build-${{ matrix.edition }}-${{ github.run_id }}.log"
+          cp build.log "/tmp/logpub/$log" 2>/dev/null || echo "no build.log produced" > "/tmp/logpub/$log"
           cd /tmp/logpub
           git init -q -b ci-logs
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add build.log
-          git commit -qm "build log for run ${{ github.run_number }}"
+          git add "$log"
+          git commit -qm "build log ${{ matrix.edition }} for run ${{ github.run_number }}"
+          # Two matrix jobs both push; last writer wins the branch tip but the
+          # artifact log below is the durable copy. Unique filenames keep the
+          # other edition's log from being overwritten inside the commit.
           git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}" ci-logs
 
       - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: build-log
+          name: build-log-${{ matrix.edition }}
           path: build.log
           if-no-files-found: warn
 
@@ -456,35 +482,50 @@ jobs:
           fi
           sudo chown -R "$(id -u):$(id -g)" archiso/out
           cd archiso/out
-          sha256sum ./*.iso > SHA256SUMS
+          # Per-edition checksums so lite and universal artifacts do not clobber
+          # each other when the publish job merges them.
+          sha256sum ./*.iso > "SHA256SUMS.${EDITION}"
           ls -lh
 
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
         with:
-          name: cameo-iso-${{ github.event.inputs.edition || 'lite' }}
+          name: cameo-iso-${{ matrix.edition }}
           path: |
             archiso/out/*.iso
-            archiso/out/SHA256SUMS
+            archiso/out/SHA256SUMS.*
           if-no-files-found: warn
           retention-days: 14
 
-      # On a version tag, publish the ISO + checksums as a public GitHub Release
-      # so there is a permanent, unauthenticated download the website can link to.
-      # Marked --prerelease while the project is pre-v1; `gh` ships on the runner
-      # and `permissions: contents: write` above is what lets it create the release.
+  # One release, two images. Waits for both matrix legs so a tag never ships
+  # lite-only by racing gh release create from each job.
+  publish:
+    needs: build
+    if: ${{ always() && !cancelled() && startsWith(github.ref, 'refs/tags/') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: cameo-iso-*
+          merge-multiple: true
+          path: dist
       - name: Publish ISO to a GitHub Release
-        if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/') }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if ! ls archiso/out/*.iso >/dev/null 2>&1; then
+          shopt -s nullglob
+          isos=(dist/*.iso)
+          if [ ${#isos[@]} -eq 0 ]; then
             echo "no ISO produced — skipping release"; exit 0
           fi
+          cat dist/SHA256SUMS.* > dist/SHA256SUMS
+          ls -lh dist
           gh release create "${GITHUB_REF_NAME}" \
-            archiso/out/*.iso archiso/out/SHA256SUMS \
+            dist/*.iso dist/SHA256SUMS \
             --title "Cameo ${GITHUB_REF_NAME}" \
             --prerelease \
-            --notes "Cameo ${GITHUB_REF_NAME} (${{ github.event.inputs.edition || 'lite' }} edition). Beta, pre-v1 — validate on real hardware per scripts/phase1. Verify the download against SHA256SUMS before flashing." \
+            --notes "Two images, same OS, same starter qwen2.5-0.5b. Universal (cameo-YYYY.MM.DD.*.iso): throw on any AMD box — Vulkan always, ROCm when the card can train. Lite (cameo-lite-*.iso): Vulkan only, for a known low-end / Tier-3 box. Verify SHA256SUMS before flashing." \
             || gh release upload "${GITHUB_REF_NAME}" \
-                 archiso/out/*.iso archiso/out/SHA256SUMS --clobber
+                 dist/*.iso dist/SHA256SUMS --clobber

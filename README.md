@@ -51,7 +51,8 @@ After that the machine does not need the internet. Full walkthrough:
 ### ISO appliance
 
 Releases: [github.com/sadlowskik/Cameo/releases](https://github.com/sadlowskik/Cameo/releases)
-(universal for any card; lite if you know it's Vulkan-only). Flash with Rufus,
+— **universal** (`cameo-*.iso`) to throw on any AMD box and let it detect;
+**lite** (`cameo-lite-*.iso`) for a known low-end / Vulkan-only card. Flash with Rufus,
 Etcher, or `dd`. Boot **Install Cameo to disk** — it copies the image offline,
 creates your admin account, writes a console key. Reboot, pull the USB, open
 `http://<the-box>:9090` from anything on the LAN. A starter model
