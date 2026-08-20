@@ -1,0 +1,61 @@
+name: Publish container images
+
+# Publishes the Cameo container images to GHCR on a version tag, so the container
+# update path in docs/updating.md (podman pull ghcr.io/<owner>/cameo:<ver>) is real.
+# Manual runs can pin an Arch archive snapshot for a reproducible release image (F4).
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      snapshot:
+        description: "Arch archive snapshot YYYY/MM/DD to pin (blank = rolling)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  # The universal Vulkan image is the hero artifact: it must publish.
+  vulkan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login "$REGISTRY" -u "${{ github.actor }}" --password-stdin
+      - name: Build and push (vulkan)
+        run: |
+          owner=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          repo="$REGISTRY/$owner/cameo"
+          ver="${GITHUB_REF_NAME#v}"
+          snap='${{ github.event.inputs.snapshot }}'
+          docker build -f containers/Containerfile --build-arg SNAPSHOT="$snap" \
+            -t "$repo:vulkan" -t "$repo:$ver" -t "$repo:latest" .
+          docker push "$repo:vulkan"
+          docker push "$repo:$ver"
+          docker push "$repo:latest"
+
+  # The ROCm accelerator image is larger and not yet CI-smoked, so a broken rocm
+  # build must not block a release: publish it best-effort.
+  rocm:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login "$REGISTRY" -u "${{ github.actor }}" --password-stdin
+      - name: Build and push (rocm)
+        run: |
+          owner=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          repo="$REGISTRY/$owner/cameo"
+          ver="${GITHUB_REF_NAME#v}"
+          snap='${{ github.event.inputs.snapshot }}'
+          docker build -f containers/Containerfile --build-arg EDITION=rocm --build-arg SNAPSHOT="$snap" \
+            -t "$repo:rocm" -t "$repo:$ver-rocm" .
+          docker push "$repo:rocm"
+          docker push "$repo:$ver-rocm"

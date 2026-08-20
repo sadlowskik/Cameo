@@ -54,6 +54,7 @@ on the medium, so re-flashing does not lose models or config.
 
 > Status: the `/api/version` endpoint and the `cameo-update` wrapper both ship now
 > (the wrapper reads the snapshot the build recorded at `/etc/cameo/snapshot`, or
-> `CAMEO_ARCH_SNAPSHOT`, and falls back to a rolling update with a warning). What
-> remains is delivery-layer, not code: publishing the pinned `ghcr.io` image tags
-> the container path pulls.
+> `CAMEO_ARCH_SNAPSHOT`, and falls back to a rolling update with a warning). The
+> `.github/workflows/publish.yml` workflow pushes `ghcr.io/<owner>/cameo:<ver>` on a
+> version tag (vulkan hero image required, rocm best-effort). What remains is
+> operational: cutting an actual tagged release so the images exist to pull.
