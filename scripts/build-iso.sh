@@ -493,7 +493,7 @@ if [ "$EDITION" = "lite" ]; then
   # ggml-hip matches neither ^rocm nor ^python-pytorch, so it needs its own
   # alternative or the "Vulkan-only" edition pulls the whole ROCm stack in as
   # a dependency of the compute backend.
-  grep -viE '^(rocm|python-pytorch|ggml-hip)' "$PROFILE/packages.x86_64" > "$BUILD/packages.x86_64"
+  grep -viE '^(rocm|hip-|python-pytorch|ggml-hip)' "$PROFILE/packages.x86_64" > "$BUILD/packages.x86_64"
   log "Lite edition: ROCm/PyTorch excluded — Vulkan baseline only."
 fi
 

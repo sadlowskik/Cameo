@@ -29,9 +29,11 @@ vulkan-tools
 # VA-API comes from `mesa` itself — the standalone libva-mesa-driver package no
 # longer exists upstream, it is only a virtual provide now.
 
-# ROCm stack (Tier 1/2). Heavy; Phase 5 may move this to a post-install step
-# so Tier 3 images stay small.
-rocm-hip-sdk
+# ROCm *runtime* for Tier 1/2 serve. Not the HIP SDK and not PyTorch — those
+# turn the universal ISO into a 10+ GiB file GitHub Releases will not host
+# (2 GiB cap). ggml-hip pulls the HIP runtime it needs; rocminfo/rocm-smi
+# are what Cameo uses to detect and enable ROCm. Training stays a later
+# install (container / cameo train), not something the USB has to carry.
 rocminfo
 rocm-smi-lib
 
@@ -58,14 +60,11 @@ wireless-regdb
 # without this package there is nothing for it to embed, on an AMD-first distro.
 amd-ucode
 
-# Build + runtime deps for llama.cpp / PyTorch
+# Enough to git-clone and curl a GGUF. The compiler toolchain stays off the
+# ISO so the image is an appliance, not a 10 GiB dev kit.
 git
-cmake
-ninja
-base-devel
 curl
 python
-python-pytorch-rocm
 
 # Minimum usable live system. openssh is present but its daemon is NOT
 # enabled -- the client matters for a serving box, the listener is a

@@ -515,17 +515,45 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
           shopt -s nullglob
+          ls -lh dist
           isos=(dist/*.iso)
           if [ ${#isos[@]} -eq 0 ]; then
             echo "no ISO produced — skipping release"; exit 0
           fi
-          cat dist/SHA256SUMS.* > dist/SHA256SUMS
-          ls -lh dist
+          # GitHub Releases refuse a single asset ≥ 2 GiB. Upload files that
+          # fit whole; split anything larger so a universal image still ships.
+          MAX=$((1900 * 1024 * 1024))
+          mkdir -p dist/upload
+          : > dist/upload/SHA256SUMS
+          notes=$'Two images, same OS, same starter qwen2.5-0.5b.\n\n'
+          notes+=$'- **Universal** (`cameo-YYYY.MM.DD.*.iso`) — throw on any AMD box. Vulkan always; ROCm when the card can train.\n'
+          notes+=$'- **Lite** (`cameo-lite-*.iso`) — Vulkan only, for a known low-end / Tier-3 box.\n'
+          notes+=$'\nInstaller copies the live image. No internet, no pacstrap.\n'
+          notes+=$'Verify SHA256SUMS before flashing.\n'
+          for iso in "${isos[@]}"; do
+            name=$(basename "$iso")
+            sha256sum "$iso" | awk -v n="$name" '{print $1"  "n}' >> dist/upload/SHA256SUMS
+            sz=$(stat -c%s "$iso")
+            if [ "$sz" -le "$MAX" ]; then
+              cp -a "$iso" "dist/upload/$name"
+              echo "whole: $name ($sz bytes)"
+              continue
+            fi
+            echo "split: $name ($sz bytes) exceeds GitHub's 2 GiB asset cap"
+            split -b 1900M -d -a 2 "$iso" "dist/upload/${name}.part"
+            win=""
+            for p in dist/upload/"${name}".part*; do
+              [ -z "$win" ] || win+=" + "
+              win+=$(basename "$p")
+            done
+            notes+=$'\n`'"$name"$'` is split. Assemble, then flash:\n'
+            notes+=$'```\n# Linux/macOS\ncat '"$name"'.part* > '"$name"$'\n# Windows (cmd)\ncopy /b '"$win"' '"$name"$'\n```\n'
+          done
           gh release create "${GITHUB_REF_NAME}" \
-            dist/*.iso dist/SHA256SUMS \
             --title "Cameo ${GITHUB_REF_NAME}" \
             --prerelease \
-            --notes "Two images, same OS, same starter qwen2.5-0.5b. Universal (cameo-YYYY.MM.DD.*.iso): throw on any AMD box — Vulkan always, ROCm when the card can train. Lite (cameo-lite-*.iso): Vulkan only, for a known low-end / Tier-3 box. Verify SHA256SUMS before flashing." \
-            || gh release upload "${GITHUB_REF_NAME}" \
-                 dist/*.iso dist/SHA256SUMS --clobber
+            --notes "$notes" \
+            || true
+          gh release upload "${GITHUB_REF_NAME}" dist/upload/* --clobber
