@@ -21,7 +21,7 @@
 <link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png">
 <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
 <style>
-@font-face{font-family:"Plus Jakarta Sans";src:url("assets/fonts/plus-jakarta-sans-latin-wght-normal.woff2") format("woff2");font-weight:200 800;font-style:normal;font-display:swap}
+@font-face{font-family:"Space Grotesk";src:url("assets/fonts/space-grotesk-latin-wght-normal.woff2") format("woff2");font-weight:300 700;font-style:normal;font-display:swap}
 @font-face{font-family:"IBM Plex Sans";src:url("assets/fonts/ibm-plex-sans-latin-wght-normal.woff2") format("woff2");font-weight:100 700;font-style:normal;font-display:swap}
 @font-face{font-family:"IBM Plex Mono";src:url("assets/fonts/ibm-plex-mono-latin-400-normal.woff2") format("woff2");font-weight:400;font-style:normal;font-display:swap}
 @font-face{font-family:"IBM Plex Mono";src:url("assets/fonts/ibm-plex-mono-latin-500-normal.woff2") format("woff2");font-weight:500;font-style:normal;font-display:swap}
@@ -32,7 +32,7 @@
   --line:#3F3C36; --line-2:#524E46;
   --ink:#F6F4F2; --body:#D8D2C8; --muted:#B8B1A6; --faint:#A39C91;
   --ember:#FF7A1A; --ember-ink:#1A1008; --amber:#FFD08A; --rust:#B4472F;
-  --disp:"Plus Jakarta Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --disp:"Space Grotesk",system-ui,-apple-system,"Segoe UI",sans-serif;
   --sans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
   --mono:"IBM Plex Mono",ui-monospace,Consolas,monospace;
   --wrap:1120px;
@@ -68,7 +68,7 @@ svg,canvas{display:block;max-width:100%}
 header{position:sticky;top:0;z-index:30;background:rgba(26,24,18,.86);
   backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
 .nav{display:flex;align-items:center;height:60px;gap:22px}
-.brand{display:flex;align-items:center;gap:10px;font-family:var(--disp);font-weight:800;font-size:19px;letter-spacing:-.03em;margin-right:auto}
+.brand{display:flex;align-items:center;gap:10px;font-family:var(--disp);font-weight:700;font-size:19px;letter-spacing:-.03em;margin-right:auto}
 .brand svg{width:26px;height:26px}
 .nav a.l{font-family:var(--mono);font-size:13px;color:var(--muted)}
 .nav a.l:hover{color:var(--ink)}
@@ -77,7 +77,7 @@ header{position:sticky;top:0;z-index:30;background:rgba(26,24,18,.86);
 .hero{padding:64px 0 40px}
 .hero-grid{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,1fr);gap:48px;align-items:center}
 @media(max-width:900px){.hero-grid{grid-template-columns:1fr;gap:32px}}
-h1{font-family:var(--disp);font-weight:800;letter-spacing:-.04em;line-height:.95;
+h1{font-family:var(--disp);font-weight:700;letter-spacing:-.04em;line-height:.95;
   font-size:clamp(44px,7.4vw,84px);margin:16px 0 0;text-wrap:balance}
 h1 .w{display:inline-block}
 .sub{font-size:18px;line-height:1.6;color:var(--body);max-width:42em;margin:20px 0 0}
@@ -109,7 +109,7 @@ body.anim h1 .w{opacity:0;animation:wordin .55s cubic-bezier(.2,.8,.2,1) forward
 .hud .bl{bottom:9%;left:9%}.hud .br{bottom:9%;right:9%;text-align:right;color:var(--ember)}
 .hud .br i{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--ember);margin-right:6px;vertical-align:middle;animation:blink 1.6s ease-in-out infinite}
 .hud .c{top:50%;left:50%;transform:translate(-50%,-50%);text-align:center}
-.hud .c .n{font-family:var(--disp);font-size:clamp(20px,4vw,28px);font-weight:800;color:var(--ember);line-height:1;letter-spacing:-.02em;
+.hud .c .n{font-family:var(--disp);font-size:clamp(20px,4vw,28px);font-weight:700;color:var(--ember);line-height:1;letter-spacing:-.02em;
   text-shadow:0 0 22px rgba(255,122,26,.45)}
 .hud .c .u{display:block;font-size:11px;color:var(--faint);letter-spacing:.14em;margin-top:6px;text-transform:uppercase}
 .chan{display:flex;flex-direction:column;gap:1px;background:var(--line);border:1px solid var(--line);
@@ -161,7 +161,7 @@ h2{font-family:var(--disp);font-weight:700;letter-spacing:-.03em;font-size:clamp
 
 .ladder{display:flex;flex-direction:column;gap:1px;background:var(--line)}
 .trow{display:grid;grid-template-columns:auto 1fr auto;gap:18px;align-items:center;background:var(--panel);padding:18px 22px}
-.trow .tn{font-family:var(--disp);font-weight:800;font-size:32px;line-height:1;width:1ch}
+.trow .tn{font-family:var(--disp);font-weight:700;font-size:32px;line-height:1;width:1ch}
 .trow .tc{font-family:var(--mono);font-size:13px;color:var(--body)}
 .trow .tc em{display:block;font-style:normal;color:var(--muted);font-size:12px;margin-top:4px}
 .trow .cap{font-family:var(--mono);font-size:12px;color:var(--muted);text-align:right}
@@ -267,6 +267,22 @@ footer{border-top:1px solid var(--line);padding:44px 0 54px}
 .trow{transition:background .2s ease}
 .trow:hover{background:var(--raised)}
 .ep .on{box-shadow:0 0 10px rgba(63,185,80,.7);animation:blink 2.4s ease-in-out infinite}
+
+/* boxes get character: HUD corner brackets on the instrument screens, and a
+   warm gradient edge on the cards instead of a flat gray hairline. */
+.term::before,.console-frame::before{content:"";position:absolute;inset:0;pointer-events:none;z-index:4;
+  border:10px solid transparent;border-radius:12px;
+  border-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40' fill='none' stroke='%23FFB05A' stroke-opacity='0.5' stroke-width='1.4'%3E%3Cpath d='M2 13V2h11'/%3E%3Cpath d='M27 2h11v11'/%3E%3Cpath d='M38 27v11H27'/%3E%3Cpath d='M13 38H2V27'/%3E%3C/svg%3E") 13 stretch}
+.step,.install,.gcard{border:1px solid transparent}
+.install{background:
+  linear-gradient(var(--panel),var(--panel)) padding-box,
+  linear-gradient(150deg,rgba(255,176,90,.30),var(--line-2) 46%,var(--line)) border-box}
+.gcard{background:
+  linear-gradient(var(--inset),var(--inset)) padding-box,
+  linear-gradient(150deg,rgba(255,176,90,.22),var(--line) 55%) border-box}
+.step{background:
+  linear-gradient(180deg,rgba(60,56,48,.55),rgba(44,43,39,.5)) padding-box,
+  linear-gradient(150deg,rgba(255,176,90,.32),var(--line-2) 46%,var(--line)) border-box}
 </style>
 </head>
 <body>
@@ -568,12 +584,6 @@ sudo ./scripts/build-iso.sh   # CAMEO_EDITION=lite for old cards</pre>
   size();addEventListener('resize',size);addEventListener('load',size);
   var EMBER='#FF7A1A',LINE='#454339',INK='#3A3833';
   var N=140,buf=new Array(N).fill(.5),phase=0,rot=0,sweep=-1.5708,arcP=0;
-  var tiltX=0,tiltY=0,tgX=0,tgY=0;
-  addEventListener('pointermove',function(e){
-    var r2=cv.getBoundingClientRect(),cx2=r2.left+r2.width/2,cy2=r2.top+r2.height/2;
-    tgY=Math.max(-1,Math.min(1,(e.clientX-cx2)/(innerWidth*.55)));
-    tgX=Math.max(-1,Math.min(1,(e.clientY-cy2)/(innerHeight*.55)));
-  },{passive:true});
   function draw(){
     var c=S/2,R=S*0.46,ri=S*0.30,i,g,y,j;
     ctx.clearRect(0,0,S,S);
@@ -606,9 +616,8 @@ sudo ./scripts/build-iso.sh   # CAMEO_EDITION=lite for old cards</pre>
     phase+=0.05;buf.shift();buf.push(.5+0.30*Math.sin(phase)+0.12*Math.sin(phase*2.7)+0.06*(Math.random()-.5));
     rot+=0.0016;sweep+=0.02;if(sweep>4.712)sweep-=6.2832;
     if(arcP<0.71)arcP=Math.min(0.71,arcP+0.008);
-    tiltX+=(tgX-tiltX)*0.055;tiltY+=(tgY-tiltY)*0.055;
     var flX=Math.sin(ts*0.00047)*1.3,flY=Math.cos(ts*0.00039)*1.6;
-    cv.style.transform='rotateX('+(-tiltX*7+flX).toFixed(3)+'deg) rotateY('+(tiltY*9+flY).toFixed(3)+'deg)';
+    cv.style.transform='rotateX('+flX.toFixed(3)+'deg) rotateY('+flY.toFixed(3)+'deg)';
     draw();requestAnimationFrame(loop);
   }
   requestAnimationFrame(loop);
@@ -625,7 +634,7 @@ sudo ./scripts/build-iso.sh   # CAMEO_EDITION=lite for old cards</pre>
   function initGL(){
     var vs='attribute vec2 p;void main(){gl_Position=vec4(p,0.,1.);}';
     var fs=[
-      'precision highp float;uniform vec2 r;uniform float t;uniform vec2 m;',
+      'precision highp float;uniform vec2 r;uniform float t;',
       'float hash(vec2 p){p=fract(p*vec2(123.34,456.21));p+=dot(p,p+45.32);return fract(p.x*p.y);}',
       'float noise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);',
       'float a=hash(i),b=hash(i+vec2(1,0)),c=hash(i+vec2(0,1)),d=hash(i+vec2(1,1));',
@@ -641,15 +650,12 @@ sudo ./scripts/build-iso.sh   # CAMEO_EDITION=lite for old cards</pre>
       'n=smoothstep(0.30,1.05,n);',
       'float band=smoothstep(0.95,0.0,abs(p.x*0.5-p.y*0.62+0.12));',
       'n*=mix(0.45,1.0,band);',
-      'float pool=smoothstep(0.60,0.04,length(p-m));',
-      'n=min(n*(1.0+pool*0.5)+pool*0.06,1.15);',
       'vec3 base=vec3(0.075,0.066,0.045);',
       'vec3 rust=vec3(0.50,0.18,0.11);',
       'vec3 amber=vec3(1.0,0.56,0.20);',
       'vec3 col=base;',
       'col=mix(col,rust,n*0.50);',
       'col=mix(col,amber,pow(n,2.3)*0.36);',
-      'col+=amber*pool*(0.045+0.045*n);',
       'vec2 g=gl_FragCoord.xy/40.0;vec2 gi=floor(g);float h=hash(gi);',
       'float star=0.0;',
       'if(h>0.87){vec2 gf=fract(g)-0.5;float d=length(gf);',
@@ -669,18 +675,13 @@ sudo ./scripts/build-iso.sh   # CAMEO_EDITION=lite for old cards</pre>
     var b=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,b);
     gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,-1,1,1,-1,1,1]),gl.STATIC_DRAW);
     var loc=gl.getAttribLocation(prog,'p');gl.enableVertexAttribArray(loc);gl.vertexAttribPointer(loc,2,gl.FLOAT,false,0,0);
-    var uR=gl.getUniformLocation(prog,'r'),uT=gl.getUniformLocation(prog,'t'),uM=gl.getUniformLocation(prog,'m');
-    var mX=0.32,mY=0.16,mtX=0.32,mtY=0.16;
-    addEventListener('pointermove',function(e){
-      mtX=(e.clientX-innerWidth/2)/innerHeight;mtY=(innerHeight/2-e.clientY)/innerHeight;
-    },{passive:true});
+    var uR=gl.getUniformLocation(prog,'r'),uT=gl.getUniformLocation(prog,'t');
     var D=Math.min(devicePixelRatio||1,1.5);
     function size(){cv.width=Math.max(1,innerWidth)*D;cv.height=Math.max(1,innerHeight)*D;gl.viewport(0,0,cv.width,cv.height);}
     size();addEventListener('resize',size);
     var start=performance.now();
     function frame(){var tt=(performance.now()-start)/1000;
-      mX+=(mtX-mX)*0.045;mY+=(mtY-mY)*0.045;
-      gl.uniform2f(uR,cv.width,cv.height);gl.uniform1f(uT,tt);gl.uniform2f(uM,mX,mY);
+      gl.uniform2f(uR,cv.width,cv.height);gl.uniform1f(uT,tt);
       gl.drawArrays(gl.TRIANGLES,0,6);requestAnimationFrame(frame);}
     requestAnimationFrame(frame);
     return true;
