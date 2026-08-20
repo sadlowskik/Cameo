@@ -29,6 +29,16 @@ echo "from the disk and never need the USB again. A whole disk is erased — but
 echo "nothing is touched until you pick a disk, review the plan, and type the"
 echo "disk's name to confirm."
 echo
+
+# Show what Cameo detected on this box up front, so the installer is visibly
+# hardware-aware (this is the same tier read-out cameo-install uses to decide
+# whether to pull the ROCm stack — surfaced here before you commit to anything).
+if command -v cameo >/dev/null 2>&1; then
+  printf '%sDetected on this machine%s\n' "$C_ACCENT" "$C_OFF"
+  cameo gpu-status 2>/dev/null || cameo detect 2>/dev/null \
+    || echo "  (could not read GPU status — the installer will detect again)"
+  echo
+fi
 printf '  %sPress Enter to begin%s, or type %sshell%s for a command prompt: ' \
   "$C_BOLD" "$C_OFF" "$C_BOLD" "$C_OFF"
 read -r answer || answer="shell"

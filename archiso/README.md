@@ -34,12 +34,16 @@ sudo dd if=archiso/out/cameo-*.iso of=/dev/sdX bs=4M status=progress oflag=sync
 - **First boot** — `cameo-firstboot.service` runs `cameo gpu-status`, so the very
   first thing you see is your GPU's support tier, in colour — followed by the
   web-console URL. It also reports whether the model cache is on RAM or a disk.
-- **Install to disk** — the boot menu carries an **"Install Cameo to disk"** entry
-  (every bootloader: systemd-boot, syslinux, GRUB). It boots the same kernel with
-  `cameo.install` on the command line; `cameo-installer.service` sees that marker
-  and launches the guided installer (`cameo-install-guided` → `cameo-install`) on
-  tty1. A normal live boot lacks the marker and is unaffected. You can also just
-  run `cameo-install` from any live shell.
+- **Install to disk (the default)** — Cameo is an installer image first, a live
+  "try it" image second — like any real OS medium. **"Install Cameo to disk"** is
+  the **default** boot entry in every bootloader (systemd-boot, syslinux, GRUB);
+  the live entries are retitled "… live" and sit one keystroke below. The install
+  entry boots the same kernel with `cameo.install` on the command line;
+  `cameo-installer.service` sees that marker and launches the guided installer
+  (`cameo-install-guided` → `cameo-install`) on tty1. The guided front end shows
+  the **detected GPU and support tier** before it touches anything. A normal live
+  boot lacks the marker and is unaffected; you can also run `cameo-install` from
+  any live shell.
 - **Persistent model cache** — on the live medium the cache is a RAM overlay, so
   a pulled model is lost on reboot (and a large one can exhaust memory).
   `cameo-persist-cache /dev/sdXN --format` prepares a disk (labelled `CAMEO_DATA`)
@@ -72,8 +76,10 @@ build script (not listed as packages).
 ## Still TODO (Phase 5)
 - A boot-menu splash/theme (currently inherits the releng bootloader chrome).
 - Pin ROCm/kernel/mesa **per tier** from `scripts/phase1`'s `known-good-combo.json`.
-- The TUI installer step (detect → show tier → confirm backend → install to disk).
 - **Resizable BAR** is a firmware/BIOS setting — document it as a recommended toggle.
+
+Done: the guided installer is now the **default** boot entry and shows the
+detected tier before installing (detect → show tier → install to disk).
 
 ⚠️ Every value in the tuning files is a **starting point** to confirm on real
 hardware; the whole profile builds today but is only *validated* once you've booted

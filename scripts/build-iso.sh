@@ -297,7 +297,7 @@ log "Branding the boot menus"
 branded=0
 while IFS= read -r -d '' f; do
   sed -i \
-    -e 's/Boot the Arch Linux install medium/Boot Cameo Linux/g' \
+    -e 's/Boot the Arch Linux install medium/Boot Cameo Linux live/g' \
     -e 's/Arch Linux install medium (x86_64, \([^)]*\))/Cameo Linux live (\1)/g' \
     -e 's/Arch Linux install medium/Cameo Linux live/g' \
     -e 's/Arch Linux/Cameo Linux/g' \
@@ -309,40 +309,59 @@ done < <(find "$BUILD/syslinux" "$BUILD/efiboot" "$BUILD/grub" \
            -type f \( -name '*.cfg' -o -name '*.conf' \) -print0 2>/dev/null)
 log "Rebranded $branded boot config file(s)"
 
-# 1e-bis. Add an "Install Cameo to disk" boot entry to every bootloader.
+# 1e-bis. Add an "Install Cameo to disk" boot entry to every bootloader AND make
+# it the DEFAULT selection.
 #
-# The entry boots the *same* kernel + initramfs as the live entry, but adds
-# `cameo.install` to the kernel command line. On the running system,
-# cameo-installer.service keys off that word (ConditionKernelCommandLine) and
-# launches the guided installer on tty1; a normal live boot lacks the word and is
-# unaffected. Each format is handled by CLONING the working default entry and
-# appending the marker, so this is purely additive — it never edits the live entry
-# that is known to boot, and a format that is absent is simply skipped.
-log "Adding the 'Install Cameo to disk' boot entry"
+# Cameo is an installer image first and a live "try it" image second — the same
+# shape every real OS install medium has (Ubuntu, Fedora): boot the ISO and it
+# offers to install, with the live environment one keystroke away. Until now the
+# default was the live RAM session and "install" was a buried last entry, which
+# is exactly why the ISO felt like "just a live USB".
+#
+# The install entry boots the *same* kernel + initramfs as the live entry with
+# `cameo.install` added to the kernel command line; cameo-installer.service keys
+# off that word (ConditionKernelCommandLine) and launches the guided installer on
+# tty1. A normal live boot lacks the word and is unaffected. Each format is built
+# by CLONING the working live entry, so this is purely additive — it never edits
+# the entry known to boot, and a format that is absent is simply skipped.
+log "Adding the 'Install Cameo to disk' boot entry and making it the default"
 installer_entries=0
 
 # systemd-boot (primary UEFI path): clone the first entry that has an `options`
-# line into a new .conf, retitle it, drop it to the end of the menu, and append
-# the marker to its options.
+# line into 00-cameo-install.conf (sort-key sorts it to the TOP), retitle it, add
+# the marker, then point loader.conf's `default` at it.
 for e in "$BUILD"/efiboot/loader/entries/*.conf; do
   [ -e "$e" ] || continue
   grep -q '^options ' "$e" || continue
-  new="$BUILD/efiboot/loader/entries/zz-cameo-install-$(basename "$e")"
-  [ -e "$new" ] && continue
-  sed -e 's/^\(title .*\)$/\1 — Install to disk/' \
-      -e 's/^\(sort-key\).*/\1 zz-install/' \
+  new="$BUILD/efiboot/loader/entries/00-cameo-install.conf"
+  [ -e "$new" ] && break
+  sed -e 's/^title .*/title Install Cameo to disk/' \
+      -e 's/^sort-key .*/sort-key 00-install/' \
       -e 's/^\(options .*\)$/\1 cameo.install/' \
       "$e" >"$new"
+  grep -q '^sort-key ' "$new" || printf 'sort-key 00-install\n' >>"$new"
   installer_entries=$((installer_entries + 1))
   break
 done
+LOADER="$BUILD/efiboot/loader/loader.conf"
+if [ -f "$LOADER" ]; then
+  if grep -q '^default' "$LOADER"; then
+    sed -i 's/^default.*/default 00-cameo-install*/' "$LOADER"
+  else
+    printf 'default 00-cameo-install*\n' >>"$LOADER"
+  fi
+  log "systemd-boot default → Install Cameo to disk"
+fi
 
-# syslinux (BIOS path): append a new LABEL block built from the working entry's
-# own LINUX/INITRD/APPEND lines, with the marker on APPEND.
+# syslinux (BIOS path): append a LABEL built from the working entry's own
+# LINUX/INITRD/APPEND lines with the marker, then append DEFAULT/ONTIMEOUT (plus
+# MENU DEFAULT) pointing at it. The directives are appended AFTER the label in the
+# same included config, so the later value wins over releng's earlier default —
+# self-contained and valid without touching the loadconfig chain in syslinux.cfg.
 for f in "$BUILD"/syslinux/*.cfg; do
   [ -e "$f" ] || continue
   grep -qE '^[[:space:]]*APPEND ' "$f" || continue
-  grep -q '^LABEL cameo_install$' "$f" && continue
+  grep -q '^LABEL cameo_install$' "$f" && break
   linux_line="$(grep -m1 -E '^[[:space:]]*(LINUX|KERNEL) ' "$f" || true)"
   initrd_line="$(grep -m1 -E '^[[:space:]]*INITRD ' "$f" || true)"
   append_line="$(grep -m1 -E '^[[:space:]]*APPEND ' "$f" || true)"
@@ -352,18 +371,23 @@ for f in "$BUILD"/syslinux/*.cfg; do
     printf '\n'
     printf 'LABEL cameo_install\n'
     printf 'MENU LABEL Install Cameo to disk\n'
+    printf 'MENU DEFAULT\n'
     [ -n "$linux_line" ] && printf '%s\n' "$linux_line"
     [ -n "$initrd_line" ] && printf '%s\n' "$initrd_line"
     printf '%s cameo.install\n' "$append_line"
     [ -n "$sysappend_line" ] && printf '%s\n' "$sysappend_line"
+    printf '\n'
+    printf 'DEFAULT cameo_install\n'
+    printf 'ONTIMEOUT cameo_install\n'
   } >>"$f"
   installer_entries=$((installer_entries + 1))
+  log "syslinux default → Install Cameo to disk"
   break
 done
 
 # GRUB (secondary UEFI/loopback path): append a menuentry built from the working
-# entry's own `linux`/`initrd` lines, marker on the linux line. Additive, so no
-# brace-parsing of the existing menu is needed.
+# entry's own `linux`/`initrd` lines, then `set default` to it. GRUB reads the
+# whole config before drawing the menu, so a trailing `set default` wins.
 for g in "$BUILD"/grub/grub.cfg "$BUILD"/grub/loopback.cfg; do
   [ -f "$g" ] || continue
   grep -q 'cameo.install' "$g" && continue
@@ -377,11 +401,12 @@ for g in "$BUILD"/grub/grub.cfg "$BUILD"/grub/loopback.cfg; do
     printf '%s cameo.install\n' "$linux_line"
     [ -n "$initrd_line" ] && printf '%s\n' "$initrd_line"
     printf '}\n'
+    printf 'set default="Install Cameo to disk"\n'
   } >>"$g"
   installer_entries=$((installer_entries + 1))
 done
 
-log "Added $installer_entries install boot entr(ies) (systemd-boot/syslinux/grub)"
+log "Added $installer_entries install boot entr(ies), set as default (systemd-boot/syslinux/grub)"
 
 # 1f. Render the Cameo mark into the syslinux menu background. releng's
 # archiso_head.cfg points MENU BACKGROUND at splash.png, so overwriting that
@@ -399,6 +424,31 @@ if [ -f "$SPLASH_SVG" ] && [ -d "$BUILD/syslinux" ]; then
     log "No SVG rasteriser found - keeping the stock splash"
   fi
 fi
+
+# 1g. Theme the syslinux menu chrome so the boot screen reads as Cameo, not the
+# stock Arch blue-on-grey. Appended after releng's own MENU COLOR block in the
+# file that drives the menu (UI vesamenu), so the later values win. Colours are
+# syslinux #AARRGGBB — ember selection, warm off-white text, graphite ground —
+# the same palette as the splash rendered above.
+for f in "$BUILD"/syslinux/*.cfg; do
+  [ -e "$f" ] || continue
+  grep -qE '^[[:space:]]*(UI[[:space:]]+vesamenu|MENU[[:space:]]+TITLE)' "$f" || continue
+  {
+    printf '\n'
+    printf 'MENU TITLE Cameo Linux\n'
+    printf 'MENU COLOR title       1;38;5;209 #ffff7a1a #00000000 std\n'
+    printf 'MENU COLOR sel         7;37;40    #ff171512 #ffff7a1a all\n'
+    printf 'MENU COLOR unsel       0          #ffe8e1d5 #00000000 std\n'
+    printf 'MENU COLOR hotkey      1;38;5;209 #ffffd08a #00000000 std\n'
+    printf 'MENU COLOR hotsel      7;37;40    #ff171512 #ffff7a1a all\n'
+    printf 'MENU COLOR border      0          #22e8e1d5 #00000000 std\n'
+    printf 'MENU COLOR timeout     0          #ff8a8090 #00000000 std\n'
+    printf 'MENU COLOR timeout_msg 0          #ff8a8090 #00000000 std\n'
+    printf 'MENU COLOR help        0          #ff9a958c #00000000 std\n'
+  } >>"$f"
+  log "Themed the syslinux boot menu (Cameo palette)"
+  break
+done
 
 # 2. Build the cameo CLI (native, for the ISO's arch) and stage it into the image.
 #
