@@ -229,12 +229,44 @@ footer{border-top:1px solid var(--line);padding:44px 0 54px}
   .trow{grid-template-columns:auto 1fr;gap:12px}
   .trow .cap{grid-column:2;text-align:left}
 }
+/* Reduced-motion skips ENTRANCE animations (scroll-reveal, headline stagger,
+   typing) but keeps the ambient backdrop and small status loops alive — a
+   deliberate call so the page never reads as "frozen". */
 @media(prefers-reduced-motion:reduce){
   html{scroll-behavior:auto}
   .rise{opacity:1;transform:none;transition:none}
-  body.anim h1 .w,.term.typing .ln,.hud .br i,.term .cur,.flow-line,.tbar i{animation:none!important;opacity:1;transform:none}
-  .trow .tbar i{width:var(--w)}
+  body.anim h1 .w,.term.typing .ln{animation:none!important;opacity:1;transform:none}
 }
+
+/* ---- component polish: depth, edge-light, hover microinteractions ---- */
+.chip,.btn,.btn-primary{transition:transform .18s ease,border-color .18s ease,box-shadow .25s ease,filter .18s ease}
+.chip,.btn{box-shadow:0 1px 0 rgba(255,255,255,.035) inset,0 4px 14px rgba(0,0,0,.28)}
+.chip:hover,.btn:hover{transform:translateY(-1px);box-shadow:0 1px 0 rgba(255,255,255,.06) inset,0 9px 22px rgba(0,0,0,.42)}
+.btn-primary{position:relative;overflow:hidden;background:linear-gradient(180deg,#FF9138,#FF7A1A);
+  box-shadow:0 0 0 1px rgba(255,122,26,.35),0 8px 22px rgba(255,122,26,.26)}
+.btn-primary:hover{transform:translateY(-1px);filter:brightness(1.05);
+  box-shadow:0 0 0 1px rgba(255,122,26,.55),0 13px 32px rgba(255,122,26,.42)}
+.btn-primary::after{content:"";position:absolute;top:0;left:-60%;width:38%;height:100%;pointer-events:none;
+  background:linear-gradient(100deg,transparent,rgba(255,255,255,.35),transparent);transform:skewX(-18deg);
+  animation:sheen 5s ease-in-out infinite}
+@keyframes sheen{0%,74%{left:-60%}88%{left:135%}100%{left:135%}}
+.cards span{transition:color .18s ease,border-color .18s ease,background .18s ease}
+.cards span:hover{color:var(--ink);border-color:var(--line-2);background:var(--inset)}
+
+/* cards lift off the animated backdrop */
+.step,.install,.gcard,.term,.console-frame,.ladder{
+  box-shadow:0 1px 0 rgba(255,255,255,.035) inset,0 14px 36px rgba(0,0,0,.32)}
+.step,.install,.gcard{transition:transform .2s ease,border-color .2s ease,box-shadow .25s ease}
+.step{position:relative;overflow:hidden;background:linear-gradient(180deg,rgba(60,56,48,.55),rgba(44,43,39,.5))}
+.step::before{content:"";position:absolute;inset:0 0 auto 0;height:1px;
+  background:linear-gradient(90deg,transparent,rgba(255,176,90,.32),transparent)}
+.step:hover,.install:hover{transform:translateY(-3px);border-color:var(--line-2);
+  box-shadow:0 1px 0 rgba(255,176,90,.12) inset,0 20px 46px rgba(0,0,0,.44),0 0 30px rgba(255,122,26,.10)}
+.gcard{transition:transform .18s ease,border-color .2s ease,box-shadow .25s ease}
+.gcard:hover{transform:translateY(-2px);border-color:var(--line-2);box-shadow:0 12px 28px rgba(0,0,0,.36)}
+.trow{transition:background .2s ease}
+.trow:hover{background:var(--raised)}
+.ep .on{box-shadow:0 0 10px rgba(63,185,80,.7);animation:blink 2.4s ease-in-out infinite}
 </style>
 </head>
 <body>
@@ -535,9 +567,9 @@ sudo ./scripts/build-iso.sh   # CAMEO_EDITION=lite for old cards</pre>
   function size(){var w=cv.getBoundingClientRect().width||cv.clientWidth||460;S=w;cv.width=S*DPR;cv.height=S*DPR;ctx.setTransform(DPR,0,0,DPR,0,0);}
   size();addEventListener('resize',size);addEventListener('load',size);
   var EMBER='#FF7A1A',LINE='#454339',INK='#3A3833';
-  var N=140,buf=new Array(N).fill(.5),phase=0,rot=0,sweep=-1.5708,arcP=reduce?0.71:0;
+  var N=140,buf=new Array(N).fill(.5),phase=0,rot=0,sweep=-1.5708,arcP=0;
   var tiltX=0,tiltY=0,tgX=0,tgY=0;
-  if(!reduce)addEventListener('pointermove',function(e){
+  addEventListener('pointermove',function(e){
     var r2=cv.getBoundingClientRect(),cx2=r2.left+r2.width/2,cy2=r2.top+r2.height/2;
     tgY=Math.max(-1,Math.min(1,(e.clientX-cx2)/(innerWidth*.55)));
     tgX=Math.max(-1,Math.min(1,(e.clientY-cy2)/(innerHeight*.55)));
@@ -579,12 +611,7 @@ sudo ./scripts/build-iso.sh   # CAMEO_EDITION=lite for old cards</pre>
     cv.style.transform='rotateX('+(-tiltX*7+flX).toFixed(3)+'deg) rotateY('+(tiltY*9+flY).toFixed(3)+'deg)';
     draw();requestAnimationFrame(loop);
   }
-  if(reduce){
-    // one static frame; redraw after load/resize because setting canvas.width clears it
-    function paint(){size();draw();}
-    paint();addEventListener('load',paint);addEventListener('resize',paint);
-  }
-  else requestAnimationFrame(loop);
+  requestAnimationFrame(loop);
 })();
 
 // ---- living backdrop: amber nebula (WebGL) with a 2D starfield fallback ----
@@ -654,9 +681,8 @@ sudo ./scripts/build-iso.sh   # CAMEO_EDITION=lite for old cards</pre>
     function frame(){var tt=(performance.now()-start)/1000;
       mX+=(mtX-mX)*0.045;mY+=(mtY-mY)*0.045;
       gl.uniform2f(uR,cv.width,cv.height);gl.uniform1f(uT,tt);gl.uniform2f(uM,mX,mY);
-      gl.drawArrays(gl.TRIANGLES,0,6);if(!reduce)requestAnimationFrame(frame);}
-    if(reduce){gl.uniform2f(uR,cv.width,cv.height);gl.uniform1f(uT,9.0);gl.uniform2f(uM,mX,mY);gl.drawArrays(gl.TRIANGLES,0,6);}
-    else requestAnimationFrame(frame);
+      gl.drawArrays(gl.TRIANGLES,0,6);requestAnimationFrame(frame);}
+    requestAnimationFrame(frame);
     return true;
   }
 
@@ -677,14 +703,13 @@ sudo ./scripts/build-iso.sh   # CAMEO_EDITION=lite for old cards</pre>
         if(s.r>1.3*DPR){x.globalAlpha=s.a*tw*0.22;x.beginPath();x.arc(s.x,s.y,s.r*3.2,0,6.2832);x.fillStyle=s.c;x.fill();}
         x.globalAlpha=Math.min(1,s.a*tw);x.beginPath();x.arc(s.x,s.y,s.r,0,6.2832);x.fillStyle=s.c;x.fill();}
       x.globalAlpha=1;}
-    if(reduce)paint(false);else(function loop(){paint(true);requestAnimationFrame(loop);})();
+    (function loop(){paint(true);requestAnimationFrame(loop);})();
   }
 })();
 
 // ---- shooting stars: occasional amber streaks ----
 (function(){
   var cv=document.getElementById('streaks');if(!cv)return;
-  if(matchMedia('(prefers-reduced-motion: reduce)').matches)return;
   var x=cv.getContext('2d');if(!x)return;
   var DPR=Math.min(devicePixelRatio||1,2),W=0,H=0,ms=[],next=performance.now()+2600;
   function size(){W=cv.width=Math.max(1,innerWidth)*DPR;H=cv.height=Math.max(1,innerHeight)*DPR;}
