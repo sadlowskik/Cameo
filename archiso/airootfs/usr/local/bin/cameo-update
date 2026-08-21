@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
-# cameo-update — update an installed Cameo, pinned to its release's Arch archive
-# snapshot so the transaction matches a known-good release rather than "whatever is
-# newest today" (F5; see docs/updating.md). Deliberately thin and auditable.
+# cameo-update — update the Arch stack on an installed Cameo, pinned to its
+# release's archive snapshot (F5; see docs/updating.md). Deliberately thin.
 #
-# Container and ISO deliveries update differently (pull-and-restart / re-flash) —
-# this wrapper is only for a bare-metal install.
+# This does NOT replace /usr/local/bin/cameo or cameod (ISO-staged, not pacman).
+# A new Cameo build is a re-flash or copying those binaries from a GitHub release.
 #
 #   sudo cameo-update            # pin to the recorded snapshot, then pacman -Syu
 #   CAMEO_ARCH_SNAPSHOT=2026/08/01 sudo -E cameo-update   # override the snapshot
@@ -44,10 +43,15 @@ else
        "/etc/cameo/snapshot); tracking rolling Arch." >&2
 fi
 
+echo "cameo-update: this updates the Arch stack (kernel, mesa, llama-cpp, …)."
+echo "              cameo and cameod live in /usr/local/bin from the ISO — they"
+echo "              are not pacman packages. A new Cameo build is a re-flash or"
+echo "              copying those two binaries from a GitHub release."
 echo "cameo-update: tip — take a btrfs/ZFS snapshot first if your root supports it,"
 echo "              then a bad update is one rollback away."
 echo "cameo-update: running pacman -Syu ..."
 pacman -Syu
 
-echo "cameo-update: done. Restart the daemon to run the new build:"
-echo "              systemctl restart cameod"
+echo "cameo-update: pacman finished. Restart the daemon only if llama-cpp or a"
+echo "              library it links changed:  systemctl restart cameod"
+echo "              This did not replace /usr/local/bin/cameo or cameod."

@@ -35,11 +35,13 @@ jobs:
           shellcheck -x scripts/*.sh scripts/phase1/*.sh containers/*.sh \
             archiso/airootfs/usr/local/bin/cameo-install \
             archiso/airootfs/usr/local/bin/cameo-install-guided \
+            archiso/airootfs/usr/local/bin/cameo-hello \
             archiso/airootfs/usr/local/bin/cameo-firstboot \
             archiso/airootfs/usr/local/bin/cameo-console-init \
             archiso/airootfs/usr/local/bin/cameo-storage-init \
             archiso/airootfs/usr/local/bin/cameo-persist-cache \
-            archiso/airootfs/usr/local/bin/cameo-seed-models
+            archiso/airootfs/usr/local/bin/cameo-seed-models \
+            archiso/airootfs/usr/local/bin/cameo-update
 
   # Build the Vulkan container image (F1) and smoke it: the binaries must run and
   # the serving dependencies must be present. Real GPU/serving is a Phase-1

@@ -119,7 +119,13 @@ mod tests {
     #[test]
     fn experts_on_host_when_non_expert_working_set_fits() {
         // ~20 GiB total, 16 GiB experts, ~14.4 GiB usable (16 GiB card @ 90%).
-        let p = plan_offload(&req(20 * GIB, 18 * GIB, 16 * GIB, 40, (16.0 * 0.90 * GIB as f64) as u64));
+        let p = plan_offload(&req(
+            20 * GIB,
+            18 * GIB,
+            16 * GIB,
+            40,
+            (16.0 * 0.90 * GIB as f64) as u64,
+        ));
         assert!(p.experts_on_host);
         assert!(!p.kv_on_host);
         assert_eq!(p.gpu_layers, GpuLayers::All);

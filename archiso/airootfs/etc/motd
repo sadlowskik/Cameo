@@ -1,21 +1,27 @@
 
 Welcome to Cameo — any AMD card -> a working LLM box.
 
-  This box does not need the internet to serve.
-  Network is for extra models, other Cameo nodes, and the console
-  from outside the house.
+  After login, cameo-hello prints the console URL and key.
+  Open that URL from a phone or laptop on this LAN.
+  Press “Start qwen2.5-0.5b and chat”. That starter is a smoke test;
+  pull a larger model when you have a network.
 
-  cameo gpu-status              your GPU's support tier (1/2/3)
-  cameo serve qwen2.5-0.5b      starter model — already on disk, no network
-  cameo pull --list             more aliases, if you want the network
+  cameo gpu-status              GPU tier (1/2/3)
+  cameo-hello                   console URL + key again
+  cameo pull --list             extra models (needs network)
   cameo --help                  everything else
 
-A starter GGUF (qwen2.5-0.5b) is already in /var/lib/cameo/models.
-Open the web console printed on first boot and chat. Extra models: drop a
-.gguf there, or `cameo pull` when you have a network.
+  Wi-Fi (no Ethernet):
+    iwctl
+      station list
+      station wlan0 scan
+      station wlan0 get-networks
+      station wlan0 connect 'YourSSID'
 
-Running from the USB? Install to this machine's disk (offline, copies the image):
+Still on the USB live session? Install to disk (offline, copies the image):
   cameo-install-guided   the installer — account, disk, confirm
   cameo-install          dry run — shows the plan, changes nothing
+  After install: reboot first; unplug the USB only when the screen goes dark.
+  Live-USB console keys last until reboot.
 
 Docs & source: https://github.com/sadlowskik/Cameo

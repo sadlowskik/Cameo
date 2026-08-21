@@ -132,6 +132,10 @@ pub const INDEX_HTML: &str = r##"
   .flash{display:none;padding:10px 14px;margin-bottom:14px;font-size:13px;border:1px solid}
   .flash.err{display:block;background:rgba(255,86,37,.08);color:var(--ember-soft);border-color:var(--ember)}
   .flash.ok{display:block;background:rgba(74,222,128,.08);color:var(--ok);border-color:rgba(74,222,128,.4)}
+  #key-bar{display:none;gap:10px;align-items:center;flex-wrap:wrap;padding:10px 28px;background:var(--panel);border-bottom:1px solid var(--line)}
+  #key-bar.show{display:flex}
+  #key-bar span{color:var(--muted);font-size:13px}
+  #key-bar input{max-width:280px}
 
   /* playground */
   .pg-row{display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap}
@@ -177,6 +181,11 @@ pub const INDEX_HTML: &str = r##"
   <span class="tagline">any AMD card → a working LLM box</span>
   <span class="status"><span class="dot" id="dot"></span><span id="status-text">connecting…</span></span>
 </header>
+<div id="key-bar">
+  <span>This console needs the key printed at login (<code>cameo-hello</code>).</span>
+  <input id="key-input" type="password" placeholder="console key" autocomplete="off">
+  <button type="button" id="key-save">Unlock</button>
+</div>
 <nav class="tabs">
   <button id="tab-console" class="on" onclick="showView('console')">Console</button>
   <button id="tab-deck" onclick="showView('deck')">Fleet</button>
@@ -200,7 +209,11 @@ pub const INDEX_HTML: &str = r##"
         <thead><tr><th>Model</th><th>State</th><th>Endpoint</th><th>Backend</th><th>Uptime</th><th></th></tr></thead>
         <tbody id="servers"></tbody>
       </table>
-      <div id="servers-empty" class="empty">No endpoints yet. Start one below.</div>
+      <div id="servers-empty" class="empty">
+        No model running yet.
+        <div style="margin-top:12px"><button type="button" id="start-starter">Start qwen2.5-0.5b and chat</button></div>
+        <div class="muted" style="margin-top:8px">Smoke-test model (~0.5B). Pull a larger GGUF when you have a network.</div>
+      </div>
     </div>
   </section>
 
@@ -235,7 +248,7 @@ pub const INDEX_HTML: &str = r##"
         <input id="pg-input" placeholder="Ask a running model something…" onkeydown="if(event.key==='Enter')pgSend()">
         <button onclick="pgSend()">Send</button>
       </div>
-      <div id="pg-out">Start an endpoint, then chat with it here through the /v1 gateway.</div>
+      <div id="pg-out">Start the starter model (button above), then type here.</div>
     </div>
   </section>
 
@@ -276,11 +289,22 @@ async function api(path,opts={}){
   const k=getKey(); if(k) opts.headers['Authorization']='Bearer '+k;
   let r=await fetch(path,opts);
   if(r.status===401){
-    const entered=prompt('This console requires a key. Enter the console key:');
-    if(entered){localStorage.setItem(KEY_STORE,entered); return api(path,opts);}
+    document.getElementById('key-bar').classList.add('show');
+    document.getElementById('key-input').focus();
+    return r;
   }
   return r;
 }
+document.getElementById('key-save').onclick=()=>{
+  const v=document.getElementById('key-input').value.trim();
+  if(!v)return;
+  localStorage.setItem(KEY_STORE,v);
+  document.getElementById('key-bar').classList.remove('show');
+  boot();
+};
+document.getElementById('key-input').addEventListener('keydown',e=>{
+  if(e.key==='Enter') document.getElementById('key-save').click();
+});
 
 function setStatus(ok,text){
   document.getElementById('dot').className='dot '+(ok?'ok':'bad');
@@ -456,8 +480,25 @@ document.getElementById('start-form').addEventListener('submit',async ev=>{
   const d=await r.json().catch(()=>({}));
   if(r.ok){if(d.state==='failed') flash('err','Started but process failed: '+(d.error||'unknown')); else flash('ok','Endpoint '+d.id+' started');}
   else{flash('err',d.error||('start failed ('+r.status+')'));}
-  loadServers();
+  loadServers(); loadPlayground();
 });
+async function startStarter(){
+  document.getElementById('f-model').value='qwen2.5-0.5b';
+  document.getElementById('f-params').value='0.5';
+  const r=await api('/api/servers',{method:'POST',body:JSON.stringify({
+    model:'qwen2.5-0.5b',host:'127.0.0.1',port:8080,params:0.5,quant:'Q4_K_M',backend:'auto',moe:false
+  })});
+  const d=await r.json().catch(()=>({}));
+  if(r.status===401) return;
+  if(r.ok){
+    if(d.state==='failed') flash('err','Started but process failed: '+(d.error||'unknown'));
+    else flash('ok','Starter running — type below');
+  } else flash('err',d.error||('start failed ('+r.status+')'));
+  await loadServers(); await loadPlayground();
+  const pg=document.getElementById('pg-input'); pg.focus();
+  document.getElementById('pg-out').scrollIntoView({behavior:'smooth',block:'center'});
+}
+document.getElementById('start-starter').onclick=startStarter;
 
 function showView(name){
   document.getElementById('view-deck').classList.toggle('show', name==='deck');
@@ -588,13 +629,14 @@ document.getElementById('deck-serve').onclick=async()=>{
   tickDeck(); loadServers();
 };
 function refresh(){loadGpus();loadServers();loadPlayground();tickDeck();}
+let booted=false;
 async function boot(){
   try{const r=await fetch('/healthz'); const d=await r.json(); IS_HUB=!!d.hub;
     if(IS_HUB){document.querySelector('.tagline').textContent='every node · GPU · VRAM · who is using it';
       document.title='Cameo Fleet'; showView('deck');}
   }catch(e){}
   loadModels(); refresh();
-  setInterval(()=>{loadServers();loadPlayground();tickDeck();},4000);
+  if(!booted){ booted=true; setInterval(()=>{loadServers();loadPlayground();tickDeck();},4000); }
 }
 boot();
 </script>

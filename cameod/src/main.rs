@@ -286,10 +286,15 @@ fn run(args: Args) -> Result<()> {
         eprintln!("cameod: detection replayed from captured fixtures");
     }
 
+    if !args.hub {
+        let boot = Arc::clone(&state);
+        std::thread::spawn(move || app::maybe_autostart(&boot));
+    }
+
     #[cfg(unix)]
     if posture == auth::Posture::SelfHost {
-        let sock_path = std::env::var("CAMEO_SOCKET")
-            .unwrap_or_else(|_| "/run/cameo/cameo.sock".into());
+        let sock_path =
+            std::env::var("CAMEO_SOCKET").unwrap_or_else(|_| "/run/cameo/cameo.sock".into());
         match bind_operator_socket(&sock_path) {
             Ok(unix) => {
                 let sock_state = Arc::clone(&state);

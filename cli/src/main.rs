@@ -127,7 +127,8 @@ struct Cli {
     #[arg(long, global = true, value_name = "KEY", env = "CAMEO_API_KEY")]
     api_key: Option<String>,
 
-    /// Read `lspci -nn` output from a file instead of the live system (dev/testing).
+    /// Read `lspci -D -nn` output from a file instead of the live system (dev/testing).
+    /// `-D` is required: without the PCI domain, captures will not match sysfs.
     #[arg(long, global = true, value_name = "FILE")]
     lspci_file: Option<PathBuf>,
 
@@ -172,6 +173,7 @@ enum Command {
     /// Quantize a model to a target level (e.g. Q4_K_M).
     Quantize(QuantizeArgs),
     /// Start a training run (Tier 1/2 only; refused on Tier 3).
+    /// Requires `torchrun` on PATH — not shipped on the ISO or container.
     Train(TrainArgs),
     /// Manage the local model cache: list, disk usage, remove, clean.
     Model(ModelArgs),
@@ -179,8 +181,9 @@ enum Command {
     Fleet(FleetArgs),
     /// Build the `podman`/`docker run` command that passes AMD GPUs into a container.
     Containers(ContainersArgs),
-    /// Print the install plan Cameo would apply for the detected hardware.
-    Install,
+    /// Print the package set this hardware would use (does not install).
+    /// Disk install from the live ISO is `cameo-install`.
+    InstallPlan,
 }
 
 #[derive(clap::Args)]
@@ -466,7 +469,7 @@ fn run(cli: &Cli) -> Result<()> {
         Command::Model(a) => cmd_model(cli, a),
         Command::Fleet(a) => cmd_fleet(cli, a),
         Command::Containers(a) => cmd_containers(cli, a),
-        Command::Install => cmd_install(cli),
+        Command::InstallPlan => cmd_install_plan(cli),
     }
 }
 
@@ -982,7 +985,25 @@ fn cmd_train(cli: &Cli, args: &TrainArgs) -> Result<()> {
     let plan = make_plan(&topo, &assessments, &model, Task::Training, &settings)
         .map_err(|e| plan_error(cli, e))?;
     let spec = build_training(&plan, &args.script.to_string_lossy(), &args.config);
+    if !cli.dry_run && !on_path("torchrun") {
+        return Err(anyhow!(
+            "torchrun is not on PATH. Training is not shipped on the ISO or \
+             container (no PyTorch). Install a ROCm/PyTorch environment, or \
+             pass --dry-run to print the command without running it."
+        ));
+    }
     run_or_dry(cli, &plan, &spec)
+}
+
+/// True if `name` (or `name.exe`) is an executable on PATH.
+fn on_path(name: &str) -> bool {
+    let Some(path) = std::env::var_os("PATH") else {
+        return false;
+    };
+    std::env::split_paths(&path).any(|dir| {
+        let p = dir.join(name);
+        p.is_file() || p.with_extension("exe").is_file()
+    })
 }
 
 fn cmd_quantize(cli: &Cli, args: &QuantizeArgs) -> Result<()> {
@@ -1174,13 +1195,13 @@ fn print_rpc_layout_if_distributed(
     );
 }
 
-fn cmd_install(cli: &Cli) -> Result<()> {
+fn cmd_install_plan(cli: &Cli) -> Result<()> {
     let (_topo, assessments) = detect(cli)?;
 
-    // No AMD GPU → a CPU-only install: none of the GPU stack, just the CPU
-    // inference engine. This is what makes Cameo install-and-run on any machine.
+    // Print the package set the *image already carries* for this hardware.
+    // This does not install anything — disk install is `cameo-install`.
     if assessments.is_empty() {
-        let packages = ["linux (kernel + headers)", "llama.cpp (CPU backend)"];
+        let packages = ["llama-cpp", "ggml-cpu"];
         if cli.json {
             println!(
                 "{}",
@@ -1188,29 +1209,32 @@ fn cmd_install(cli: &Cli) -> Result<()> {
                     "backend": "cpu",
                     "hsa_override": serde_json::Value::Null,
                     "packages": packages,
+                    "disk_install": "cameo-install",
                 }))?
             );
             return Ok(());
         }
-        println!("Install plan (no AMD GPU — CPU-only):");
+        println!("Package set (no AMD GPU — CPU-only):");
         for p in packages {
             println!("  - {p}");
         }
         println!("\nModels run in system RAM. Any x86-64 CPU works — no GPU required.");
+        println!("This does not install an OS. From the live ISO: cameo-install");
         return Ok(());
     }
 
     let top = &assessments[0];
     let mut packages = vec![
-        "linux (kernel + headers)",
-        "amdgpu driver",
-        "mesa + vulkan-radeon (Vulkan userspace)",
-        "llama.cpp (Vulkan backend)",
+        "mesa",
+        "vulkan-radeon",
+        "llama-cpp",
+        "ggml-cpu",
+        "ggml-vulkan",
     ];
     if top.tier.training_supported() {
-        packages.push("rocm (pinned, per tier)");
-        packages.push("llama.cpp (ROCm backend)");
-        packages.push("python-pytorch-rocm");
+        packages.push("rocminfo");
+        packages.push("rocm-smi-lib");
+        packages.push("ggml-hip");
     }
 
     if cli.json {
@@ -1220,13 +1244,14 @@ fn cmd_install(cli: &Cli) -> Result<()> {
                 "tier": top.tier.as_number(),
                 "hsa_override": top.hsa_override,
                 "packages": packages,
+                "disk_install": "cameo-install",
             }))?
         );
         return Ok(());
     }
 
     println!(
-        "Install plan for {} (Tier {}):",
+        "Package set for {} (Tier {}):",
         top.gpu.model,
         top.tier.as_number()
     );
@@ -1236,9 +1261,8 @@ fn cmd_install(cli: &Cli) -> Result<()> {
     for p in packages {
         println!("  - {p}");
     }
-    println!(
-        "\nNote: package set and pinned versions are validated by scripts/phase1 on real hardware."
-    );
+    println!("\nThese packages are what the ISO/container already ships for this card.");
+    println!("This does not install an OS. From the live ISO: cameo-install");
     Ok(())
 }
 

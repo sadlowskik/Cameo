@@ -4,8 +4,17 @@
 # shellcheck source-path=SCRIPTDIR
 source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
 
+[ "${CAMEO_BUILD_LLAMA:-}" = "1" ] \
+  || die "packaged llama-cpp is the product path. Set CAMEO_BUILD_LLAMA=1 to compile from source (requires CAMEO_LLAMA_REF as a 40-char SHA)."
+
 need git
 need cmake
+need ninja
+
+[ -n "$LLAMA_REF" ] || die "set CAMEO_LLAMA_REF to a 40-character commit SHA."
+if ! [[ "$LLAMA_REF" =~ ^[0-9a-fA-F]{40}$ ]]; then
+  die "CAMEO_LLAMA_REF='$LLAMA_REF' is not a 40-char SHA — refusing to compile unverified upstream."
+fi
 
 if [ ! -d "$LLAMA_SRC/.git" ]; then
   log "Cloning llama.cpp into $LLAMA_SRC"
@@ -15,13 +24,6 @@ git -C "$LLAMA_SRC" fetch --all --tags --quiet || true
 git -C "$LLAMA_SRC" checkout "$LLAMA_REF"
 LLAMA_COMMIT="$(git -C "$LLAMA_SRC" rev-parse HEAD)"
 log "llama.cpp at $LLAMA_REF ($LLAMA_COMMIT)"
-
-# Supply-chain warning: a mutable ref (branch/tag) means we compile and run
-# whatever upstream HEAD happens to be right now. Pin a full commit SHA in
-# CAMEO_LLAMA_REF for a reproducible, integrity-checked build.
-if ! [[ "$LLAMA_REF" =~ ^[0-9a-fA-F]{40}$ ]]; then
-  warn "CAMEO_LLAMA_REF='$LLAMA_REF' is not a pinned commit SHA — building unverified upstream code. Pin a full SHA once validated."
-fi
 
 # --- Vulkan build: the universal baseline, must always succeed ---
 log "Building Vulkan backend..."

@@ -24,14 +24,20 @@ Because the model cache is a named volume (F2), nothing is re-downloaded.
 
 ## Installed (bare metal) — pinned pacman transaction
 
-An installed system updates through `pacman`, pinned to the same Arch archive
-snapshot the image was built against (see [F4](remediation-plan.md)), so an update
-is reproducible and a serving box is never surprised by a rolling package:
+An installed system updates the **Arch stack** (kernel, mesa, llama-cpp, …)
+through `pacman`, pinned to the same Arch archive snapshot the image was built
+against (see [F4](remediation-plan.md)), so an update is reproducible and a
+serving box is never surprised by a rolling package:
 
 ```bash
 # point pacman at the release's pinned snapshot, then update
 sudo cameo-update            # wrapper: sets the snapshot mirror, runs pacman -Syu
 ```
+
+`cameo` and `cameod` are staged into `/usr/local/bin` by the ISO build. They are
+**not** pacman packages. `cameo-update` does not replace them. A new Cameo
+build is a re-flash of the ISO, or copying those two binaries from a GitHub
+release.
 
 The wrapper is a thin, auditable script; the snapshot pin is what makes the
 transaction match a known-good release rather than "whatever is newest today".
@@ -55,6 +61,7 @@ on the medium, so re-flashing does not lose models or config.
 > Status: the `/api/version` endpoint and the `cameo-update` wrapper both ship now
 > (the wrapper reads the snapshot the build recorded at `/etc/cameo/snapshot`, or
 > `CAMEO_ARCH_SNAPSHOT`, and falls back to a rolling update with a warning). The
+> wrapper updates Arch packages only — not `/usr/local/bin/cameo` / `cameod`. The
 > `.github/workflows/publish.yml` workflow pushes `ghcr.io/<owner>/cameo:<ver>` on a
 > version tag (vulkan hero image required, rocm best-effort). What remains is
 > operational: cutting an actual tagged release so the images exist to pull.

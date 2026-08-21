@@ -23,7 +23,17 @@ extract_ts() {
 VULKAN_TS="$(extract_ts "$ARTIFACTS/bench-vulkan.json")"
 ROCM_TS="$(extract_ts "$ARTIFACTS/bench-rocm.json")"
 
-if [ "${rocm_built:-no}" = "yes" ]; then ROCM_BUILT_JSON=true; else ROCM_BUILT_JSON=false; fi
+if [ "${rocm_built:-no}" = "yes" ] || [ -f "$ARTIFACTS/bench-rocm.json" ]; then
+  ROCM_BUILT_JSON=true
+else
+  ROCM_BUILT_JSON=false
+fi
+
+if [ -n "${llama_commit:-}" ]; then
+  LLAMA_SOURCE=source-tree
+else
+  LLAMA_SOURCE=packaged
+fi
 
 GPU_MODEL="$(lspci -nn 2>/dev/null \
   | grep -iE 'vga compatible|display controller|3d controller' \
@@ -42,6 +52,7 @@ cat > "$OUT" <<JSON
   "mesa": "${mesa:-}",
   "vulkan_radeon": "${vulkan_radeon:-}",
   "llama_cpp": {
+    "source": "${LLAMA_SOURCE}",
     "repo": "${llama_repo:-}",
     "ref": "${llama_ref:-}",
     "commit": "${llama_commit:-}"

@@ -20,22 +20,17 @@ is for extra models, fleets, and opening the console from outside the house.
 Cameo meets your hardware where it is. **Vulkan is the universal baseline** — it
 runs on *any* AMD card. **ROCm is an optional accelerator** that only ever makes the
 supported cards faster; nothing requires it. Cameo detects the card, classifies what
-it can do, and serves — no CUDA envy, no driver archaeology.
-
-**Layers.** Cameo is the box (GPUs, VRAM, `/v1`, the fleet map). **Knossos** is
-the harness that points an engine slot at a node. **Daedalus** is a coding
-*model* — served on Cameo later, not shipped in this ISO. The deck is the map
-of nodes, cards, resident models, and who is using them — not a hypervisor.
+it can do, and serves.
 
 - **Runs on the card you already have.** A gfx803 RX 580 from 2017 serves inference
   over Vulkan. A 7900 XTX or MI210 trains and serves over ROCm. Same tool.
 - **Auto-detect, always overridable.** Every default — tier, backend, placement — is
   chosen for you and can be forced by a flag or config.
-- **One core, many frontends.** All logic lives in the Rust `core/`; the `cameo` CLI
-  and the `cameod` browser console are thin clients over the same brain.
-- **Administer it from a browser.** `cameod` ships in the image, starts on boot, and
-  serves a self-contained control plane on `:9090` — GPUs, tiers, endpoints, and the
-  model cache — with no external web stack.
+- **Administer it from a browser.** `cameod` starts on boot and serves the console
+  on `:9090` — GPUs, endpoints, and a playground. No extra web stack.
+
+A coding harness (Knossos) and a coding model (Daedalus) can point at this box
+later. They are not required to install or chat.
 
 > **Status: beta, pre-v1.** The core (detection, placement, CLI, console, container,
 > ISO) is built and the command surface below is real. GPU execution is validated on
@@ -51,13 +46,13 @@ After that the machine does not need the internet. Full walkthrough:
 ### ISO appliance
 
 Releases: [github.com/sadlowskik/Cameo/releases](https://github.com/sadlowskik/Cameo/releases)
-— **universal** (`cameo-*.iso`) to throw on any AMD box and let it detect;
-**lite** (`cameo-lite-*.iso`) for a known low-end / Vulkan-only card. Flash with Rufus,
-Etcher, or `dd`. Boot **Install Cameo to disk** — it copies the image offline,
-creates your admin account, writes a console key. Reboot, pull the USB, open
-`http://<the-box>:9090` from anything on the LAN. A starter model
-(`qwen2.5-0.5b`) is already on disk — start it from the console and chat.
-Chatting never phones home. Extra GGUFs go in `/var/lib/cameo/models`.
+— **universal** (`cameo-*.iso`) for any AMD box; **lite** (`cameo-lite-*.iso`) for a
+known old / Vulkan-only card. Flash with Rufus (**DD Image mode**), Etcher, or `dd`.
+**Disable Secure Boot** if the stick is ignored. Boot **Install Cameo to disk**.
+Reboot, leave the USB in until the screen goes dark, log in, open
+`http://<the-box>:9090` or `http://cameo.local:9090`, enter the printed key, press
+**Start qwen2.5-0.5b and chat**. That starter is a smoke test; pull a larger model
+when you have a network. Wi-Fi: `iwctl` (see [quickstart](docs/quickstart.md)).
 
 Building the ISO yourself still needs an Arch host:
 
@@ -94,11 +89,11 @@ cameo serve qwen2.5-0.5b         # starter model, already on the image (no netwo
 cameo pull tinyllama             # optional — fetch a model when you have a network
 cameo run   tinyllama            # one-shot inference
 cameo plan  qwen2.5-32b          # show the placement plan without running it
-cameo train mistral-7b           # training run (Tier 1/2 only; refused on Tier 3)
+cameo train mistral-7b           # needs torchrun (not on the ISO/container)
 cameo quantize model.gguf Q4_K_M # quantize to a target level
 cameo model ls                   # list the local model cache
 cameo fleet place qwen2.5-32b    # front several cameod nodes as one fleet
-cameo install                    # print the install plan for the detected hardware
+cameo install-plan               # packages this card would use (does not install)
 ```
 
 ## What first boot prints

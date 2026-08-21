@@ -140,7 +140,8 @@ jobs:
           # lost to one slow file. Retry rather than burning a manual re-run.
           for attempt in 1 2 3; do
             echo "=== build attempt $attempt ===" | tee -a build.log
-            if docker exec -e CAMEO_EDITION="$EDITION" arch \
+            if docker exec -e CAMEO_EDITION="$EDITION" -e CAMEO_SKIP_CARGO=1 \
+                 -e CAMEO_CARGO_TARGET_DIR=/repo/build/cargo-target arch \
                  bash -euo pipefail -c "rm -rf /repo/build/tmp; bash ./scripts/build-iso.sh" 2>&1 | tee -a build.log; then
               exit 0
             fi

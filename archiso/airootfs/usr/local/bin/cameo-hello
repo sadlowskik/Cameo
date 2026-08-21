@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# Print how to open the console: URL, key, next click. Sourced from first-boot
+# and every interactive login (profile.d). Must never fail a login.
+set +e
+
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+  C_ACCENT=$'\033[1;38;5;209m'; C_BOLD=$'\033[1m'; C_DIM=$'\033[2m'; C_OFF=$'\033[0m'
+else
+  C_ACCENT=""; C_BOLD=""; C_DIM=""; C_OFF=""
+fi
+
+# Env layers match cameod.service: generated /run first, /etc last wins.
+# shellcheck source=/dev/null
+[ -r /run/cameo/cameod.env ] && . /run/cameo/cameod.env
+# shellcheck source=/dev/null
+[ -r /etc/cameo/cameod.env ] && . /etc/cameo/cameod.env
+
+host="${CAMEO_CONSOLE_HOST:-127.0.0.1}"
+port="${CAMEO_CONSOLE_PORT:-9090}"
+
+# IPv4 on a real interface. Retry a few seconds: first-boot often races DHCP.
+lan_ip() {
+  hostname -I 2>/dev/null | awk '{
+    for (i = 1; i <= NF; i++) if ($i ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ && $i !~ /^127\./) { print $i; exit }
+  }'
+}
+
+ip="$(lan_ip)"
+tries="${CAMEO_HELLO_WAIT:-12}"
+i=0
+while [ -z "$ip" ] && [ "$i" -lt "$tries" ]; do
+  sleep 1
+  ip="$(lan_ip)"
+  i=$((i + 1))
+done
+
+if [ "$host" = "0.0.0.0" ] || [ "$host" = "::" ]; then
+  shown="${ip:-<this-box-ip>}"
+else
+  shown="$host"
+fi
+
+echo
+printf '%sWeb console%s\n' "$C_ACCENT" "$C_OFF"
+echo "  http://${shown}:${port}"
+echo "  http://cameo.local:${port}   (if this LAN speaks mDNS)"
+if [ -n "${CAMEO_CONSOLE_KEY:-}" ]; then
+  echo "  Console key:  ${CAMEO_CONSOLE_KEY}"
+fi
+if [ -d /run/archiso ]; then
+  echo "  ${C_DIM}Live USB: this key lasts until reboot. Install to keep it.${C_OFF}"
+else
+  echo "  ${C_DIM}Key is in /etc/cameo/cameod.env — stable across reboots.${C_OFF}"
+fi
+echo "  Open it from a phone or laptop on this LAN. No internet required."
+echo "  Starter model qwen2.5-0.5b is a smoke test (~0.5B). Press"
+echo "  “Start qwen2.5-0.5b and chat”, then type. Pull a larger GGUF later."
+
+if [ -z "$ip" ]; then
+  echo
+  printf '%sNo LAN address yet.%s Plug in Ethernet, or join Wi-Fi:\n' "$C_ACCENT" "$C_OFF"
+  echo "  iwctl"
+  echo "    station list"
+  echo "    station wlan0 scan          # use the name station list printed"
+  echo "    station wlan0 get-networks"
+  echo "    station wlan0 connect 'YourSSID'"
+  echo "  Then run:  cameo-hello"
+fi
+echo
+exit 0
+}

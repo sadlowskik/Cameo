@@ -18,8 +18,8 @@ sudo CAMEO_EDITION=lite ./scripts/build-iso.sh
 `scripts/build-iso.sh` builds from a *copy* of this profile (source stays clean):
 it pulls the baseline boot files from the stock `releng` profile, compiles the
 `cameo` CLI **and the `cameod` console daemon** (`cargo build --release`) and
-stages both into the image, optionally strips the heavy ROCm/PyTorch packages for
-the lite edition, then runs `mkarchiso`. The ISO lands in `archiso/out/`.
+stages both into the image, optionally strips ROCm (`ggml-hip`) for the lite
+edition, then runs `mkarchiso`. The ISO lands in `archiso/out/`.
 
 Write it to a USB stick and boot:
 
@@ -67,10 +67,12 @@ sudo dd if=archiso/out/cameo-*.iso of=/dev/sdX bs=4M status=progress oflag=sync
   on purpose, so the GPU is never published unauthenticated.
 
 ## What's in the image
-`packages.x86_64`: kernel + amdgpu + Vulkan userspace (every tier), ROCm (Tier 1/2,
-dropped in lite), llama.cpp/PyTorch build deps. The `cameo` CLI and the `cameod`
-console daemon are compiled from this repo and staged into the airootfs by the
-build script (not listed as packages).
+`packages.x86_64`: kernel + amdgpu + Vulkan userspace (every tier), ROCm runtime
+detection (`rocminfo` / `rocm-smi-lib`) and `ggml-hip` on the universal edition
+(dropped in lite), packaged `llama-cpp` + `ggml-cpu` + `ggml-vulkan`. No compiler
+toolchain and no PyTorch — the image is an appliance. The `cameo` CLI and the
+`cameod` console daemon are compiled from this repo and staged into the airootfs
+by the build script (not listed as packages).
 
 ## Boot-layer tuning (the distro's unfair advantage)
 - `airootfs/etc/modprobe.d/cameo-amdgpu.conf` — amdgpu module options (GTT aperture
@@ -80,9 +82,11 @@ build script (not listed as packages).
   on the live image, and a no-op reads as "already tuned".
 
 ## Still TODO (Phase 5)
-- A boot-menu splash/theme (currently inherits the releng bootloader chrome).
 - Pin ROCm/kernel/mesa **per tier** from `scripts/phase1`'s `known-good-combo.json`.
 - **Resizable BAR** is a firmware/BIOS setting — document it as a recommended toggle.
+
+The boot-menu splash is already rendered from `docs/brand/cameo-splash.svg` by
+`scripts/build-iso.sh` when `rsvg-convert` or ImageMagick is on the build host.
 
 Done: the guided installer is now the **default** boot entry and shows the
 detected tier before installing (detect → show tier → install to disk).

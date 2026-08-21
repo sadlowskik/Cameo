@@ -148,17 +148,45 @@ DISK_SIZE="$(lsblk -dno SIZE "$TARGET" 2>/dev/null | tr -d ' ')"
 DISK_MODEL="$(lsblk -dno MODEL "$TARGET" 2>/dev/null | sed 's/[ \t]*$//')"
 
 # ---- gather settings --------------------------------------------------------
+detect_timezone() {
+  local tz
+  tz="$(timedatectl show -p Timezone --value 2>/dev/null || true)"
+  [ -n "$tz" ] && [ "$tz" != "n/a" ] && { printf '%s\n' "$tz"; return; }
+  if [ -L /etc/localtime ]; then
+    readlink /etc/localtime | sed 's|.*/zoneinfo/||'
+  fi
+}
+
 HOSTNAME_VAL="${HOSTNAME_IN:-cameo}"
 USERNAME_VAL="${USERNAME_IN:-}"
-TIMEZONE_VAL="${TIMEZONE_IN:-UTC}"
+TIMEZONE_VAL="${TIMEZONE_IN:-}"
+[ -n "$TIMEZONE_VAL" ] || TIMEZONE_VAL="$(detect_timezone)"
+[ -n "$TIMEZONE_VAL" ] || TIMEZONE_VAL="UTC"
 
 if [ "$COMMIT" -eq 1 ]; then
-  if [ -z "$USERNAME_VAL" ]; then
-    printf '  Admin username: '
-    read -r USERNAME_VAL
+  if [ -z "$HOSTNAME_IN" ]; then
+    printf '  Hostname [%s]: ' "$HOSTNAME_VAL"
+    read -r hn_in || true
+    [ -n "${hn_in:-}" ] && HOSTNAME_VAL="$hn_in"
   fi
+  HOSTNAME_VAL="$(printf '%s' "$HOSTNAME_VAL" | tr 'A-Z' 'a-z')"
+  [[ "$HOSTNAME_VAL" =~ ^[a-z0-9][a-z0-9-]{0,62}$ ]] \
+    || die "invalid hostname '$HOSTNAME_VAL' (letters, digits, hyphen)."
+
+  if [ -z "$USERNAME_IN" ]; then
+    printf '  Admin username (lowercase, start with a letter) [admin]: '
+    read -r USERNAME_VAL || true
+  fi
+  USERNAME_VAL="${USERNAME_VAL:-admin}"
   [[ "$USERNAME_VAL" =~ ^[a-z_][a-z0-9_-]*$ ]] \
-    || die "invalid username '$USERNAME_VAL' (lowercase, start with a letter)."
+    || die "invalid username '$USERNAME_VAL' (lowercase, start with a letter, e.g. admin)."
+
+  if [ -z "$TIMEZONE_IN" ]; then
+    printf '  Timezone [%s]: ' "$TIMEZONE_VAL"
+    read -r tz_in || true
+    [ -n "${tz_in:-}" ] && TIMEZONE_VAL="$tz_in"
+  fi
+
   # Password twice, never echoed.
   printf '  Admin password: '; read -rs PASSWORD_VAL; printf '\n'
   printf '  Confirm password: '; read -rs PASSWORD_CONFIRM; printf '\n'
@@ -319,9 +347,11 @@ install -d -m755 /mnt/etc/cameo
 umask 077
 cat > /mnt/etc/cameo/cameod.env <<EOF
 # Cameo console — persistent settings written by cameo-install.
+# This key is stable across reboots. cameo-hello prints it at login.
 CAMEO_CONSOLE_HOST=0.0.0.0
 CAMEO_CONSOLE_KEY=$key
 CAMEO_CONSOLE_PORT=9090
+# CAMEO_AUTOSTART_MODEL=none
 EOF
 umask 022
 
@@ -346,14 +376,35 @@ cat > /mnt/etc/hosts <<EOF
 127.0.1.1   ${HOSTNAME_VAL}.localdomain ${HOSTNAME_VAL}
 EOF
 
-# A basic DHCP profile so the installed box has networking; iwd handles wifi.
+# DHCP on Ethernet (networkd) and on Wi-Fi (iwd). Without iwd's own IP config,
+# `iwctl` can show "connected" with no address — pacman then hangs or no-ops.
 install -Dm644 /dev/stdin /mnt/etc/systemd/network/20-wired.network <<'EOF'
 [Match]
 Type=ether
 
 [Network]
 DHCP=yes
+MulticastDNS=yes
 EOF
+install -Dm644 /dev/stdin /mnt/etc/systemd/resolved.conf.d/mdns.conf <<'EOF'
+[Resolve]
+MulticastDNS=yes
+EOF
+install -Dm644 /dev/stdin /mnt/etc/iwd/main.conf <<'EOF'
+[General]
+EnableNetworkConfiguration=true
+
+[Network]
+NameResolvingService=systemd
+EOF
+ln -sf /run/systemd/resolve/stub-resolv.conf /mnt/etc/resolv.conf
+
+# The squashfs copy is pristine — live pacman-init only filled the USB overlay.
+# Initialise the keyring from the archlinux-keyring files already on disk so
+# `pacman -Sy` works the first time the box has a network. No download.
+say "Initialising pacman keyring (offline)"
+arch-chroot /mnt pacman-key --init
+arch-chroot /mnt pacman-key --populate archlinux
 
 # Configure the target with discrete arch-chroot calls rather than one big
 # heredoc. This is deliberate: the admin password is piped straight to chpasswd
@@ -406,8 +457,9 @@ info "Leave the USB plugged in. Reboot first."
 info "When the screen goes dark or you see the firmware logo, THEN unplug the USB."
 info "Pulling it now kills the live OS (SQUASHFS unable to read page/block …)."
 info "Log in as ${C_BOLD}${USERNAME_VAL}${C_OFF} (or root) with the password you set."
-info "Web console:  http://<this-box-ip>:9090"
+info "Web console:  http://<this-box-ip>:9090   or   http://${HOSTNAME_VAL}.local:9090"
 info "Console key:  ${key}"
 info "  (stored in /etc/cameo/cameod.env — stable across reboots now)"
-info "Network is only needed to pull models and to find other Cameo nodes."
+info "After login the URL and key print again. Wi-Fi: iwctl  (see cameo-hello)."
+info "On the console: press “Start qwen2.5-0.5b and chat”."
 echo

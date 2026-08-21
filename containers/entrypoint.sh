@@ -10,7 +10,7 @@ set -eu
 # Publish the baked-in starter GGUF into the (often empty) volume so
 # `cameo serve qwen2.5-0.5b` works offline on first start.
 if [ -x /usr/local/bin/cameo-seed-models ]; then
-    /usr/local/bin/cameo-seed-models || true
+    /usr/local/bin/cameo-seed-models
 fi
 
 # An explicit command (not a flag) runs verbatim instead of the daemon.

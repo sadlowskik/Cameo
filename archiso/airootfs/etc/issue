@@ -7,5 +7,8 @@
 
  any AMD card -> a working LLM box
 
+ Log in. The console URL and key print after login.
+ Disable Secure Boot if this USB was ignored.
+
  \l on \n (\m)
 

@@ -1,7 +1,19 @@
-# Keep the build context small: the Containerfile only needs the source tree.
+# Builder copies the Rust workspace only; runtime copies a few scripts by path.
 .git/
+.github/
 target/
 build/
 archiso/out/
+archiso/work/
+docs/
+k8s/
+tests/
+site/
+daedalus/
+worker/
+my-worker/
+**/node_modules
 **/*.iso
 **/*.rs.bk
+cameo-site.zip
+*.md

@@ -85,12 +85,19 @@ if [ -n "${CAMEO_ARCH_SNAPSHOT:-}" ]; then
   printf 'Server=%s/$repo/os/$arch\n' "$ARCHIVE" > "$BUILD/mirrorlist.pinned"
   # Point the build's pacman at the pinned mirrorlist instead of the rolling one.
   sed -i 's#^Include = /etc/pacman.d/mirrorlist#Include = '"$BUILD"'/mirrorlist.pinned#' \
-    "$BUILD/pacman.conf" 2>/dev/null || true
+    "$BUILD/pacman.conf"
+  grep -qF "$BUILD/mirrorlist.pinned" "$BUILD/pacman.conf" \
+    || die "failed to pin pacman.conf to $BUILD/mirrorlist.pinned (releng layout changed?)"
   log "Reproducible build: packages pinned to Arch archive ${CAMEO_ARCH_SNAPSHOT}"
 fi
 for d in efiboot syslinux grub; do
-  [ -e "$BUILD/$d" ] || cp -r "$RELENG/$d" "$BUILD/" 2>/dev/null || true
+  if [ ! -e "$BUILD/$d" ]; then
+    [ -d "$RELENG/$d" ] || die "baseline $d missing from $RELENG (install archiso)"
+    cp -r "$RELENG/$d" "$BUILD/"
+  fi
 done
+[ -e "$BUILD/efiboot" ] || [ -e "$BUILD/syslinux" ] \
+  || die "no bootloader configs after staging (need efiboot or syslinux from releng)"
 
 # 1a. Build airootfs as releng's live root with Cameo's files overlaid.
 #
@@ -168,8 +175,9 @@ fi
 # job is to sit there serving models. Cameo has its own first-boot unit and no
 # unattended-install story, so nothing here wants it.
 #
-# Installation_guide goes with it: Cameo ships no installer, and a command that
-# opens the Arch installation guide is a promise the image cannot keep.
+# Installation_guide goes with it: Cameo's installer is cameo-install, and a
+# command that opens the Arch installation guide is a promise the image cannot
+# keep.
 for f in root/.zlogin root/.automated_script.sh usr/local/bin/Installation_guide; do
   if [ -e "$BUILD/airootfs/$f" ]; then
     rm -f "$BUILD/airootfs/$f"
@@ -466,29 +474,33 @@ done
 # says so and at least keeps its artefacts out of the source tree.
 # Both front ends ship: `cameo` (the CLI) and `cameod` (the control-plane daemon
 # that serves the browser console). One `cargo build` produces both.
-log "Building the cameo CLI + cameod daemon (release)..."
 CARGO_TARGET="${CAMEO_CARGO_TARGET_DIR:-$WORK/cargo-target}"
-mkdir -p "$CARGO_TARGET"
-if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ] && command -v runuser >/dev/null 2>&1; then
-  log "Dropping privileges to $SUDO_USER for the build"
-  chown -R "$SUDO_USER" "$CARGO_TARGET"
-  runuser -u "$SUDO_USER" -- env CARGO_TARGET_DIR="$CARGO_TARGET" \
-    cargo build --release -p cameo-cli -p cameo-daemon --manifest-path "$REPO/Cargo.toml"
+if [ "${CAMEO_SKIP_CARGO:-}" = "1" ]; then
+  log "CAMEO_SKIP_CARGO=1 — using prebuilt bins in $CARGO_TARGET/release"
 else
-  log "No SUDO_USER — compiling as root. Build scripts and proc-macros will run"
-  log "with full privileges; prefer 'sudo $0' from a normal account."
-  CARGO_TARGET_DIR="$CARGO_TARGET" \
-    cargo build --release -p cameo-cli -p cameo-daemon --manifest-path "$REPO/Cargo.toml"
+  log "Building the cameo CLI + cameod daemon (release)..."
+  mkdir -p "$CARGO_TARGET"
+  if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ] && command -v runuser >/dev/null 2>&1; then
+    log "Dropping privileges to $SUDO_USER for the build"
+    chown -R "$SUDO_USER" "$CARGO_TARGET"
+    runuser -u "$SUDO_USER" -- env CARGO_TARGET_DIR="$CARGO_TARGET" \
+      cargo build --release -p cameo-cli -p cameo-daemon --manifest-path "$REPO/Cargo.toml"
+  else
+    log "No SUDO_USER — compiling as root. Build scripts and proc-macros will run"
+    log "with full privileges; prefer 'sudo $0' from a normal account."
+    CARGO_TARGET_DIR="$CARGO_TARGET" \
+      cargo build --release -p cameo-cli -p cameo-daemon --manifest-path "$REPO/Cargo.toml"
+  fi
 fi
+[ -x "$CARGO_TARGET/release/cameo" ] && [ -x "$CARGO_TARGET/release/cameod" ] \
+  || die "missing $CARGO_TARGET/release/cameo or cameod (build them, or unset CAMEO_SKIP_CARGO)"
 install -Dm755 "$CARGO_TARGET/release/cameo" "$BUILD/airootfs/usr/local/bin/cameo"
 install -Dm755 "$CARGO_TARGET/release/cameod" "$BUILD/airootfs/usr/local/bin/cameod"
 
 # 3. Lite edition: drop the heavy ROCm / PyTorch packages (Vulkan-only, much smaller).
 #
-# The build toolchain (base-devel, cmake, ninja, git) deliberately stays in both
-# editions. Cameo is meant to be developed on, not just run, and llama.cpp being
-# prebuilt does not make a compiler dead weight on a machine whose purpose is
-# building things against it.
+# Compilers stay off both editions (packages.x86_64). The image is an appliance:
+# llama.cpp is the packaged binary, not something built on the box.
 if [ "$EDITION" = "lite" ]; then
   # ggml-hip matches neither ^rocm nor ^python-pytorch, so it needs its own
   # alternative or the "Vulkan-only" edition pulls the whole ROCm stack in as
@@ -512,8 +524,15 @@ else
 fi
 
 # 4. Build the ISO.
-log "Running mkarchiso (this takes a while and downloads packages)..."
-mkarchiso -v -w "$WORK/tmp" -o "$OUT" "$BUILD"
+export CAMEO_ZSTD_LEVEL="${CAMEO_ZSTD_LEVEL:-19}"
+log "Running mkarchiso (this takes a while and downloads packages; zstd level $CAMEO_ZSTD_LEVEL)..."
+MKARCHISO_ARGS=(-v -w "$WORK/tmp" -o "$OUT")
+if [ -n "${CAMEO_PACMAN_CACHE:-}" ]; then
+  mkdir -p "$CAMEO_PACMAN_CACHE"
+  MKARCHISO_ARGS+=(-c "$CAMEO_PACMAN_CACHE")
+  log "pacman cache: $CAMEO_PACMAN_CACHE"
+fi
+mkarchiso "${MKARCHISO_ARGS[@]}" "$BUILD"
 
 log "Done. ISO(s) in: $OUT"
 ls -lh "$OUT" || true

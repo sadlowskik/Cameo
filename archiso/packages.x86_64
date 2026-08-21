@@ -43,10 +43,12 @@ rocm-smi-lib
 #
 # Upstream consolidated llama-cpp-vulkan and llama-cpp-rocm into this single
 # package and moved the compute backend into ggml, which now ships one package
-# per backend. That maps onto Cameo's tiers directly: ggml-vulkan is the
-# universal baseline for every card, ggml-hip is the Tier 1/2 accelerator and
-# is stripped for the lite edition by scripts/build-iso.sh.
+# per backend. llama.cpp still needs ggml-cpu for host tensors even when
+# Vulkan/HIP is the accelerator — without it llama-server dies with
+# "make_cpu_buft_list: no CPU backend found". ggml-vulkan is the universal
+# baseline; ggml-hip is the Tier 1/2 accelerator and is stripped for lite.
 llama-cpp
+ggml-cpu
 ggml-vulkan
 ggml-hip
 

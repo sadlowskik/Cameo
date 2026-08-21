@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Cameo first-boot: greet the user with their GPU's support tier in plain
-# language, so "what will actually work on my card" is answered immediately.
+# Cameo first-boot: GPU tier, then how to open the console.
 set -euo pipefail
 
 echo
@@ -14,55 +13,24 @@ else
 fi
 echo "---------------------------------------------------------"
 if systemctl is-active --quiet cameod 2>/dev/null; then
-  # Report the address the console is actually bound to. Both env layers are
-  # sourced in the unit's order (generated /run first, operator /etc last wins).
-  # shellcheck source=/dev/null
-  if [ -r /run/cameo/cameod.env ]; then . /run/cameo/cameod.env 2>/dev/null; fi
-  # shellcheck source=/dev/null
-  if [ -r /etc/cameo/cameod.env ]; then . /etc/cameo/cameod.env 2>/dev/null; fi
-  host="${CAMEO_CONSOLE_HOST:-127.0.0.1}"
-  port="${CAMEO_CONSOLE_PORT:-9090}"
-  # 0.0.0.0 means "all interfaces" — show the actual LAN IP to browse to.
-  shown="$host"
-  if [ "$host" = "0.0.0.0" ] || [ "$host" = "::" ]; then
-    shown="$(hostname -I 2>/dev/null | awk '{print $1}')"
-    [ -n "$shown" ] || shown="<this-box-ip>"
-  fi
-  echo "Web console:  http://${shown}:${port}"
-  echo "  Open it from a browser on this LAN. No internet required."
-  echo "  Starter model qwen2.5-0.5b is on disk — open the console and chat."
-  echo "  Extra GGUFs: drop them in /var/lib/cameo/models (a USB stick is enough)."
-  if [ -n "${CAMEO_CONSOLE_KEY:-}" ]; then
-    echo "  Console key:  ${CAMEO_CONSOLE_KEY}"
-    echo "  (the dashboard asks for this once, then remembers it)"
-  fi
-  echo "  Settings: /etc/cameo/cameod.env"
-  echo "  Network is later: extra models, other Cameo nodes, console-from-outside."
+  CAMEO_HELLO_WAIT="${CAMEO_HELLO_WAIT:-15}" /usr/local/bin/cameo-hello
 else
   echo "Web console (cameod) is not running — start it with: systemctl start cameod"
 fi
-# Only meaningful while running from the live medium: on an installed system
-# there is nothing left to install and the cache is already persistent.
 if [ -d /run/archiso ]; then
   echo "---------------------------------------------------------"
-  # Report where pulled models land. cameo-storage-init (ordered before cameod)
-  # mounts a prepared CAMEO_DATA disk at the cache path, so by now the state is
-  # settled: a non-volatile filesystem there means persistence is active.
   cache_fs="$(findmnt -n -o FSTYPE --target /var/lib/cameo/models 2>/dev/null | tail -n1)"
   case "$cache_fs" in
     overlay | tmpfs | ramfs | "")
-      echo "Model cache is on RAM (nothing pulled here survives a reboot, and a"
-      echo "large model can exhaust memory). To store models on a real disk:"
-      echo "  cameo-persist-cache --list                 (show available disks)"
+      echo "Model cache is on RAM (nothing pulled here survives a reboot)."
+      echo "  cameo-persist-cache --list                 (show disks)"
       echo "  cameo-persist-cache /dev/sdXN --format     (use one — erases it)"
       ;;
     *)
-      echo "Model cache is on persistent storage ($cache_fs) — pulls survive reboots."
+      echo "Model cache is on persistent storage ($cache_fs)."
       ;;
   esac
-  echo "---------------------------------------------------------"
-  echo "Running from USB. To install Cameo to this machine's disk:"
-  echo "  cameo-install            (dry run — shows the plan first)"
+  echo "This is the live USB. To install to disk: cameo-install-guided"
 fi
 echo "========================================================="
 echo

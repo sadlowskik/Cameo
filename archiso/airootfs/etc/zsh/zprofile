@@ -1,0 +1,2 @@
+# Live autologin is zsh. Source /etc/profile so profile.d/cameo-hello.sh runs.
+emulate sh -c 'source /etc/profile'

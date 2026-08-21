@@ -13,9 +13,10 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ARTIFACTS="${CAMEO_ARTIFACTS:-$HERE/artifacts}"
 mkdir -p "$ARTIFACTS"
 
-# llama.cpp source + pin. Pin LLAMA_REF to a specific tag/commit once validated.
+# Optional source build (CAMEO_BUILD_LLAMA=1). The product ships Arch's llama-cpp;
+# do not default this to `master`. build-llama.sh requires a 40-char SHA.
 LLAMA_REPO="${CAMEO_LLAMA_REPO:-https://github.com/ggml-org/llama.cpp}"
-LLAMA_REF="${CAMEO_LLAMA_REF:-master}"
+LLAMA_REF="${CAMEO_LLAMA_REF:-}"
 LLAMA_SRC="${CAMEO_LLAMA_SRC:-$HERE/llama.cpp}"
 
 # AMD build target for the ROCm/HIP backend (e.g. gfx1030). Auto-detected from

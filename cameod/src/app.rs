@@ -948,7 +948,43 @@ fn api_start_server(state: &Arc<AppState>, req: &Request) -> Response {
         Ok(b) => b,
         Err(resp) => return resp,
     };
+    start_server(state, body)
+}
 
+/// Start the baked-in starter model so the playground works on first open.
+///
+/// `CAMEO_AUTOSTART_MODEL` selects the alias (`none` / `0` / empty disables).
+/// Default is `qwen2.5-0.5b`. No-ops when the GGUF is not on disk.
+pub fn maybe_autostart(state: &Arc<AppState>) {
+    let model = match std::env::var("CAMEO_AUTOSTART_MODEL") {
+        Ok(s) if s.is_empty() || s == "none" || s == "0" => return,
+        Ok(s) => s,
+        Err(_) => "qwen2.5-0.5b".into(),
+    };
+    if let Err(e) = cameo_models::resolve(&model) {
+        tracing::info!(%model, %e, "autostart skipped (model not in cache)");
+        return;
+    }
+    let body = ModelRequest {
+        model: model.clone(),
+        host: default_host(),
+        port: default_port(),
+        params: cameo_models::params_b_for(&model),
+        quant: default_quant(),
+        moe: false,
+        context: default_context(),
+        layers: 0,
+        backend: None,
+    };
+    let resp = start_server(state, body);
+    if resp.status >= 200 && resp.status < 300 {
+        tracing::info!(%model, "autostarted starter model");
+    } else {
+        tracing::warn!(%model, status = resp.status, "autostart failed");
+    }
+}
+
+fn start_server(state: &Arc<AppState>, body: ModelRequest) -> Response {
     // Same safety rule as `cameo serve`: an unauthenticated endpoint bound to a
     // routable address publishes the GPU, so that combination is refused.
     if !is_loopback(&body.host) && state.settings.serve_api_key.is_none() {

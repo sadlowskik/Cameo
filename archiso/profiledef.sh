@@ -31,10 +31,10 @@ bootmodes=(
 arch="x86_64"
 pacman_conf="pacman.conf"
 airootfs_image_type="squashfs"
-# Level 19 rather than 15: the image carries a full build toolchain and the ROCm
-# stack by choice, so the compression setting is where size comes back without
-# removing anything. Past 19 the extra minutes buy very little.
-airootfs_image_tool_options=('-comp' 'zstd' '-Xcompression-level' '19' '-b' '1M')
+# Default 19 for release ISOs (GitHub's 2 GiB asset cap). Override with
+# CAMEO_ZSTD_LEVEL=1 for a fast local iteration. Compilers are not on the image.
+zstd_level="${CAMEO_ZSTD_LEVEL:-19}"
+airootfs_image_tool_options=('-comp' 'zstd' '-Xcompression-level' "${zstd_level}" '-b' '1M')
 # The airootfs is releng's with Cameo overlaid, so releng's own files land in
 # the image and need their upstream modes declared here too -- otherwise they
 # arrive with whatever mode the archiso package happened to install, and a
@@ -44,13 +44,14 @@ airootfs_image_tool_options=('-comp' 'zstd' '-Xcompression-level' '19' '-b' '1M'
 # Nothing here may name a path the build script deletes: mkarchiso fails on a
 # file_permissions entry that does not exist. /root/.automated_script.sh and
 # /usr/local/bin/Installation_guide are removed there (boot-time remote
-# execution, and an installer Cameo does not have), so neither is listed.
+# execution; Cameo's installer is cameo-install, not Installation_guide).
 file_permissions=(
   ["/etc/shadow"]="0:0:400"
   ["/root"]="0:0:750"
   ["/root/.gnupg"]="0:0:700"
   ["/usr/local/bin/choose-mirror"]="0:0:755"
   ["/usr/local/bin/livecd-sound"]="0:0:755"
+  ["/usr/local/bin/cameo-hello"]="0:0:755"
   ["/usr/local/bin/cameo-firstboot"]="0:0:755"
   ["/usr/local/bin/cameo-console-init"]="0:0:755"
   ["/usr/local/bin/cameo-storage-init"]="0:0:755"

@@ -35,8 +35,19 @@ RUN if [ -n "$SNAPSHOT" ]; then \
     fi
 RUN pacman -Syu --noconfirm --needed rust
 WORKDIR /src
-COPY . .
-RUN cargo build --release --bin cameo --bin cameod
+ENV CARGO_HOME=/cargo
+# Copy only the workspace — docs, daedalus, node_modules, and ISOs stay out of
+# the context (see .dockerignore) so a README edit does not rebuild rustc.
+COPY Cargo.toml Cargo.lock rust-toolchain.toml rustfmt.toml ./
+COPY cli/ cli/
+COPY cameod/ cameod/
+COPY core/ core/
+RUN --mount=type=cache,target=/cargo/registry \
+    --mount=type=cache,target=/cargo/git \
+    --mount=type=cache,target=/src/target \
+    cargo build --release --bin cameo --bin cameod \
+ && install -Dm755 /src/target/release/cameo /out/cameo \
+ && install -Dm755 /src/target/release/cameod /out/cameod
 
 # ---- Runtime: the shipped serving image. ----
 FROM docker.io/library/archlinux:latest AS runtime
@@ -62,8 +73,8 @@ RUN pacman -Syu --noconfirm --needed \
  && pacman -Scc --noconfirm \
  && rm -rf /var/cache/pacman/pkg/*
 
-COPY --from=builder /src/target/release/cameo  /usr/local/bin/cameo
-COPY --from=builder /src/target/release/cameod /usr/local/bin/cameod
+COPY --from=builder /out/cameo  /usr/local/bin/cameo
+COPY --from=builder /out/cameod /usr/local/bin/cameod
 COPY containers/entrypoint.sh /usr/local/bin/cameo-entrypoint
 COPY archiso/airootfs/usr/local/bin/cameo-seed-models /usr/local/bin/cameo-seed-models
 COPY scripts/fetch-starter-model.sh /tmp/fetch-starter-model.sh

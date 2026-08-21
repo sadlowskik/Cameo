@@ -38,8 +38,9 @@ echo
 # (The image installs as-is; the flashed edition already decided ROCm vs Vulkan.)
 if command -v cameo >/dev/null 2>&1; then
   printf '%sDetected on this machine%s\n' "$C_ACCENT" "$C_OFF"
-  cameo gpu-status 2>/dev/null || cameo detect 2>/dev/null \
-    || echo "  (could not read GPU status — the installer will detect again)"
+  if ! cameo gpu-status; then
+    echo "  (could not read GPU status — the installer will detect again)"
+  fi
   echo
 fi
 printf '  %sPress Enter to begin%s, or type %sshell%s for a command prompt: ' \

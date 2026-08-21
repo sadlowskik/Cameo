@@ -1,9 +1,11 @@
 # Phase 1 Runbook — Validate Cameo's core path on real AMD hardware
 
-**Goal:** on a fresh Arch instance with an AMD GPU, get llama.cpp's **Vulkan** and
-(if the card supports it) **ROCm** backends building and benchmarked, then record
-the exact working combination. That `known-good-combo.json` is the deliverable
-that unblocks Phase 2 — the plan forbids Phase 2+ without it (plan §1, §9).
+**Goal:** on a fresh Arch instance with an AMD GPU, run the **packaged** llama.cpp
+(Vulkan always; ROCm/HIP when the card can) and record tok/s plus the working
+driver/mesa/ROCm versions. That `known-good-combo.json` is the deliverable that
+calibrates `core/placement` flags and `overrides.toml`. The ISO already ships
+Arch's `llama-cpp` + ggml plugins — do not compile llama.cpp from `master` as
+the default.
 
 This runbook is meant to be **copy-paste** on a rented cloud AMD instance so the
 paid GPU time is short and productive.
@@ -25,26 +27,18 @@ cd scripts/phase1
 chmod +x *.sh
 ./provision.sh
 ```
-Installs build tools, Vulkan userspace, and (best-effort) ROCm. If ROCm packages
-fail, the box is treated as **Tier 3** (Vulkan-only) and the rest still works.
+Installs Vulkan userspace, packaged `llama-cpp` + `ggml-cpu` + `ggml-vulkan`, and
+(best-effort) ROCm + `ggml-hip`. If ROCm packages fail, the box is treated as
+**Tier 3** (Vulkan-only) and the rest still works.
 
 Quick sanity checks:
 ```bash
 vulkaninfo --summary   # should list your AMD GPU
+command -v llama-bench llama-server llama-cli
 rocminfo | grep gfx    # Tier 1/2 only; prints e.g. gfx1030
 ```
 
-## 2. Build the backends
-```bash
-# Optionally pin llama.cpp and/or set the target explicitly:
-#   export CAMEO_LLAMA_REF=b3xxxx
-#   export CAMEO_AMDGPU_TARGET=gfx1030
-./build-llama.sh
-```
-Always builds the Vulkan backend; builds the ROCm backend when `rocminfo` is present.
-Writes `artifacts/build.env`.
-
-## 3. Benchmark
+## 2. Benchmark (default — packaged binaries)
 ```bash
 # Provide a reference GGUF model — a local path or a URL:
 export CAMEO_MODEL_PATH=/path/to/model.gguf
@@ -53,28 +47,41 @@ export CAMEO_MODEL_PATH=/path/to/model.gguf
 #   export CAMEO_HSA_OVERRIDE=10.3.0
 ./benchmark.sh
 ```
-Runs `llama-bench` per built backend, writing `artifacts/bench-<backend>.json`.
-Compare tok/s against the plan's published reference numbers (plan §7) to confirm
-Cameo's wrapper will perform comparably to a raw manual setup.
+Runs `llama-bench` from PATH, writing `artifacts/bench-vulkan.json` and, when
+`rocminfo` is present, `artifacts/bench-rocm.json`. Compare tok/s against the
+plan's published reference numbers (plan §7).
+
+## 3. Optional: compile llama.cpp from source
+Only if you need to bisect a flag against upstream. This is **not** what the ISO
+runs.
+
+```bash
+export CAMEO_BUILD_LLAMA=1
+export CAMEO_LLAMA_REF=0123456789abcdef0123456789abcdef01234567   # 40-char SHA
+# export CAMEO_AMDGPU_TARGET=gfx1030
+./build-llama.sh
+./benchmark.sh    # uses the trees in artifacts/build.env
+```
 
 ## 4. Record the known-good combination
 ```bash
 ./record-combo.sh
 ```
 Assembles `artifacts/known-good-combo.json`: GPU model, gfx target, HSA override,
-kernel / ROCm / mesa / vulkan-radeon versions, llama.cpp commit, and tok/s per
-backend.
+kernel / ROCm / mesa / vulkan-radeon versions, llama.cpp source (packaged vs
+commit), and tok/s per backend.
 
 ## 5. Feed results back into the repo
 - Copy `artifacts/known-good-combo.json` off the instance.
 - Update `core/gpu-detect/data/overrides.toml` with the **confirmed** tier and
   (Tier 2) `hsa_override` for this `gfx_arch`, replacing the illustrative seed.
 - Replace the illustrative fixtures in `core/gpu-detect/tests/fixtures/` with the
-  real `lspci -nn` / `rocminfo` captures from this run:
+  real `lspci -D -nn` / `rocminfo` captures from this run:
   ```bash
-  lspci -nn > lspci_<card>.txt
+  lspci -D -nn > lspci_<card>.txt
   rocminfo  > rocminfo_<card>.txt   # Tier 1/2 only
   ```
 
 **Phase 1 is done when `known-good-combo.json` exists and the benchmarks are
-sane.** Only then does Phase 2 backend implementation begin.
+sane.** Use those numbers to correct placeholder constants and spawn flags in
+`core/placement` — do not compile a second llama.cpp for the product.
