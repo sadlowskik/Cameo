@@ -492,8 +492,9 @@ else
       cargo build --release -p cameo-cli -p cameo-daemon --manifest-path "$REPO/Cargo.toml"
   fi
 fi
-[ -x "$CARGO_TARGET/release/cameo" ] && [ -x "$CARGO_TARGET/release/cameod" ] \
-  || die "missing $CARGO_TARGET/release/cameo or cameod (build them, or unset CAMEO_SKIP_CARGO)"
+if [ ! -x "$CARGO_TARGET/release/cameo" ] || [ ! -x "$CARGO_TARGET/release/cameod" ]; then
+  die "missing $CARGO_TARGET/release/cameo or cameod (build them, or unset CAMEO_SKIP_CARGO)"
+fi
 install -Dm755 "$CARGO_TARGET/release/cameo" "$BUILD/airootfs/usr/local/bin/cameo"
 install -Dm755 "$CARGO_TARGET/release/cameod" "$BUILD/airootfs/usr/local/bin/cameod"
 

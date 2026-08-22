@@ -45,7 +45,10 @@ bench_one() { # name binary [extra env assignments...]
     found="$(command -v "$bin" 2>/dev/null || true)"
     bin="$found"
   fi
-  [ -n "$bin" ] && [ -x "$bin" ] || { warn "$name: llama-bench not found"; return 1; }
+  if [ -z "$bin" ] || [ ! -x "$bin" ]; then
+    warn "$name: llama-bench not found"
+    return 1
+  fi
   log "Benchmarking $name backend on $(basename "$MODEL_PATH") ($bin)..."
   if env "$@" "$bin" -m "$MODEL_PATH" -o json \
        > "$ARTIFACTS/bench-$name.json" 2> "$ARTIFACTS/bench-$name.log"; then

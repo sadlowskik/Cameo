@@ -36,6 +36,7 @@ if [ -n "$snapshot" ]; then
   echo "cameo-update: pinning packages to Arch archive snapshot $snapshot"
   # Back up the mirrorlist once so a plain reinstall can restore rolling mirrors.
   [ -f "$mirrorlist.cameo-bak" ] || cp -a "$mirrorlist" "$mirrorlist.cameo-bak"
+  # shellcheck disable=SC2016 # Pacman expands these mirror variables later.
   printf 'Server=https://archive.archlinux.org/repos/%s/$repo/os/$arch\n' "$snapshot" \
     >"$mirrorlist"
 else

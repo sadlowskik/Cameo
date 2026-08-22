@@ -37,6 +37,7 @@ fi
 log "Pushing $SRC  ->  ${HOST}:${REMOTE_DIR}/site/"
 # tar-over-ssh: portable (no rsync needed), and additive - it overwrites the files
 # it carries (index.html, legal.html, assets/) and leaves anything else in place.
+# shellcheck disable=SC2029 # REMOTE_DIR is deliberately expanded before SSH.
 tar -C "$SRC" -czf - . \
   | ssh "$HOST" "mkdir -p '${REMOTE_DIR}/site' && tar -C '${REMOTE_DIR}/site' -xzf - && echo unpacked"
 

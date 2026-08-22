@@ -169,7 +169,7 @@ if [ "$COMMIT" -eq 1 ]; then
     read -r hn_in || true
     [ -n "${hn_in:-}" ] && HOSTNAME_VAL="$hn_in"
   fi
-  HOSTNAME_VAL="$(printf '%s' "$HOSTNAME_VAL" | tr 'A-Z' 'a-z')"
+  HOSTNAME_VAL="$(printf '%s' "$HOSTNAME_VAL" | tr '[:upper:]' '[:lower:]')"
   [[ "$HOSTNAME_VAL" =~ ^[a-z0-9][a-z0-9-]{0,62}$ ]] \
     || die "invalid hostname '$HOSTNAME_VAL' (letters, digits, hyphen)."
 
@@ -462,5 +462,5 @@ info "Console key:  ${key}"
 info "  (stored in /etc/cameo/cameod.env — stable across reboots now)"
 info "After login the URL and key print again."
 info "Wi-Fi is only for attaching this box as a fleet node (then: iwctl)."
-info "On the console: press “Start qwen2.5-0.5b and chat”."
+info 'On the console: press "Start qwen2.5-0.5b and chat".'
 echo
