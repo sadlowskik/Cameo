@@ -16,7 +16,7 @@ iso_name="${CAMEO_ISO_NAME:-cameo}"
 # label. The `date` fallbacks exist only for a direct mkarchiso invocation, and
 # are the non-reproducible path.
 iso_label="${CAMEO_ISO_LABEL:-CAMEO_$(date -u +%Y%m)}"
-iso_publisher="Cameo <https://github.com/korbin/cameo>"
+iso_publisher="Cameo <https://cameoconstruct.xyz/>"
 iso_application="Cameo — LLMs on AMD GPUs"
 iso_version="${CAMEO_ISO_VERSION:-$(date -u +%Y.%m.%d)}"
 install_dir="cameo"

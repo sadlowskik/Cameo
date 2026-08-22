@@ -11,7 +11,7 @@ is for extra models, fleets, and opening the console from outside the house.
 [![License](https://img.shields.io/badge/license-Apache--2.0-FF7A1A)](LICENSE)
 [![Status](https://img.shields.io/badge/status-beta%20(pre--v1)-FFD08A)](#status)
 [![Backends](https://img.shields.io/badge/backends-Vulkan%20·%20ROCm-3A3833)](#gpu-tiers)
-[![Site](https://img.shields.io/badge/site-cameoconstruct.pages.dev-3A3833)](https://cameoconstruct.pages.dev/)
+[![Site](https://img.shields.io/badge/site-cameoconstruct.xyz-3A3833)](https://cameoconstruct.xyz/)
 
 </div>
 
@@ -45,14 +45,15 @@ After that the machine does not need the internet. Full walkthrough:
 
 ### ISO appliance
 
-Releases: [github.com/sadlowskik/Cameo/releases](https://github.com/sadlowskik/Cameo/releases)
-— **universal** (`cameo-*.iso`) for any AMD box; **lite** (`cameo-lite-*.iso`) for a
-known old / Vulkan-only card. Flash with Rufus (**DD Image mode**), Etcher, or `dd`.
-**Disable Secure Boot** if the stick is ignored. Boot **Install Cameo to disk**.
-Reboot, leave the USB in until the screen goes dark, log in, open
-`http://<the-box>:9090` or `http://cameo.local:9090`, enter the printed key, press
-**Start qwen2.5-0.5b and chat**. That starter is a smoke test; pull a larger model
-when you have a network. Wi-Fi: `iwctl` (see [quickstart](docs/quickstart.md)).
+Flash an `.iso` from [Releases](https://github.com/sadlowskik/Cameo/releases)
+(not the Source code zip). **Universal** for any AMD box; **lite** for a known
+old / Vulkan-only card. If the newest tag has no ISO, use the last tag that lists
+one — lite today: [v0.1.0-beta.2](https://github.com/sadlowskik/Cameo/releases/tag/v0.1.0-beta.2).
+Rufus **DD Image mode**, Etcher, or `dd`. **Disable Secure Boot** if the stick is
+ignored. Boot **Install Cameo to disk**. Log in, open `http://cameo.local:9090`,
+press **Start qwen2.5-0.5b and chat**. No Wi-Fi for that. Network is later: extra
+models, or attaching this box as a fleet node (`iwctl` on that node only). See
+[quickstart](docs/quickstart.md).
 
 Building the ISO yourself still needs an Arch host:
 

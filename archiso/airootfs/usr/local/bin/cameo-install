@@ -460,6 +460,7 @@ info "Log in as ${C_BOLD}${USERNAME_VAL}${C_OFF} (or root) with the password you
 info "Web console:  http://<this-box-ip>:9090   or   http://${HOSTNAME_VAL}.local:9090"
 info "Console key:  ${key}"
 info "  (stored in /etc/cameo/cameod.env — stable across reboots now)"
-info "After login the URL and key print again. Wi-Fi: iwctl  (see cameo-hello)."
+info "After login the URL and key print again."
+info "Wi-Fi is only for attaching this box as a fleet node (then: iwctl)."
 info "On the console: press “Start qwen2.5-0.5b and chat”."
 echo

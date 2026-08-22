@@ -1,27 +1,19 @@
 
-Welcome to Cameo — any AMD card -> a working LLM box.
+Cameo — any AMD card → a working LLM box.
 
-  After login, cameo-hello prints the console URL and key.
-  Open that URL from a phone or laptop on this LAN.
-  Press “Start qwen2.5-0.5b and chat”. That starter is a smoke test;
-  pull a larger model when you have a network.
+  cameo gpu-status     GPU tier (1 / 2 / 3)
+  cameo-hello          console URL + key again
+  cameo --help         everything else
 
-  cameo gpu-status              GPU tier (1/2/3)
-  cameo-hello                   console URL + key again
-  cameo pull --list             extra models (needs network)
-  cameo --help                  everything else
+  After login, open the URL cameo-hello printed. On this LAN:
+  Start qwen2.5-0.5b and chat. That starter is a smoke test.
 
-  Wi-Fi (no Ethernet):
-    iwctl
-      station list
-      station wlan0 scan
-      station wlan0 get-networks
-      station wlan0 connect 'YourSSID'
+  Network is later: extra models (cameo pull), or this box as a
+  fleet node (Ethernet, or iwctl on that node only).
 
-Still on the USB live session? Install to disk (offline, copies the image):
-  cameo-install-guided   the installer — account, disk, confirm
-  cameo-install          dry run — shows the plan, changes nothing
-  After install: reboot first; unplug the USB only when the screen goes dark.
-  Live-USB console keys last until reboot.
+Still on the live USB? Install to disk (offline, copies the image):
+  cameo-install-guided    installer — account, disk, type name to confirm
+  cameo-install           dry run — plan only, changes nothing
+  After install: reboot first. Unplug the USB when the screen goes dark.
 
-Docs & source: https://github.com/sadlowskik/Cameo
+  https://cameoconstruct.xyz   https://github.com/sadlowskik/Cameo

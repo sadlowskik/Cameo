@@ -3,7 +3,6 @@
 set -euo pipefail
 
 echo
-echo "========================  Cameo  ========================"
 if command -v cameo >/dev/null 2>&1; then
   cameo gpu-status || echo "(GPU status unavailable — see 'cameo gpu-status')"
 else
@@ -11,14 +10,14 @@ else
   echo "Detected AMD GPUs:"
   lspci -nn | grep -iE 'vga|display|3d controller' | grep -i '\[1002:' || true
 fi
-echo "---------------------------------------------------------"
+echo "────────────────────────────────────────"
 if systemctl is-active --quiet cameod 2>/dev/null; then
-  CAMEO_HELLO_WAIT="${CAMEO_HELLO_WAIT:-15}" /usr/local/bin/cameo-hello
+  CAMEO_HELLO_NO_ART=1 CAMEO_HELLO_WAIT="${CAMEO_HELLO_WAIT:-15}" /usr/local/bin/cameo-hello
 else
   echo "Web console (cameod) is not running — start it with: systemctl start cameod"
 fi
 if [ -d /run/archiso ]; then
-  echo "---------------------------------------------------------"
+  echo "────────────────────────────────────────"
   cache_fs="$(findmnt -n -o FSTYPE --target /var/lib/cameo/models 2>/dev/null | tail -n1)"
   case "$cache_fs" in
     overlay | tmpfs | ramfs | "")
@@ -32,5 +31,5 @@ if [ -d /run/archiso ]; then
   esac
   echo "This is the live USB. To install to disk: cameo-install-guided"
 fi
-echo "========================================================="
+echo "────────────────────────────────────────"
 echo

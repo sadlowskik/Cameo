@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# Print how to open the console: URL, key, next click. Sourced from first-boot
-# and every interactive login (profile.d). Must never fail a login.
+# Print how to open the console: wordmark, URL, key, next click.
+# Sourced from first-boot and every interactive login (profile.d).
+# Must never fail a login.
 set +e
 
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
-  C_ACCENT=$'\033[1;38;5;209m'; C_BOLD=$'\033[1m'; C_DIM=$'\033[2m'; C_OFF=$'\033[0m'
+  C_ACCENT=$'\033[1;38;5;209m'; C_DIM=$'\033[2m'; C_OFF=$'\033[0m'
 else
-  C_ACCENT=""; C_BOLD=""; C_DIM=""; C_OFF=""
+  C_ACCENT=""; C_DIM=""; C_OFF=""
 fi
 
 # Env layers match cameod.service: generated /run first, /etc last wins.
@@ -40,32 +41,44 @@ else
   shown="$host"
 fi
 
+rule() { printf '%s────────────────────────────────────────%s\n' "$C_DIM" "$C_OFF"; }
+
 echo
-printf '%sWeb console%s\n' "$C_ACCENT" "$C_OFF"
-echo "  http://${shown}:${port}"
-echo "  http://cameo.local:${port}   (if this LAN speaks mDNS)"
+if [ -z "${CAMEO_HELLO_NO_ART:-}" ]; then
+  printf '%s' "$C_ACCENT"
+  cat <<'ART'
+ ██████╗ █████╗ ███╗   ███╗███████╗ ██████╗
+██╔════╝██╔══██╗████╗ ████║██╔════╝██╔═══██╗
+██║     ███████║██╔████╔██║█████╗  ██║   ██║
+██║     ██╔══██║██║╚██╔╝██║██╔══╝  ██║   ██║
+╚██████╗██║  ██║██║ ╚═╝ ██║███████╗╚██████╔╝
+ ╚═════╝╚═╝  ╚═╝╚═╝     ╚═╝╚══════╝ ╚═════╝
+ART
+  printf '%s' "$C_OFF"
+  printf '  %sany AMD card → a working LLM box%s\n' "$C_DIM" "$C_OFF"
+  echo
+fi
+rule
+printf '%s  Web console%s\n' "$C_ACCENT" "$C_OFF"
+echo "    http://${shown}:${port}"
+echo "    http://cameo.local:${port}"
 if [ -n "${CAMEO_CONSOLE_KEY:-}" ]; then
-  echo "  Console key:  ${CAMEO_CONSOLE_KEY}"
+  printf '    Console key:  %s%s%s\n' "$C_ACCENT" "$CAMEO_CONSOLE_KEY" "$C_OFF"
 fi
 if [ -d /run/archiso ]; then
-  echo "  ${C_DIM}Live USB: this key lasts until reboot. Install to keep it.${C_OFF}"
+  echo "    ${C_DIM}Live USB — this key lasts until reboot. Install to keep it.${C_OFF}"
 else
-  echo "  ${C_DIM}Key is in /etc/cameo/cameod.env — stable across reboots.${C_OFF}"
+  echo "    ${C_DIM}Key in /etc/cameo/cameod.env — stable across reboots.${C_OFF}"
 fi
-echo "  Open it from a phone or laptop on this LAN. No internet required."
-echo "  Starter model qwen2.5-0.5b is a smoke test (~0.5B). Press"
-echo "  “Start qwen2.5-0.5b and chat”, then type. Pull a larger GGUF later."
+echo
+echo "    Open from a phone or laptop on this LAN. No internet."
+echo "    Starter is a smoke test: Start qwen2.5-0.5b and chat."
+rule
 
 if [ -z "$ip" ]; then
   echo
-  printf '%sNo LAN address yet.%s Plug in Ethernet, or join Wi-Fi:\n' "$C_ACCENT" "$C_OFF"
-  echo "  iwctl"
-  echo "    station list"
-  echo "    station wlan0 scan          # use the name station list printed"
-  echo "    station wlan0 get-networks"
-  echo "    station wlan0 connect 'YourSSID'"
-  echo "  Then run:  cameo-hello"
+  printf '%s  No LAN address yet.%s Plug Ethernet for the console on this LAN.\n' "$C_ACCENT" "$C_OFF"
+  echo "    Wi-Fi is only for attaching this box as a fleet node — then: iwctl"
 fi
 echo
 exit 0
-}

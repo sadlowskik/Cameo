@@ -15,22 +15,37 @@ set -u
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
   C_ACCENT=$'\033[1;38;5;209m'
   C_BOLD=$'\033[1m'
+  C_WARN=$'\033[1;33m'
   C_OFF=$'\033[0m'
 else
   C_ACCENT=""
   C_BOLD=""
+  C_WARN=""
   C_OFF=""
 fi
 
-printf '\n%s========================  Install Cameo  ========================%s\n' \
-  "$C_ACCENT" "$C_OFF"
-echo "This installs Cameo permanently onto a disk in this machine, so you boot"
-echo "from the disk and never need the USB again. A whole disk is erased — but"
-echo "nothing is touched until you pick a disk, review the plan, and type the"
-echo "disk's name to confirm."
-echo "No internet needed: this copies the USB onto disk (never pacstrap, never"
-echo "mirrors). If you see 'pacstrap cannot download', you have an old ISO —"
-echo "re-flash v0.1.0-beta.2 or newer. Network is only for extra models later."
+echo
+printf '%s' "$C_ACCENT"
+cat <<'ART'
+ ██████╗ █████╗ ███╗   ███╗███████╗ ██████╗
+██╔════╝██╔══██╗████╗ ████║██╔════╝██╔═══██╗
+██║     ███████║██╔████╔██║█████╗  ██║   ██║
+██║     ██╔══██║██║╚██╔╝██║██╔══╝  ██║   ██║
+╚██████╗██║  ██║██║ ╚═╝ ██║███████╗╚██████╔╝
+ ╚═════╝╚═╝  ╚═╝╚═╝     ╚═╝╚══════╝ ╚═════╝
+ART
+printf '%s' "$C_OFF"
+printf '  %sInstall Cameo to disk%s\n\n' "$C_BOLD" "$C_OFF"
+echo "This copies the USB onto a disk in this machine. After reboot you never"
+echo "need the stick. No internet: never pacstrap, never mirrors."
+echo
+printf '%s  This installer erases the disk you pick.%s\n' "$C_WARN" "$C_OFF"
+echo "  Partitions, Windows, everything. No undo."
+echo "  Nothing is touched until you pick a disk, review the plan, and type"
+echo "  that disk's name (for example sda) to confirm."
+echo
+echo "  If you see 'pacstrap cannot download', you have an old ISO — re-flash"
+echo "  v0.1.0-beta.2 or newer. Network is only for extra models later."
 echo
 
 # Show what Cameo detected on this box up front, so the installer is visibly

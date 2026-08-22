@@ -1,18 +1,18 @@
 # Cameo quickstart
 
-Download the ISO, flash a USB, plug it into the AMD machine, set an account,
-open the console, chat. After that the box does not need the internet. Network
-is for extra models, other Cameo nodes, and opening the console from outside
-the house.
+Flash the image. Boot the box. Chat. After that it does not need the internet.
+Network is only for extra models and attaching a node to a fleet.
 
-## 1. Download
+## 1. Download the image
 
-From [GitHub Releases](https://github.com/sadlowskik/Cameo/releases):
+From [GitHub Releases](https://github.com/sadlowskik/Cameo/releases), take a file
+named `cameo-*.iso` (or `.iso.part*` if split). Ignore “Source code” zip/tar —
+those are not flashable. If the newest tag has no ISO, use the last tag that
+lists one. Today the last flashable lite image is
+[v0.1.0-beta.2](https://github.com/sadlowskik/Cameo/releases/tag/v0.1.0-beta.2).
 
-- **Universal** (`cameo-*.iso`) — every AMD card. Take this if you are unsure.
-  Vulkan always; ROCm only when the card can train. Larger download.
-- **Lite** (`cameo-lite-*.iso`) — Vulkan only. For a known old card (RX 580,
-  APU) or a small USB stick.
+- **Universal** (`cameo-*.iso`) — every AMD card. Unsure? This one.
+- **Lite** (`cameo-lite-*.iso`) — Vulkan only, known old card (RX 580, APU).
 
 Verify against `SHA256SUMS` before flashing.
 
@@ -29,70 +29,52 @@ ISO mode often produces a stick that will not boot.
 sudo dd if=cameo-*.iso of=/dev/sdX bs=4M status=progress oflag=sync
 ```
 
-## 3. Firmware, then boot
+## 3. Boot and install
 
-1. **Disable Secure Boot** (or add the USB as a trusted key). Cameo’s bootloader
-   is not Microsoft-signed yet; with Secure Boot on, many PCs ignore the stick
-   and boot Windows as if nothing happened. Details: [secure-boot.md](secure-boot.md).
-2. Boot from the USB. **Install Cameo to disk** is the default menu entry.
-3. You will see the detected GPU and tier. Pick a disk, an admin username
+1. **Disable Secure Boot** (or the stick is ignored and Windows boots). Details:
+   [secure-boot.md](secure-boot.md).
+2. Boot **Install Cameo to disk** (the default). Pick a disk, an admin username
    (lowercase, e.g. `admin`), a password, and a timezone. Type the disk’s name
-   to confirm. Nothing is erased until that last step.
-4. Reboot **with the USB still in**. Unplug it only when the screen goes dark
-   (or at the firmware logo). Pulling it while the installer is still running
-   kills the live OS.
+   to confirm.
+3. Reboot **with the USB still in**. Unplug it only when the screen goes dark.
 
-Same flow from a live shell:
-
-```bash
-cameo-install-guided          # interactive
-cameo-install                 # dry run — prints the plan, changes nothing
-cameo-install --commit        # do it (still confirms the disk name)
-```
+You do **not** need Wi-Fi for this.
 
 ## 4. Open the console and chat
 
 After login the box prints the console URL and key (`cameo-hello` reprints them).
+Plug Ethernet if the box has a port so another device on the LAN can open:
 
-1. **Ethernet:** plug in. DHCP is automatic.
-2. **Wi-Fi only:**
+`http://cameo.local:9090` or `http://<the-box>:9090`
 
-   ```bash
-   iwctl
-     station list
-     station wlan0 scan          # use the name `station list` printed
-     station wlan0 get-networks
-     station wlan0 connect 'YourSSID'
-   cameo-hello
-   ```
-
-3. From a phone or laptop on the same LAN, open
-   `http://<the-box>:9090` or `http://cameo.local:9090`.
-4. Enter the console key (the page has a field; it remembers it).
-5. Press **Start qwen2.5-0.5b and chat**, then type. The starter is a
-   **smoke test** (~0.5B). It proves the card works. Pull a larger GGUF when
-   you have a network (`cameo pull --list`).
-
-Serving never phones home. Extra weights: drop a `.gguf` in
-`/var/lib/cameo/models` or `cameo pull`.
+Enter the key. Press **Start qwen2.5-0.5b and chat**. That starter is a smoke
+test (~0.5B). Extra GGUFs: drop them in `/var/lib/cameo/models`.
 
 Live USB (without installing): the console key **changes every reboot**.
 Install to disk to keep it.
 
-## When you want a network
+## Fleet: that’s when a node gets a network
 
-| Need | What to use |
-|---|---|
-| More models from the internet | `cameo pull tinyllama` (or any alias / HuggingFace spec) |
-| Several Cameo boxes as a fleet | `cameo fleet status --node a:9090 --node b:9090` |
-| Console from outside the house | The same `:9090`, forwarded or tunneled however you already expose a LAN service |
+A single box stays air-gapped after you flash. To attach this machine as a
+**node** in a fleet, give it a network:
 
-One machine, one card, one house: stay air-gapped after the ISO download.
+- Ethernet: plug in (DHCP is automatic).
+- Wi-Fi, on that node only:
+
+```bash
+iwctl
+  station list
+  station wlan0 scan
+  station wlan0 get-networks
+  station wlan0 connect 'YourSSID'
+```
+
+Then point it at the hub (`CAMEO_HUB_URL` / `cameo fleet`). Extra models from
+the internet are `cameo pull` — also later, not required to chat.
 
 ## Developers
 
-The CLI, daemon, and console are identical in the container. The host owns the
-GPU driver. This is not the appliance path.
+Container path: host owns the GPU driver. Not the appliance.
 
 ```bash
 podman build -f containers/Containerfile -t cameo:vulkan .
@@ -101,16 +83,9 @@ podman run --rm -p 9090:9090 -v cameo-models:/var/lib/cameo/models \
   cameo:vulkan
 ```
 
-The container prints a bearer key on start. Open `http://127.0.0.1:9090`.
-
 Build the ISO yourself on an Arch host (`mkarchiso`, root):
 
 ```bash
-sudo ./scripts/build-iso.sh                        # universal
-sudo CAMEO_EDITION=lite ./scripts/build-iso.sh     # lite
+sudo ./scripts/build-iso.sh
+sudo CAMEO_EDITION=lite ./scripts/build-iso.sh
 ```
-
-Every CLI command takes `--dry-run` and `--json`. Point a harness at Cameo via
-[`harness-integration.md`](harness-integration.md); update via
-[`updating.md`](updating.md); the HTTP surface is
-[`api-reference.md`](api-reference.md).
