@@ -5,6 +5,10 @@ one stable, OpenAI-compatible engine URL per Cameo box or fleet. This is the
 worked example: how a harness discovers Cameo's engines and points an engine slot
 at them.
 
+The standalone Rust Daedalus workspace is the harness source of truth. Cameo
+does not vendor, build, or mutate agent code; its `daedalus` submodule is not an
+integration target.
+
 ## The contract
 
 - **Engine API:** `POST http://<cameo>:9090/v1/chat/completions` (and
@@ -18,6 +22,11 @@ at them.
   ```
 
   `GET /v1/models` is the OpenAI-native equivalent for clients that expect it.
+- **Tools and limits:** Cameo declares `tool_calls.native: false` and an
+  `agent-managed` fallback in its versioned capability block. Treat
+  `limits.max_request_bytes` as a hard wire limit; a `null`
+  `max_completion_tokens` means the selected endpoint, not Cameo, controls
+  generation length.
 - **Auth:** when `auth_required` is true, present the serve key as
   `Authorization: Bearer <key>`. It is the same key for every model behind the one
   door.
@@ -48,11 +57,56 @@ at them.
    )
    ```
 
-That is the whole bridge: Knossos `--engine cameo` discovers `GET /api/engines`
+That is the whole bridge: the Rust Knossos binary uses `--engine cameo` to discover `GET /api/engines`
 (serve key is enough), fail-closes if the model is not resident, and — on the
 host-only socket or with `CAMEO_CONSOLE_KEY` — `POST /api/servers` to ensure it.
 A consumer key never loads VRAM. Cameo routes, supervises, auto-restarts (F9),
 and VRAM-arbitrates (F10) behind `/v1`.
+
+```bash
+# The model is explicit: Cameo never guesses and surprises the box with a VRAM load.
+export CAMEO_BASE_URL=http://box-a:9090/v1
+export CAMEO_MODEL=qwen2.5-coder-7b
+
+# Consumer credential: discovery and inference only.
+export CAMEO_SERVE_KEY='<serve key>'
+
+# Optional operator credential: allow deliberate cold-model provisioning.
+# Omit this when Knossos must only reuse a resident model.
+export CAMEO_CONSOLE_KEY='<operator key>'
+
+daedalus --engine cameo task "add a regression test for the parser"
+```
+
+`CAMEO_CONSOLE_KEY` is intentionally separate from `CAMEO_SERVE_KEY`. In
+self-host mode, a co-located harness can instead use `/run/cameo/cameo.sock`;
+multi-tenant mode does not expose that privileged socket.
+
+### Optional session residency
+
+An agent that needs a long-lived model may opt into a session lease after it has
+heartbeated a session and verified the model is running. This is intentionally
+separate from normal discovery and inference: it avoids surprise GPU loads and
+does not give a serve key any operator authority.
+
+```bash
+curl -X POST http://box-a:9090/api/sessions/agent-42/lease \
+  -H "Authorization: Bearer $CAMEO_CONSOLE_KEY" \
+  -d '{"model":"qwen2.5-coder-7b"}'
+```
+
+Refresh `POST /api/sessions` at least every 90 seconds, then `DELETE` this lease
+when the task ends. A `409` means the model is not already running; provision it
+through the normal operator flow first. `GET` returns `state: "unavailable"` if
+an operator has stopped the backing endpoint, so the agent can choose whether to
+re-ensure it. The current Rust engine does not need a lease for ordinary work;
+adopt it only where eviction protection is worth the capacity trade-off.
+
+Each session heartbeat may also report its selected `engine`, `plan_step`,
+`verification`, `changed_files`, and `trace_ref`, alongside its existing mode,
+state, model, halt reason, and summary. Cameo is intentionally an observer: it
+renders these values in the Deck but does not infer whether the agent should
+continue, write, or declare success.
 
 ## A fleet
 

@@ -12,7 +12,7 @@
 //! a bottleneck. Every read reaps first (see [`Endpoint::refresh`]), so a server
 //! that died on its own is reported as `exited`, not falsely `running`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::process::Child;
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
@@ -147,6 +147,9 @@ pub struct Endpoint {
     pub fits_vram: bool,
     /// Human-readable plan notes, surfaced verbatim in the dashboard.
     pub notes: Vec<String>,
+    /// Context window requested when the server was started. This is a server
+    /// fact, not the model's advertised maximum.
+    pub context_tokens: u32,
     /// The exact command that was (or would be) run.
     pub command: CommandSpec,
     /// The live child, once spawned. `None` before spawn, after reap, or when the
@@ -258,6 +261,7 @@ impl Endpoint {
             "fits_vram": self.fits_vram,
             "vram_bytes": self.vram_bytes,
             "notes": self.notes,
+            "context_tokens": self.context_tokens,
             "command": self.command.display(),
             "uptime_secs": uptime,
         })
@@ -273,6 +277,8 @@ pub struct StartRequest {
     pub backend: String,
     pub fits_vram: bool,
     pub notes: Vec<String>,
+    /// Requested server context window, in tokens.
+    pub context_tokens: u32,
     pub command: CommandSpec,
     /// Estimated VRAM the endpoint will hold, for residency (F10).
     pub vram_need: u64,
@@ -287,12 +293,33 @@ pub enum StartError {
     PortInUse(String),
     /// The model is larger than the whole GPU — refused rather than OOM (F10).
     WontFit(String),
+    /// The model would fit only by evicting an endpoint an active session has
+    /// explicitly claimed. The operator may release the lease or stop it.
+    LeasedCapacity(String),
+}
+
+/// Why an explicit session lease could not be created.
+#[derive(Debug)]
+pub enum LeaseError {
+    /// No currently running endpoint serves the requested model.
+    Unavailable(String),
+}
+
+#[derive(Debug, Clone)]
+struct Lease {
+    session_id: String,
+    model: String,
+    endpoint_id: String,
 }
 
 /// The supervisor: a lock around the set of tracked endpoints.
 #[derive(Default)]
 pub struct Supervisor {
     endpoints: Mutex<HashMap<String, Endpoint>>,
+    /// Session-id to the endpoint it explicitly claims. Kept separately from
+    /// endpoint state so an endpoint that stops can report `unavailable`
+    /// rather than silently forgetting the session's claim.
+    leases: Mutex<HashMap<String, Lease>>,
 }
 
 impl Supervisor {
@@ -306,6 +333,7 @@ impl Supervisor {
     pub fn start(&self, req: StartRequest) -> Result<Value, StartError> {
         let id = endpoint_id(&req.model, req.port);
         let mut map = self.endpoints.lock().unwrap();
+        let leases = self.leases.lock().unwrap();
 
         // Reap any prior tenant of this id before deciding the port is taken: a
         // crashed endpoint should not block re-launching on the same port.
@@ -335,6 +363,10 @@ impl Supervisor {
         // Reap first so a crashed endpoint is not counted as holding VRAM, then
         // arbitrate — evicting least-recently-used residents or refusing outright.
         if req.vram_budget > 0 && req.vram_need > 0 {
+            let protected: HashSet<&str> = leases
+                .values()
+                .map(|lease| lease.endpoint_id.as_str())
+                .collect();
             let mut residents: Vec<ResidentVram> = map
                 .values_mut()
                 .filter_map(|e| {
@@ -348,6 +380,7 @@ impl Supervisor {
                     })
                 })
                 .collect();
+            exclude_leased_residents(&mut residents, &protected);
             match admit(req.vram_budget, req.vram_need, &mut residents) {
                 Admission::Admit => {}
                 Admission::Evict(ids) => {
@@ -361,6 +394,25 @@ impl Supervisor {
                     }
                 }
                 Admission::Refuse => {
+                    let protected_vram: u64 = map
+                        .values_mut()
+                        .filter(|e| protected.contains(e.id.as_str()))
+                        .map(|e| {
+                            e.refresh();
+                            if e.state() == "running" {
+                                e.vram_bytes
+                            } else {
+                                0
+                            }
+                        })
+                        .sum();
+                    if protected_vram > 0 {
+                        return Err(StartError::LeasedCapacity(format!(
+                            "model needs ~{:.1} GiB of VRAM, but ~{:.1} GiB is reserved by active session leases; release a lease or stop that endpoint explicitly",
+                            gib(req.vram_need),
+                            gib(protected_vram),
+                        )));
+                    }
                     return Err(StartError::WontFit(format!(
                         "model needs ~{:.1} GiB of VRAM but the GPU has ~{:.1} GiB; \
                          quantize further, pick a smaller model, or add a GPU.",
@@ -384,6 +436,7 @@ impl Supervisor {
             backend: req.backend,
             fits_vram: req.fits_vram,
             notes: req.notes,
+            context_tokens: req.context_tokens,
             command: req.command,
             child,
             error,
@@ -433,11 +486,92 @@ impl Supervisor {
         names
     }
 
+    /// Safe, compact endpoint facts for the harness engine descriptor. Detailed
+    /// command lines and ports stay on the operator-only server API.
+    pub fn engine_profiles(&self, include_vram: bool) -> Vec<Value> {
+        let mut map = self.endpoints.lock().unwrap();
+        let leases = self.leases.lock().unwrap();
+        let mut profiles: Vec<Value> = map
+            .values_mut()
+            .filter_map(|endpoint| {
+                endpoint.refresh();
+                (endpoint.state() == "running").then(|| {
+                    let lease_count = leases
+                        .values()
+                        .filter(|lease| lease.endpoint_id == endpoint.id)
+                        .count();
+                    let mut profile = json!({
+                        "id": endpoint.id,
+                        "model": endpoint.model,
+                        "state": endpoint.state(),
+                        "backend": endpoint.backend,
+                        "context_tokens": endpoint.context_tokens,
+                        "lease_count": lease_count,
+                    });
+                    if include_vram {
+                        profile["vram_bytes"] = json!(endpoint.vram_bytes);
+                    }
+                    profile
+                })
+            })
+            .collect();
+        profiles.sort_by(|a, b| a["model"].as_str().cmp(&b["model"].as_str()));
+        profiles
+    }
+
+    /// Claim a resident model for a session. Claims are opt-in: ordinary
+    /// inference traffic remains eligible for LRU eviction.
+    pub fn lease(&self, session_id: &str, model: &str) -> Result<Value, LeaseError> {
+        let mut map = self.endpoints.lock().unwrap();
+        let mut leases = self.leases.lock().unwrap();
+        let endpoint_id = map.values_mut().find_map(|endpoint| {
+            endpoint.refresh();
+            (endpoint.model == model && endpoint.state() == "running").then(|| endpoint.id.clone())
+        });
+        let Some(endpoint_id) = endpoint_id else {
+            return Err(LeaseError::Unavailable(model.to_string()));
+        };
+        let lease = Lease {
+            session_id: session_id.to_string(),
+            model: model.to_string(),
+            endpoint_id,
+        };
+        let view = lease_view(&lease, &mut map);
+        leases.insert(session_id.to_string(), lease);
+        Ok(view)
+    }
+
+    /// Drop one session's claim. The endpoint stays running; it simply becomes
+    /// eligible for normal LRU admission again.
+    pub fn release(&self, session_id: &str) -> bool {
+        self.leases.lock().unwrap().remove(session_id).is_some()
+    }
+
+    /// Report an active lease or the explicit unavailable state when its
+    /// endpoint died or was stopped by an operator.
+    pub fn lease_status(&self, session_id: &str) -> Option<Value> {
+        let mut map = self.endpoints.lock().unwrap();
+        let leases = self.leases.lock().unwrap();
+        leases
+            .get(session_id)
+            .map(|lease| lease_view(lease, &mut map))
+    }
+
     /// The current view of every tracked endpoint, most-recently-started first.
     pub fn list(&self) -> Vec<Value> {
         let mut map = self.endpoints.lock().unwrap();
-        let mut views: Vec<(SystemTime, Value)> =
-            map.values_mut().map(|e| (e.started_at, e.view())).collect();
+        let leases = self.leases.lock().unwrap();
+        let mut views: Vec<(SystemTime, Value)> = map
+            .values_mut()
+            .map(|e| {
+                let mut view = e.view();
+                view["lease_count"] = json!(leases
+                    .values()
+                    .filter(|lease| lease.endpoint_id == e.id)
+                    .count());
+                (e.started_at, view)
+            })
+            .collect();
         views.sort_by_key(|v| std::cmp::Reverse(v.0));
         views.into_iter().map(|(_, v)| v).collect()
     }
@@ -530,6 +664,36 @@ impl Supervisor {
     }
 }
 
+/// Render a lease without hiding a stopped or failed endpoint. A client can
+/// distinguish a clean release (404 after `DELETE`) from a claim whose backing
+/// model is no longer usable and decide whether to re-ensure it.
+fn lease_view(lease: &Lease, endpoints: &mut HashMap<String, Endpoint>) -> Value {
+    let state = match endpoints.get_mut(&lease.endpoint_id) {
+        Some(endpoint) => {
+            endpoint.refresh();
+            if endpoint.state() == "running" {
+                "active"
+            } else {
+                "unavailable"
+            }
+        }
+        None => "unavailable",
+    };
+    json!({
+        "session_id": lease.session_id,
+        "model": lease.model,
+        "endpoint_id": lease.endpoint_id,
+        "state": state,
+    })
+}
+
+/// Keep explicit session claims out of normal LRU eviction. The lease remains
+/// observable even if its endpoint stops; only a running resident reaches this
+/// selection helper, so stopped claims cannot consume admission capacity.
+fn exclude_leased_residents(residents: &mut Vec<ResidentVram>, protected: &HashSet<&str>) {
+    residents.retain(|resident| !protected.contains(resident.id.as_str()));
+}
+
 /// Escape a Prometheus label value: backslash, double-quote, and newline are the
 /// only characters the exposition format requires escaping. Model ids can be
 /// arbitrary paths, so this is not optional. Shared with [`crate::app`]'s GPU
@@ -591,6 +755,7 @@ mod tests {
             backend: "Vulkan".into(),
             fits_vram: true,
             notes: vec![],
+            context_tokens: 4096,
             command: spec(),
             vram_need: 0,
             vram_budget: 0,
@@ -644,6 +809,19 @@ mod tests {
     }
 
     #[test]
+    fn leased_residents_are_excluded_from_lru_eviction() {
+        let mut r = vec![resident("leased", 8, 100), resident("ordinary", 4, 50)];
+        let protected: HashSet<&str> = ["leased"].into_iter().collect();
+
+        exclude_leased_residents(&mut r, &protected);
+
+        assert_eq!(
+            admit(8, 8, &mut r),
+            Admission::Evict(vec!["ordinary".into()])
+        );
+    }
+
+    #[test]
     fn id_slugs_paths_and_appends_port() {
         assert_eq!(endpoint_id("tinyllama", 8080), "tinyllama-8080");
         assert_eq!(
@@ -662,10 +840,28 @@ mod tests {
         let view = sup.start(req("tinyllama", 8080)).unwrap();
         assert_eq!(view["id"], "tinyllama-8080");
         assert_eq!(view["state"], "failed");
+        assert_eq!(view["context_tokens"], 4096);
         assert!(view["error"].is_string());
 
-        assert_eq!(sup.list().len(), 1);
+        let listed = sup.list();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0]["lease_count"], 0);
         assert!(sup.get("tinyllama-8080").is_some());
+    }
+
+    #[test]
+    fn leasing_a_missing_model_never_starts_it() {
+        let sup = Supervisor::new();
+        assert!(matches!(
+            sup.lease("session-a", "not-running"),
+            Err(LeaseError::Unavailable(model)) if model == "not-running"
+        ));
+        assert!(sup.lease_status("session-a").is_none());
+        assert!(!sup.release("session-a"));
+        assert!(
+            sup.list().is_empty(),
+            "leasing is not a hidden load operation"
+        );
     }
 
     #[test]

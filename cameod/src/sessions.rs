@@ -25,14 +25,30 @@ pub struct Session {
     pub mode: String,
     #[serde(default)]
     pub state: String,
+    /// Stable name of the selected agent engine, e.g. `cameo`.
+    #[serde(default)]
+    pub engine: String,
     #[serde(default)]
     pub model: String,
+    /// Human-readable current plan step; Cameo records it but never interprets it.
+    #[serde(default)]
+    pub plan_step: String,
     #[serde(default)]
     pub halt: String,
+    /// Agent-supplied verification outcome (pass/fail/skipped plus a summary).
+    #[serde(default)]
+    pub verification: String,
     #[serde(default)]
     pub files: Vec<String>,
+    /// Explicit changed-file list for newer harnesses. `files` remains for
+    /// compatibility with existing session reporters.
+    #[serde(default)]
+    pub changed_files: Vec<String>,
     #[serde(default)]
     pub summary: String,
+    /// Opaque link/id for the agent's trace. It is display-only to Cameo.
+    #[serde(default)]
+    pub trace_ref: String,
 }
 
 fn default_mode() -> String {
@@ -75,6 +91,30 @@ impl Board {
 
     pub fn remove(&self, id: &str) -> bool {
         self.inner.lock().unwrap().remove(id).is_some()
+    }
+
+    /// Whether a session is live enough to make an explicit resource claim.
+    /// The lease API checks this before reserving an endpoint, so a typo cannot
+    /// pin VRAM forever without a corresponding session heartbeat.
+    pub fn contains(&self, id: &str) -> bool {
+        self.inner
+            .lock()
+            .unwrap()
+            .get(id)
+            .is_some_and(|live| live.seen.elapsed() <= STALE)
+    }
+
+    /// Session ids whose last heartbeat is too old to retain a resource lease.
+    /// Stale sessions remain visible on the board for diagnosis, but callers
+    /// should release their resource claims immediately.
+    pub fn stale_ids(&self) -> Vec<String> {
+        self.inner
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, live)| live.seen.elapsed() > STALE)
+            .map(|(id, _)| id.clone())
+            .collect()
     }
 
     pub fn list(&self) -> Vec<Value> {
@@ -128,11 +168,24 @@ mod tests {
     fn upsert_preserves_a_supplied_id_and_updates_in_place() {
         let board = Board::new();
         board.upsert(sess(json!({ "id": "sol-1", "state": "thinking" })));
-        board.upsert(sess(json!({ "id": "sol-1", "state": "writing" })));
+        board.upsert(sess(json!({
+            "id": "sol-1",
+            "state": "writing",
+            "engine": "cameo",
+            "plan_step": "verify parser",
+            "verification": "passed",
+            "changed_files": ["parser.rs"],
+            "trace_ref": "trace-42"
+        })));
         let list = board.list();
         assert_eq!(list.len(), 1, "same id updates, not appends");
         assert_eq!(list[0]["id"], "sol-1");
         assert_eq!(list[0]["state"], "writing", "the latest upsert wins");
+        assert_eq!(list[0]["engine"], "cameo");
+        assert_eq!(list[0]["plan_step"], "verify parser");
+        assert_eq!(list[0]["verification"], "passed");
+        assert_eq!(list[0]["changed_files"], json!(["parser.rs"]));
+        assert_eq!(list[0]["trace_ref"], "trace-42");
     }
 
     #[test]
@@ -153,5 +206,26 @@ mod tests {
         assert!(board.remove("sol-3"), "removing a present id returns true");
         assert!(!board.remove("sol-3"), "removing again returns false");
         assert!(board.list().is_empty());
+    }
+
+    #[test]
+    fn contains_tracks_the_live_session_id() {
+        let board = Board::new();
+        board.upsert(sess(json!({ "id": "sol-4" })));
+        assert!(board.contains("sol-4"));
+        board.remove("sol-4");
+        assert!(!board.contains("sol-4"));
+    }
+
+    #[test]
+    fn stale_sessions_are_not_eligible_for_leases_but_remain_visible() {
+        let board = Board::new();
+        board.upsert(sess(json!({ "id": "sol-5" })));
+        board.inner.lock().unwrap().get_mut("sol-5").unwrap().seen =
+            Instant::now() - STALE - Duration::from_secs(1);
+
+        assert!(!board.contains("sol-5"));
+        assert_eq!(board.stale_ids(), vec!["sol-5"]);
+        assert_eq!(board.list().len(), 1, "the deck retains stale diagnostics");
     }
 }

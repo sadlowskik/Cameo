@@ -33,6 +33,29 @@ A bootable Arch respin that turns any AMD box into a **GPU-aware home console**:
   one, while the dashboard shell loads openly so the browser can prompt.
 - `build-iso.sh`, `cameo-firstboot`, `cameo-console-init` pass `bash -n`.
 
+## Rust harness integration gate
+
+The standalone Daedalus Rust workspace is the agent implementation; Cameo owns
+only the engine contract, model lifecycle, and session board. Before a release
+that advertises the `cameo-engine/v1` contract, run these two gates:
+
+1. **Mock contract gate (automated):** run `cargo fmt --all --check`,
+   `cargo clippy --workspace -- -D warnings`, and `cargo test --workspace` in
+   Cameo. The suite must cover the legacy engine descriptor fields, capability
+   version, context profile, a missing-model lease (no hidden load), stale
+   session expiry, and lease-aware admission.
+2. **Real AMD-box gate (manual):** start two real `llama-server` endpoints on a
+   constrained GPU; heartbeat a session and lease one endpoint; attempt a load
+   that only fits by evicting it and verify Cameo returns `409`; release the
+   lease and verify normal LRU eviction resumes. Then stop the leased endpoint
+   and verify `GET /api/sessions/{id}/lease` reports `unavailable` without
+   reserving capacity. Finally, run the Rust Daedalus binary with `--engine
+   cameo` against the same node for non-streaming and SSE inference.
+
+The mock gate is necessary but not a substitute for the AMD-box run: Windows
+development cannot validate the actual `llama-server` child process, VRAM
+accounting, or GPU eviction behavior.
+
 ## The two gates that need YOUR machine
 
 These are physical constraints, not unfinished work — neither can be done from a

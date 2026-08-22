@@ -19,9 +19,11 @@ use std::time::Duration;
 
 /// Requests larger than this are refused with `413`. A control plane never needs
 /// a big body, and an unbounded read is a trivial memory-exhaustion vector.
-const MAX_BODY: usize = 1024 * 1024;
+/// Published through the engine contract so a harness can reject an oversized
+/// tool result before it reaches the wire.
+pub const MAX_REQUEST_BODY_BYTES: usize = 1024 * 1024;
 
-/// Ceiling on the request line + headers combined. `MAX_BODY` bounds the body,
+/// Ceiling on the request line + headers combined. `MAX_REQUEST_BODY_BYTES` bounds the body,
 /// but header lines were read with no limit — a client streaming an endless
 /// header (or one gigantic line) grew memory without ever tripping the body cap.
 /// 32 KiB is far beyond anything a browser or curl sends.
@@ -264,11 +266,11 @@ fn parse_request<R: BufRead>(reader: &mut R) -> Result<Request, ParseError> {
         });
     }
     // `head`'s borrow of the reader ends here; the body is read from the raw
-    // reader under its own `MAX_BODY` check below.
+    // reader under its own `MAX_REQUEST_BODY_BYTES` check below.
     let body = match headers.get("content-length") {
         Some(len) => {
             let len: usize = len.parse().map_err(|_| ParseError::Malformed)?;
-            if len > MAX_BODY {
+            if len > MAX_REQUEST_BODY_BYTES {
                 return Err(ParseError::TooLarge);
             }
             let mut buf = vec![0u8; len];
@@ -494,7 +496,7 @@ mod tests {
     fn oversized_body_is_rejected() {
         let raw = format!(
             "POST / HTTP/1.1\r\nContent-Length: {}\r\n\r\n",
-            MAX_BODY + 1
+            MAX_REQUEST_BODY_BYTES + 1
         );
         assert!(matches!(parse(&raw), Err(ParseError::TooLarge)));
     }

@@ -73,6 +73,11 @@ header{position:sticky;top:0;z-index:30;background:rgba(26,24,18,.86);
 .nav a.l{font-family:var(--mono);font-size:13px;color:var(--muted)}
 .nav a.l:hover{color:var(--ink)}
 .nav .ico{display:inline-block;width:14px;height:14px;vertical-align:-2px;margin-right:6px}
+@media(max-width:600px){
+  .nav{height:auto;min-height:60px;flex-wrap:wrap;gap:8px 12px;padding-block:10px}
+  .nav .brand{width:100%;margin-right:0}
+  .nav a.l{font-size:12px}
+}
 
 .hero{padding:64px 0 40px}
 .hero-grid{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,1fr);gap:48px;align-items:center}
@@ -521,6 +526,7 @@ header{box-shadow:0 1px 0 rgba(255,176,90,.06)}
   <a class="brand" href="#top"><svg viewBox="0 0 26 26"><use href="#mark"/></svg>cameo</a>
   <a class="l" href="#how">how</a>
   <a class="l" href="#tiers">tiers</a>
+  <a class="l" href="#deck">deck</a>
   <a class="l" href="#install">download</a>
   <a class="l gh" href="https://github.com/sadlowskik/Cameo" rel="noopener">
     <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg>github</a>
@@ -690,6 +696,7 @@ header{box-shadow:0 1px 0 rgba(255,176,90,.06)}
           <div class="ni on">Overview</div>
           <div class="ni">Models</div>
           <div class="ni">Endpoints</div>
+          <div class="ni">Deck</div>
           <div class="ni">Playground</div>
         </div>
         <div class="dash-main">
@@ -755,8 +762,24 @@ header{box-shadow:0 1px 0 rgba(255,176,90,.06)}
     </div>
   </div></section>
 
+  <section id="deck"><div class="wrap">
+    <p class="eyebrow rise"><span class="ix">04</span>the Deck</p>
+    <h2 class="rise">See the model, its owner, and the proof.</h2>
+    <p class="lede rise">Cameo is the compute observer for the standalone Rust Daedalus agent. The Deck keeps the useful facts together: what is serving, which live session has claimed it, and whether that session finished with verification.</p>
+    <div class="steps">
+      <article class="step rise"><span class="n">RUNNING</span><h3>What is live?</h3><p>Each resident model shows its backend, context window, endpoint state, and lease count. Inference stays OpenAI-compatible at <code>/v1</code>.</p></article>
+      <article class="step rise"><span class="n">OWNER</span><h3>Who has capacity?</h3><p>A session can explicitly lease an already-running model. Cameo protects that model from ordinary LRU eviction and shows the owning session beside it.</p></article>
+      <article class="step rise"><span class="n">DONE</span><h3>Did it earn done?</h3><p>The agent reports its mode, plan step, changed files, halt reason, verification result, and trace reference. Cameo displays them; it never decides for the agent.</p></article>
+      <article class="step rise"><span class="n">BOUNDARY</span><h3>Who may act?</h3><p>Consumer keys discover and infer. Operator keys may ensure, stop, inspect, and manage leases. Credentials are never returned by the node.</p></article>
+    </div>
+    <div class="term rise">
+      <div class="bar"><i></i><i></i><i></i>&nbsp;&nbsp;Cameo Engine Contract v1</div>
+<pre><span class="ln"><span class="p">consumer</span>  GET /api/engines  -&gt; models, profiles, limits, capabilities</span><span class="ln"><span class="p">consumer</span>  POST /v1/chat/completions  -&gt; OpenAI JSON + SSE streaming</span><span class="ln"><span class="p">operator</span>  POST /api/servers  -&gt; deliberately provision a cold model</span><span class="ln"><span class="p">session</span>   POST /api/sessions/{id}/lease  -&gt; protect a running model</span><span class="ln"><span class="p">tools</span>     agent-managed fallback  -&gt; no assumed server-specific dialect</span><span class="ln"><span class="o">Cameo observes the work. Daedalus owns the agent loop.</span><span class="cur"></span></pre>
+    </div>
+  </div></section>
+
   <section id="scale"><div class="wrap">
-    <p class="eyebrow rise"><span class="ix">04</span>one card → a cluster</p>
+    <p class="eyebrow rise"><span class="ix">05</span>one card → a cluster</p>
     <h2 class="rise">Same two commands on 1, 4, or 9 cards.</h2>
     <p class="lede rise">One box is image and flash — no Wi-Fi, no extra models required. Connecting boxes to each other is the only time you join a network: Ethernet if you have it, otherwise <code style="font-family:var(--mono);font-size:.9em;color:var(--amber)">iwctl</code> on that node so it can attach to the fleet.</p>
     <svg class="flow rise" viewBox="0 0 1000 240" role="img" aria-label="One AMD card scaling out to a box, then a cluster">

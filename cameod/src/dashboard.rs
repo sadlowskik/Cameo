@@ -579,7 +579,13 @@ function nodeCard(n, i){
   const eps=n.endpoints||[];
   const sess=n.sessions||[];
   const who=whoLine(sess, eps);
-  const models=eps.length?eps.map(e=>'<span class="nchip"><code>'+esc(e.model||e.label||'')+'</code> <span class="badge st-'+esc(e.state||'')+'">'+esc(e.state||'')+'</span></span>').join(''):'<span class="nchip muted">no model loaded</span>';
+  const models=eps.length?eps.map(e=>{const facts=[];
+    const owners=sess.filter(s=>s.lease&&s.lease.endpoint_id===e.id&&s.lease.state==='active').map(s=>s.name||s.label||s.id).filter(Boolean);
+    if(e.context_tokens) facts.push(Math.round(e.context_tokens/1024)+'k ctx');
+    if(e.lease_count) facts.push(e.lease_count+' lease'+(e.lease_count===1?'':'s'));
+    if(owners.length) facts.push('owned by '+owners.join(', '));
+    return '<span class="nchip"><code>'+esc(e.model||e.label||'')+'</code> <span class="badge st-'+esc(e.state||'')+'">'+esc(e.state||'')+'</span>'+(facts.length?' <span class="muted">'+esc(facts.join(' · '))+'</span>':'')+'</span>';
+  }).join(''):'<span class="nchip muted">no model loaded</span>';
   return '<div class="ncard '+(n.online===false?'offline':'')+(on?' on':'')+'" data-i="'+i+'">'
     +'<h3><span class="dot '+(n.online===false?'bad':'ok')+'"></span>'+esc(n.name||n.node_id)
     +(n.local?'<span class="badge">this box</span>':'')
@@ -604,7 +610,10 @@ function layoutFleet(nodes){
   const focus=selectedNode?nodes.find(n=>n.node_id===selectedNode.node_id):nodes[0];
   const units=focus?(focus.sessions||[]):[];
   const sEl=document.getElementById('deck-sessions');
-  sEl.innerHTML=units.length?units.map(u=>'<div class="dcard">'+esc(u.name||u.label||u.id)+' <span class="muted">'+esc(u.mode||'')+' · '+esc(u.model||'')+'</span></div>').join(''):'<div class="empty">No harness heartbeats yet. Point Knossos at this node.</div>';
+  sEl.innerHTML=units.length?units.map(u=>{const facts=[u.mode,u.engine||u.model,u.state,u.plan_step,u.verification,u.halt,u.lease&&u.lease.state?('lease '+u.lease.state):''].filter(Boolean);
+    const files=(u.changed_files&&u.changed_files.length?u.changed_files:u.files)||[];
+    return '<div class="dcard">'+esc(u.name||u.label||u.id)+' <span class="muted">'+esc(facts.join(' · '))+'</span>'+(files.length?'<div class="muted">changed: '+esc(files.join(', '))+'</div>':'')+(u.trace_ref?'<div class="muted">trace: '+esc(u.trace_ref)+'</div>':'')+'</div>';
+  }).join(''):'<div class="empty">No harness heartbeats yet. Point Knossos at this node.</div>';
   if(focus) pick(focus);
 }
 async function tickDeck(){

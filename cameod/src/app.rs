@@ -23,7 +23,7 @@ use serde_json::{json, Value};
 use crate::http::{Request, Response};
 use crate::hub::{Farm, Registration};
 use crate::sessions::{Board, Session};
-use crate::supervisor::{StartError, StartRequest, Supervisor};
+use crate::supervisor::{LeaseError, StartError, StartRequest, Supervisor};
 
 /// llama.cpp's HTTP server binary. As in the CLI, the backend selects the build,
 /// not the name, so both tiers resolve to the same program today.
@@ -101,6 +101,14 @@ struct ModelRequest {
     backend: Option<String>,
 }
 
+/// Explicitly claim an already-running model for a live harness session.
+/// Claiming never starts a model: only the operator's normal server API may do
+/// that, so a malformed or stale session cannot surprise the box with a load.
+#[derive(Deserialize)]
+struct LeaseRequest {
+    model: String,
+}
+
 fn default_host() -> String {
     "127.0.0.1".into()
 }
@@ -147,6 +155,10 @@ impl ModelRequest {
 /// Top-level dispatch. Returns a [`Response`] for every request; there is no
 /// error path that escapes, so the HTTP layer only ever writes bytes.
 pub fn route(state: &Arc<AppState>, req: &Request) -> Response {
+    // A stale board entry is useful diagnostic history, but it must never keep
+    // an endpoint non-evictable. This runs at request time, avoiding a
+    // background thread and its shutdown/lifetime failure modes.
+    release_stale_session_leases(state);
     let segs = req.segments();
 
     // Unauthenticated, side-effect-free routes: the dashboard shell (so it can
@@ -220,7 +232,7 @@ pub fn route(state: &Arc<AppState>, req: &Request) -> Response {
             if let Some(denied) = check_engines_auth(state, req) {
                 return denied;
             }
-            return api_engines(state).no_store();
+            return api_engines(state, req).no_store();
         }
         if let Some(denied) = check_auth(state, req) {
             return denied;
@@ -399,7 +411,7 @@ fn route_api(state: &Arc<AppState>, req: &Request, rest: &[&str]) -> Response {
     match (req.method.as_str(), rest) {
         ("GET", ["gpus"]) => api_gpus(state),
         ("GET", ["node"]) => api_node(state),
-        ("GET", ["engines"]) => api_engines(state),
+        ("GET", ["engines"]) => api_engines(state, req),
         ("GET", ["models"]) => api_models(),
         // Model-cache management (F12) surfaced for the console (F18).
         ("POST", ["models", "gc"]) => match cameo_models::gc_partials() {
@@ -415,9 +427,22 @@ fn route_api(state: &Arc<AppState>, req: &Request, rest: &[&str]) -> Response {
         ("POST", ["sessions"]) => api_upsert_session(state, req),
         ("DELETE", ["sessions", id]) => {
             if state.board.remove(id) {
+                state.sup.release(id);
                 Response::json(200, &json!({ "removed": id }))
             } else {
                 Response::error(404, "no such session")
+            }
+        }
+        ("POST", ["sessions", id, "lease"]) => api_lease_session(state, req, id),
+        ("GET", ["sessions", id, "lease"]) => match state.sup.lease_status(id) {
+            Some(lease) => Response::json(200, &lease),
+            None => Response::error(404, "no lease for this session"),
+        },
+        ("DELETE", ["sessions", id, "lease"]) => {
+            if state.sup.release(id) {
+                Response::json(200, &json!({ "released": id }))
+            } else {
+                Response::error(404, "no lease for this session")
             }
         }
         ("GET", ["servers"]) => Response::json(200, &json!({ "servers": state.sup.list() })),
@@ -750,14 +775,35 @@ fn api_node(state: &Arc<AppState>) -> Response {
 /// The `/api/node` body shape, in one place so `api_node` and the hub agent
 /// ([`node_report`]) send byte-identical self-descriptions.
 fn node_json(topo: &Topology, assessments: &[TierAssessment], state: &Arc<AppState>) -> Value {
+    let sessions = sessions_with_leases(state.board.list(), |id| state.sup.lease_status(id));
     json!({
         "name": node_name(),
         "cameo_version": env!("CARGO_PKG_VERSION"),
         "topology": topo,
         "gpus": assessments,
         "endpoints": state.sup.list(),
-        "sessions": state.board.list(),
+        "sessions": sessions,
     })
+}
+
+/// Add a safe lease projection to each session for node/hub consumers. The
+/// session board remains authoritative for agent state; the supervisor remains
+/// authoritative for endpoint state.
+fn sessions_with_leases(
+    sessions: Vec<Value>,
+    lease_for: impl Fn(&str) -> Option<Value>,
+) -> Vec<Value> {
+    sessions
+        .into_iter()
+        .map(|mut session| {
+            if let Some(id) = session.get("id").and_then(Value::as_str) {
+                if let Some(lease) = lease_for(id) {
+                    session["lease"] = lease;
+                }
+            }
+            session
+        })
+        .collect()
 }
 
 /// This node's current self-description for the hub agent, or `None` when
@@ -829,27 +875,78 @@ fn metrics_response(state: &Arc<AppState>) -> Response {
 /// `auth_required`. This is deliberately the *non-secret* surface: the full
 /// agent-binding resolver (`agents::resolve_agents`) carries serve keys and stays
 /// server-side, consumed by the `cameo fleet` controller — never serialized here.
-fn api_engines(state: &Arc<AppState>) -> Response {
+fn api_engines(state: &Arc<AppState>, req: &Request) -> Response {
     let posture = match state.posture {
         crate::auth::Posture::SelfHost => "self-host",
         crate::auth::Posture::MultiTenant => "multi-tenant",
     };
+    let include_vram = operator_view(state, req);
     Response::json(
         200,
-        &json!({
-            "node": node_name(),
-            "openai_base_path": "/v1",
-            // /v1 needs a key whenever any consumer credential is configured (the
-            // serve key is folded into the keyring as one), so a harness knows to
-            // present one.
-            "auth_required": state.keyring.requires_consumer(),
-            "models": state.sup.served_models(),
-            // Posture tells a harness whether the privileged local seam is on offer
-            // here: only a self-host box grants a co-located harness GPU control.
-            "posture": posture,
-            "local_harness": state.posture.allows_local_harness(),
-        }),
+        &engine_descriptor(
+            &node_name(),
+            state.keyring.requires_consumer(),
+            state.sup.served_models(),
+            state.sup.engine_profiles(include_vram),
+            posture,
+            state.posture.allows_local_harness(),
+        ),
     )
+}
+
+/// The stable, non-secret description a harness needs to use a Cameo node.
+///
+/// Keep the original fields flat: early harnesses consume `models` as a string
+/// list. The versioned capability block is additive, so they can safely ignore
+/// it while newer clients use it to reject a node that cannot meet their needs.
+fn engine_descriptor(
+    node: &str,
+    auth_required: bool,
+    models: Vec<String>,
+    model_profiles: Vec<Value>,
+    posture: &str,
+    local_harness: bool,
+) -> Value {
+    let engine_state = if models.is_empty() { "idle" } else { "ready" };
+    json!({
+        "node": node,
+        "engine_state": engine_state,
+        "openai_base_path": "/v1",
+        "auth_required": auth_required,
+        "models": models,
+        "model_profiles": model_profiles,
+        "posture": posture,
+        "local_harness": local_harness,
+        "contract_version": "cameo-engine/v1",
+        "capabilities": {
+            "chat_completions": true,
+            "completions": true,
+            "embeddings": true,
+            "streaming": true,
+            "tool_calls": {
+                "native": false,
+                "fallback": "agent-managed",
+            },
+            "session_board": true,
+            "operator_ensure": true,
+            "operator_actions": ["ensure", "stop", "inspect"],
+        },
+        "limits": {
+            "max_request_bytes": crate::http::MAX_REQUEST_BODY_BYTES,
+            "max_completion_tokens": null,
+        },
+        "session_api_path": "/api/sessions",
+        "operator_api_path": "/api/servers",
+    })
+}
+
+/// Whether this request may see operator-only capacity facts. A consumer can
+/// discover and call models, but not inventory the box's VRAM. Keyless local
+/// development remains open because there is no credential boundary to honor.
+fn operator_view(state: &Arc<AppState>, req: &Request) -> bool {
+    (req.from_unix && state.posture.allows_local_harness())
+        || state.keyring.is_operator(bearer(req))
+        || (!state.keyring.requires_operator() && !state.keyring.requires_consumer())
 }
 
 fn api_models() -> Response {
@@ -943,6 +1040,33 @@ fn api_upsert_session(state: &Arc<AppState>, req: &Request) -> Response {
     }
 }
 
+/// Claim an already-running model for a known session. This is deliberately a
+/// separate opt-in from session heartbeats: reporting a session never reserves
+/// VRAM, and a session cannot claim a model it has not actually observed live.
+fn api_lease_session(state: &Arc<AppState>, req: &Request, session_id: &str) -> Response {
+    if !state.board.contains(session_id) {
+        return Response::error(404, "no such session");
+    }
+    let body: LeaseRequest = match serde_json::from_slice::<LeaseRequest>(&req.body) {
+        Ok(body) if !body.model.trim().is_empty() => body,
+        Ok(_) => return Response::error(400, "lease needs a non-empty model"),
+        Err(e) => return Response::error(400, format!("invalid lease body: {e}")),
+    };
+    match state.sup.lease(session_id, &body.model) {
+        Ok(lease) => Response::json(201, &lease),
+        Err(LeaseError::Unavailable(model)) => Response::error(
+            409,
+            format!("model '{model}' is unavailable; start it before claiming a lease"),
+        ),
+    }
+}
+
+fn release_stale_session_leases(state: &Arc<AppState>) {
+    for session_id in state.board.stale_ids() {
+        state.sup.release(&session_id);
+    }
+}
+
 fn api_start_server(state: &Arc<AppState>, req: &Request) -> Response {
     let body = match parse_body(req) {
         Ok(b) => b,
@@ -1031,6 +1155,7 @@ fn start_server(state: &Arc<AppState>, body: ModelRequest) -> Response {
         backend: format!("{:?}", plan.backend),
         fits_vram: plan.fits_in_vram,
         notes: plan.notes.clone(),
+        context_tokens: body.context,
         command: spec,
         vram_need,
         vram_budget,
@@ -1041,6 +1166,7 @@ fn start_server(state: &Arc<AppState>, body: ModelRequest) -> Response {
             Response::error(409, format!("endpoint {id} is already running"))
         }
         Err(StartError::WontFit(msg)) => Response::error(507, msg),
+        Err(StartError::LeasedCapacity(msg)) => Response::error(409, msg),
     }
 }
 
@@ -1102,6 +1228,52 @@ fn plan_error_response(e: cameo_placement::Error) -> Response {
 mod tests {
     use super::*;
 
+    fn contract_state() -> Arc<AppState> {
+        Arc::new(AppState {
+            sup: Supervisor::new(),
+            captures: Captures::default(),
+            settings: Settings::default(),
+            keyring: crate::auth::KeyRing::new(vec![
+                crate::auth::ApiKey {
+                    key: "operator-key".into(),
+                    role: crate::auth::Role::Operator,
+                    label: "test operator".into(),
+                },
+                crate::auth::ApiKey {
+                    key: "consumer-key".into(),
+                    role: crate::auth::Role::Consumer,
+                    label: "test consumer".into(),
+                },
+            ]),
+            posture: crate::auth::Posture::MultiTenant,
+            detect_cache: Mutex::new(None),
+            board: Board::new(),
+            farm: Farm::new(),
+            hub_enabled: false,
+            farm_token: None,
+            open_inference: false,
+        })
+    }
+
+    fn contract_request(method: &str, path: &str, key: Option<&str>, body: Value) -> Request {
+        let mut headers = std::collections::HashMap::new();
+        if let Some(key) = key {
+            headers.insert("authorization".into(), format!("Bearer {key}"));
+        }
+        Request {
+            method: method.into(),
+            path: path.into(),
+            query: std::collections::HashMap::new(),
+            headers,
+            body: serde_json::to_vec(&body).unwrap(),
+            from_unix: false,
+        }
+    }
+
+    fn response_json(response: Response) -> Value {
+        serde_json::from_slice(&response.body).expect("JSON response")
+    }
+
     #[test]
     fn host_of_splits_v4_v6_and_bare() {
         assert_eq!(host_of("10.0.0.2:9090"), "10.0.0.2");
@@ -1123,5 +1295,113 @@ mod tests {
         assert!(push_address_ok("127.0.0.1:9090"));
         assert!(push_address_ok("box.local:9090"));
         assert!(push_address_ok("[2001:db8::1]:9090"));
+    }
+
+    #[test]
+    fn engine_descriptor_keeps_the_legacy_shape_and_advertises_v1_capabilities() {
+        let descriptor = engine_descriptor(
+            "box-a",
+            true,
+            vec!["qwen2.5-coder-7b".into()],
+            vec![json!({
+                "model": "qwen2.5-coder-7b",
+                "context_tokens": 32768,
+            })],
+            "self-host",
+            true,
+        );
+        assert_eq!(descriptor["node"], "box-a");
+        assert_eq!(descriptor["openai_base_path"], "/v1");
+        assert_eq!(descriptor["models"], json!(["qwen2.5-coder-7b"]));
+        assert_eq!(descriptor["contract_version"], "cameo-engine/v1");
+        assert_eq!(descriptor["engine_state"], "ready");
+        assert_eq!(descriptor["capabilities"]["streaming"], true);
+        assert_eq!(descriptor["capabilities"]["tool_calls"]["native"], false);
+        assert_eq!(descriptor["limits"]["max_request_bytes"], 1024 * 1024);
+        assert_eq!(descriptor["model_profiles"][0]["context_tokens"], 32768);
+        assert_eq!(descriptor["session_api_path"], "/api/sessions");
+        assert_eq!(descriptor["operator_api_path"], "/api/servers");
+    }
+
+    #[test]
+    fn consumer_can_discover_and_probe_inference_but_cannot_operate_the_node() {
+        let state = contract_state();
+
+        let discovery = route(
+            &state,
+            &contract_request("GET", "/api/engines", Some("consumer-key"), json!({})),
+        );
+        assert_eq!(discovery.status, 200);
+        let descriptor = response_json(discovery);
+        assert_eq!(descriptor["contract_version"], "cameo-engine/v1");
+        assert!(descriptor["model_profiles"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|profile| profile.get("vram_bytes").is_none()));
+
+        let inference = route(
+            &state,
+            &contract_request(
+                "POST",
+                "/v1/chat/completions",
+                Some("consumer-key"),
+                json!({ "model": "not-running", "messages": [] }),
+            ),
+        );
+        assert_eq!(inference.status, 404, "consumer auth reaches model routing");
+
+        let denied = route(
+            &state,
+            &contract_request("POST", "/api/sessions", Some("consumer-key"), json!({})),
+        );
+        assert_eq!(denied.status, 401, "consumer cannot mutate session state");
+    }
+
+    #[test]
+    fn operator_session_lease_requires_a_live_model_and_never_loads_one() {
+        let state = contract_state();
+        let session = route(
+            &state,
+            &contract_request(
+                "POST",
+                "/api/sessions",
+                Some("operator-key"),
+                json!({ "id": "customer-path", "mode": "write", "model": "not-running" }),
+            ),
+        );
+        assert_eq!(session.status, 200);
+
+        let lease = route(
+            &state,
+            &contract_request(
+                "POST",
+                "/api/sessions/customer-path/lease",
+                Some("operator-key"),
+                json!({ "model": "not-running" }),
+            ),
+        );
+        assert_eq!(lease.status, 409);
+        assert!(state.sup.list().is_empty(), "claiming is not provisioning");
+    }
+
+    #[test]
+    fn node_session_projection_keeps_unleased_sessions_and_attaches_owners() {
+        let sessions = vec![
+            json!({ "id": "leased", "name": "builder" }),
+            json!({ "id": "ordinary", "name": "reviewer" }),
+        ];
+        let projected = sessions_with_leases(sessions, |id| {
+            (id == "leased").then(|| {
+                json!({
+                    "endpoint_id": "qwen-8080",
+                    "model": "qwen-coder",
+                    "state": "active",
+                })
+            })
+        });
+
+        assert_eq!(projected[0]["lease"]["endpoint_id"], "qwen-8080");
+        assert!(projected[1].get("lease").is_none());
     }
 }
