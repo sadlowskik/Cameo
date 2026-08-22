@@ -13,6 +13,47 @@ use serde_json::{json, Value};
 
 const STALE: Duration = Duration::from_secs(90);
 
+/// The only VRAM authority a harness session can receive from Cameo.  This is
+/// deliberately a record of an *approved Cameo operation*, never a device
+/// handle: Knossos can ask Cameo to manage a model, but it never gets raw GPU
+/// file descriptors or a way around the supervisor's admission checks.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VramCapability {
+    /// `none` | `resident` | `loading` | `blocked` | `released`.
+    #[serde(default = "default_vram_status")]
+    pub status: String,
+    #[serde(default)]
+    pub action: String,
+    #[serde(default)]
+    pub model: String,
+    #[serde(default)]
+    pub endpoint_id: String,
+    /// Human-readable admission impact, suitable for the Deck.
+    #[serde(default)]
+    pub impact: String,
+    /// Endpoint ids Cameo would need to evict.  A non-empty value is never
+    /// acted on unless the operator explicitly supplies `allow_evict: true`.
+    #[serde(default)]
+    pub evicts: Vec<String>,
+}
+
+fn default_vram_status() -> String {
+    "none".into()
+}
+
+impl Default for VramCapability {
+    fn default() -> Self {
+        Self {
+            status: default_vram_status(),
+            action: String::new(),
+            model: String::new(),
+            endpoint_id: String::new(),
+            impact: String::new(),
+            evicts: Vec::new(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
     pub id: String,
@@ -46,9 +87,18 @@ pub struct Session {
     pub changed_files: Vec<String>,
     #[serde(default)]
     pub summary: String,
+    /// User-facing mission text.  Existing harnesses may leave it empty.
+    #[serde(default)]
+    pub task: String,
+    /// Workspace selected for the mission; Cameo displays it but does not
+    /// broaden the harness's filesystem authority.
+    #[serde(default)]
+    pub workspace: String,
     /// Opaque link/id for the agent's trace. It is display-only to Cameo.
     #[serde(default)]
     pub trace_ref: String,
+    #[serde(default)]
+    pub vram: VramCapability,
 }
 
 fn default_mode() -> String {
@@ -79,7 +129,17 @@ impl Board {
             session.name = session.id.clone();
         }
         let id = session.id.clone();
-        self.inner.lock().unwrap().insert(
+        let mut inner = self.inner.lock().unwrap();
+        // Existing harness heartbeats know nothing about the Cameo-owned VRAM
+        // record and deserialize it as `none`.  Preserve the record unless the
+        // caller deliberately supplies a non-default capability; release is
+        // otherwise performed through the dedicated operator route.
+        if session.vram.status == "none" {
+            if let Some(previous) = inner.get(&id) {
+                session.vram = previous.session.vram.clone();
+            }
+        }
+        inner.insert(
             id,
             Live {
                 session: session.clone(),
@@ -91,6 +151,25 @@ impl Board {
 
     pub fn remove(&self, id: &str) -> bool {
         self.inner.lock().unwrap().remove(id).is_some()
+    }
+
+    /// Record the result of a Cameo-mediated VRAM operation.  This refreshes
+    /// the heartbeat because a live harness just received a control-plane
+    /// response; it does not create a session or grant a capability to a typo.
+    pub fn record_vram(&self, id: &str, vram: VramCapability) -> Option<Session> {
+        let mut inner = self.inner.lock().unwrap();
+        let live = inner.get_mut(id)?;
+        live.session.vram = vram;
+        live.seen = Instant::now();
+        Some(live.session.clone())
+    }
+
+    pub fn get(&self, id: &str) -> Option<Session> {
+        self.inner
+            .lock()
+            .unwrap()
+            .get(id)
+            .map(|live| live.session.clone())
     }
 
     /// Whether a session is live enough to make an explicit resource claim.
@@ -227,5 +306,53 @@ mod tests {
         assert!(!board.contains("sol-5"));
         assert_eq!(board.stale_ids(), vec!["sol-5"]);
         assert_eq!(board.list().len(), 1, "the deck retains stale diagnostics");
+    }
+
+    #[test]
+    fn vram_records_are_session_bound_and_refresh_the_heartbeat() {
+        let board = Board::new();
+        board.upsert(sess(json!({ "id": "sol-vram" })));
+        let saved = board
+            .record_vram(
+                "sol-vram",
+                VramCapability {
+                    status: "resident".into(),
+                    action: "ensure".into(),
+                    model: "daedalus-bitnet".into(),
+                    endpoint_id: "daedalus-8080".into(),
+                    impact: "reused resident model; no eviction".into(),
+                    evicts: Vec::new(),
+                },
+            )
+            .expect("known session is updated");
+        assert_eq!(saved.vram.status, "resident");
+        assert_eq!(board.get("sol-vram").unwrap().vram.model, "daedalus-bitnet");
+        assert!(board
+            .record_vram("missing", VramCapability::default())
+            .is_none());
+    }
+
+    #[test]
+    fn ordinary_heartbeat_keeps_cameo_owned_vram_record() {
+        let board = Board::new();
+        board.upsert(sess(json!({ "id": "sol-heartbeat", "state": "planning" })));
+        board
+            .record_vram(
+                "sol-heartbeat",
+                VramCapability {
+                    status: "resident".into(),
+                    model: "daedalus-bitnet".into(),
+                    ..VramCapability::default()
+                },
+            )
+            .expect("known session is updated");
+
+        let refreshed = board.upsert(sess(json!({
+            "id": "sol-heartbeat",
+            "state": "verifying"
+        })));
+        assert_eq!(refreshed.state, "verifying");
+        assert_eq!(refreshed.vram.status, "resident");
+        assert_eq!(refreshed.vram.model, "daedalus-bitnet");
     }
 }

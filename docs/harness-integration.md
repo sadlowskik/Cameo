@@ -108,6 +108,32 @@ state, model, halt reason, and summary. Cameo is intentionally an observer: it
 renders these values in the Deck but does not infer whether the agent should
 continue, write, or declare success.
 
+### Native Knossos session and VRAM control
+
+The original `/api/sessions` board remains compatible, but Knossos now has a
+native Cameo namespace: `/api/knossos/sessions`. Register a mission there, then
+ask Cameo to reserve its model. Cameo reuses a warm model when possible; a cold
+model is planned and started only through the operator surface, then leased to
+that session.
+
+```bash
+curl -X POST http://box-a:9090/api/knossos/sessions \
+  -H "Authorization: Bearer $CAMEO_CONSOLE_KEY" \
+  -d '{"id":"agent-42","name":"Knossos","role":"knossos","mode":"preview","task":"add a regression test","model":"qwen2.5-coder-7b"}'
+
+curl -X POST http://box-a:9090/api/knossos/sessions/agent-42/vram \
+  -H "Authorization: Bearer $CAMEO_CONSOLE_KEY" \
+  -d '{"model":"qwen2.5-coder-7b","host":"127.0.0.1","port":8080}'
+```
+
+This capability is intentionally a Cameo operation, not raw GPU access. Knossos
+may inspect, reserve, ensure, and release model residency; Cameo remains the
+only process that talks to GPU runtime and supervised model children. If a cold
+load would evict an endpoint, Cameo returns `409`, an `evicts` list, and
+`requires_operator_confirmation: true`. Repeat only after the operator has seen
+the impact, with `"allow_evict": true`. Leased endpoints are never implicit
+victims.
+
 ## A fleet
 
 Discover the fleet and let the planner choose a node, then point the harness at

@@ -22,7 +22,7 @@ use serde_json::{json, Value};
 
 use crate::http::{Request, Response};
 use crate::hub::{Farm, Registration};
-use crate::sessions::{Board, Session};
+use crate::sessions::{Board, Session, VramCapability};
 use crate::supervisor::{LeaseError, StartError, StartRequest, Supervisor};
 
 /// llama.cpp's HTTP server binary. As in the CLI, the backend selects the build,
@@ -107,6 +107,17 @@ struct ModelRequest {
 #[derive(Deserialize)]
 struct LeaseRequest {
     model: String,
+}
+
+/// A Knossos request to use Cameo-managed VRAM for a session. It reuses the
+/// normal server-start fields, but defaults to no eviction until an operator
+/// has seen and explicitly approved the impact in the Deck.
+#[derive(Deserialize)]
+struct VramEnsureRequest {
+    #[serde(flatten)]
+    server: ModelRequest,
+    #[serde(default)]
+    allow_evict: bool,
 }
 
 fn default_host() -> String {
@@ -423,9 +434,16 @@ fn route_api(state: &Arc<AppState>, req: &Request, rest: &[&str]) -> Response {
             Err(e) => Response::error(404, e.to_string()),
         },
         ("POST", ["plan"]) => api_plan(state, req),
-        ("GET", ["sessions"]) => Response::json(200, &json!({ "sessions": state.board.list() })),
-        ("POST", ["sessions"]) => api_upsert_session(state, req),
-        ("DELETE", ["sessions", id]) => {
+        ("GET", ["sessions"]) | ("GET", ["knossos", "sessions"]) => {
+            Response::json(200, &json!({ "sessions": state.board.list() }))
+        }
+        ("POST", ["sessions"]) | ("POST", ["knossos", "sessions"]) => {
+            api_upsert_session(state, req)
+        }
+        ("GET", ["sessions", id]) | ("GET", ["knossos", "sessions", id]) => {
+            api_get_session(state, id)
+        }
+        ("DELETE", ["sessions", id]) | ("DELETE", ["knossos", "sessions", id]) => {
             if state.board.remove(id) {
                 state.sup.release(id);
                 Response::json(200, &json!({ "removed": id }))
@@ -433,7 +451,9 @@ fn route_api(state: &Arc<AppState>, req: &Request, rest: &[&str]) -> Response {
                 Response::error(404, "no such session")
             }
         }
-        ("POST", ["sessions", id, "lease"]) => api_lease_session(state, req, id),
+        ("POST", ["sessions", id, "lease"]) | ("POST", ["knossos", "sessions", id, "lease"]) => {
+            api_lease_session(state, req, id)
+        }
         ("GET", ["sessions", id, "lease"]) => match state.sup.lease_status(id) {
             Some(lease) => Response::json(200, &lease),
             None => Response::error(404, "no lease for this session"),
@@ -445,6 +465,9 @@ fn route_api(state: &Arc<AppState>, req: &Request, rest: &[&str]) -> Response {
                 Response::error(404, "no lease for this session")
             }
         }
+        ("POST", ["knossos", "sessions", id, "vram"]) => api_ensure_session_vram(state, req, id),
+        ("GET", ["knossos", "sessions", id, "vram"]) => api_session_vram(state, id),
+        ("DELETE", ["knossos", "sessions", id, "vram"]) => api_release_session_vram(state, id),
         ("GET", ["servers"]) => Response::json(200, &json!({ "servers": state.sup.list() })),
         ("POST", ["servers"]) => api_start_server(state, req),
         ("GET", ["servers", id]) => match state.sup.get(id) {
@@ -930,12 +953,19 @@ fn engine_descriptor(
             "session_board": true,
             "operator_ensure": true,
             "operator_actions": ["ensure", "stop", "inspect"],
+            "knossos": {
+                "session_control": true,
+                "vram_capability": true,
+                "vram_api_path": "/api/knossos/sessions/{id}/vram",
+                "no_surprise_eviction": true,
+            },
         },
         "limits": {
             "max_request_bytes": crate::http::MAX_REQUEST_BODY_BYTES,
             "max_completion_tokens": null,
         },
         "session_api_path": "/api/sessions",
+        "knossos_session_api_path": "/api/knossos/sessions",
         "operator_api_path": "/api/servers",
     })
 }
@@ -1040,6 +1070,17 @@ fn api_upsert_session(state: &Arc<AppState>, req: &Request) -> Response {
     }
 }
 
+fn api_get_session(state: &Arc<AppState>, session_id: &str) -> Response {
+    let Some(session) = state.board.get(session_id) else {
+        return Response::error(404, "no such session");
+    };
+    let mut view = serde_json::to_value(session).unwrap_or(json!({}));
+    if let Some(lease) = state.sup.lease_status(session_id) {
+        view["lease"] = lease;
+    }
+    Response::json(200, &view)
+}
+
 /// Claim an already-running model for a known session. This is deliberately a
 /// separate opt-in from session heartbeats: reporting a session never reserves
 /// VRAM, and a session cannot claim a model it has not actually observed live.
@@ -1061,6 +1102,153 @@ fn api_lease_session(state: &Arc<AppState>, req: &Request, session_id: &str) -> 
     }
 }
 
+/// Ensure a model for one Knossos session and immediately claim it. This is the
+/// only Knossos-facing route that may load VRAM. It is operator-gated by `/api`
+/// and refuses an implicit eviction even when the victim is otherwise eligible.
+fn api_ensure_session_vram(state: &Arc<AppState>, req: &Request, session_id: &str) -> Response {
+    if !state.board.contains(session_id) {
+        return Response::error(404, "no such live session");
+    }
+    let body: VramEnsureRequest = match serde_json::from_slice::<VramEnsureRequest>(&req.body) {
+        Ok(body) if !body.server.model.trim().is_empty() => body,
+        Ok(_) => return Response::error(400, "vram ensure needs a non-empty model"),
+        Err(e) => return Response::error(400, format!("invalid vram ensure body: {e}")),
+    };
+    let model = body.server.model.clone();
+    let allow_evict = body.allow_evict;
+
+    // Reuse is safer and faster than provisioning: neither VRAM arbitration nor
+    // a second model process is involved.
+    if let Ok(lease) = state.sup.lease(session_id, &model) {
+        let endpoint_id = lease["endpoint_id"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        let session = state.board.record_vram(
+            session_id,
+            VramCapability {
+                status: "resident".into(),
+                action: "ensure".into(),
+                model: model.clone(),
+                endpoint_id,
+                impact: "reused resident model; no eviction".into(),
+                evicts: Vec::new(),
+            },
+        );
+        return Response::json(
+            200,
+            &json!({ "session": session, "lease": lease, "reused": true }),
+        );
+    }
+
+    let response = start_server_with_eviction(state, body.server, allow_evict);
+    if response.status < 200 || response.status >= 300 {
+        let detail: Value = serde_json::from_slice(&response.body).unwrap_or(json!({}));
+        let evicts = detail
+            .get("evicts")
+            .and_then(Value::as_array)
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default();
+        state.board.record_vram(
+            session_id,
+            VramCapability {
+                status: "blocked".into(),
+                action: "ensure".into(),
+                model,
+                endpoint_id: String::new(),
+                impact: detail
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .unwrap_or("Cameo could not admit the model")
+                    .to_string(),
+                evicts,
+            },
+        );
+        return response;
+    }
+
+    let endpoint: Value = serde_json::from_slice(&response.body).unwrap_or(json!({}));
+    match state.sup.lease(session_id, &model) {
+        Ok(lease) => {
+            let endpoint_id = lease["endpoint_id"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string();
+            let session = state.board.record_vram(
+                session_id,
+                VramCapability {
+                    status: "resident".into(),
+                    action: "ensure".into(),
+                    model,
+                    endpoint_id,
+                    impact: if allow_evict {
+                        "loaded after explicit operator-approved VRAM admission".into()
+                    } else {
+                        "loaded without evicting another endpoint".into()
+                    },
+                    evicts: Vec::new(),
+                },
+            );
+            Response::json(
+                201,
+                &json!({ "session": session, "endpoint": endpoint, "lease": lease, "reused": false }),
+            )
+        }
+        Err(LeaseError::Unavailable(_)) => {
+            state.board.record_vram(
+                session_id,
+                VramCapability {
+                    status: "blocked".into(),
+                    action: "ensure".into(),
+                    model,
+                    endpoint_id: String::new(),
+                    impact: "endpoint did not become ready; inspect Cameo servers".into(),
+                    evicts: Vec::new(),
+                },
+            );
+            Response::error(
+                502,
+                "model process did not become ready; inspect /api/servers",
+            )
+        }
+    }
+}
+
+fn api_session_vram(state: &Arc<AppState>, session_id: &str) -> Response {
+    let Some(session) = state.board.get(session_id) else {
+        return Response::error(404, "no such session");
+    };
+    Response::json(
+        200,
+        &json!({ "session_id": session_id, "capability": session.vram, "lease": state.sup.lease_status(session_id) }),
+    )
+}
+
+fn api_release_session_vram(state: &Arc<AppState>, session_id: &str) -> Response {
+    if state.board.get(session_id).is_none() {
+        return Response::error(404, "no such session");
+    }
+    state.sup.release(session_id);
+    let session = state.board.record_vram(
+        session_id,
+        VramCapability {
+            status: "released".into(),
+            action: "release".into(),
+            model: String::new(),
+            endpoint_id: String::new(),
+            impact: "released the residency claim; the endpoint may remain warm".into(),
+            evicts: Vec::new(),
+        },
+    );
+    Response::json(200, &json!({ "session": session, "released": session_id }))
+}
+
 fn release_stale_session_leases(state: &Arc<AppState>) {
     for session_id in state.board.stale_ids() {
         state.sup.release(&session_id);
@@ -1072,7 +1260,7 @@ fn api_start_server(state: &Arc<AppState>, req: &Request) -> Response {
         Ok(b) => b,
         Err(resp) => return resp,
     };
-    start_server(state, body)
+    start_server_with_eviction(state, body, true)
 }
 
 /// Start the baked-in starter model so the playground works on first open.
@@ -1100,7 +1288,7 @@ pub fn maybe_autostart(state: &Arc<AppState>) {
         layers: 0,
         backend: None,
     };
-    let resp = start_server(state, body);
+    let resp = start_server_with_eviction(state, body, true);
     if resp.status >= 200 && resp.status < 300 {
         tracing::info!(%model, "autostarted starter model");
     } else {
@@ -1108,7 +1296,11 @@ pub fn maybe_autostart(state: &Arc<AppState>) {
     }
 }
 
-fn start_server(state: &Arc<AppState>, body: ModelRequest) -> Response {
+fn start_server_with_eviction(
+    state: &Arc<AppState>,
+    body: ModelRequest,
+    allow_evict: bool,
+) -> Response {
     // Same safety rule as `cameo serve`: an unauthenticated endpoint bound to a
     // routable address publishes the GPU, so that combination is refused.
     if !is_loopback(&body.host) && state.settings.serve_api_key.is_none() {
@@ -1159,6 +1351,7 @@ fn start_server(state: &Arc<AppState>, body: ModelRequest) -> Response {
         command: spec,
         vram_need,
         vram_budget,
+        allow_evict,
     };
     match state.sup.start(start) {
         Ok(view) => Response::json(201, &view),
@@ -1167,6 +1360,15 @@ fn start_server(state: &Arc<AppState>, body: ModelRequest) -> Response {
         }
         Err(StartError::WontFit(msg)) => Response::error(507, msg),
         Err(StartError::LeasedCapacity(msg)) => Response::error(409, msg),
+        Err(StartError::EvictionRequired(ids)) => Response::json(
+            409,
+            &json!({
+                "error": "loading this model would evict active unleased endpoints; operator confirmation is required",
+                "status": 409,
+                "requires_operator_confirmation": true,
+                "evicts": ids,
+            }),
+        ),
     }
 }
 
@@ -1321,6 +1523,14 @@ mod tests {
         assert_eq!(descriptor["model_profiles"][0]["context_tokens"], 32768);
         assert_eq!(descriptor["session_api_path"], "/api/sessions");
         assert_eq!(descriptor["operator_api_path"], "/api/servers");
+        assert_eq!(
+            descriptor["capabilities"]["knossos"]["vram_api_path"],
+            "/api/knossos/sessions/{id}/vram"
+        );
+        assert_eq!(
+            descriptor["capabilities"]["knossos"]["no_surprise_eviction"],
+            true
+        );
     }
 
     #[test]
@@ -1356,6 +1566,20 @@ mod tests {
             &contract_request("POST", "/api/sessions", Some("consumer-key"), json!({})),
         );
         assert_eq!(denied.status, 401, "consumer cannot mutate session state");
+
+        let knossos_vram = route(
+            &state,
+            &contract_request(
+                "POST",
+                "/api/knossos/sessions/customer-path/vram",
+                Some("consumer-key"),
+                json!({ "model": "not-running" }),
+            ),
+        );
+        assert_eq!(
+            knossos_vram.status, 401,
+            "consumer cannot reserve or alter VRAM through Knossos"
+        );
     }
 
     #[test]

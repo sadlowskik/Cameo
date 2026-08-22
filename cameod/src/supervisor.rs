@@ -284,6 +284,9 @@ pub struct StartRequest {
     pub vram_need: u64,
     /// The box's usable VRAM budget. `0` = unknown → residency is skipped.
     pub vram_budget: u64,
+    /// Normal operator starts may reuse unleased capacity.  Knossos session
+    /// starts set this false until an operator has reviewed the named victims.
+    pub allow_evict: bool,
 }
 
 /// Why a start was refused before any process was spawned.
@@ -296,6 +299,9 @@ pub enum StartError {
     /// The model would fit only by evicting an endpoint an active session has
     /// explicitly claimed. The operator may release the lease or stop it.
     LeasedCapacity(String),
+    /// The model fits only if these unleased endpoints are stopped.  Returned
+    /// instead of silently evicting when a mission has not been approved for it.
+    EvictionRequired(Vec<String>),
 }
 
 /// Why an explicit session lease could not be created.
@@ -384,6 +390,9 @@ impl Supervisor {
             match admit(req.vram_budget, req.vram_need, &mut residents) {
                 Admission::Admit => {}
                 Admission::Evict(ids) => {
+                    if !req.allow_evict {
+                        return Err(StartError::EvictionRequired(ids));
+                    }
                     for victim in ids {
                         if let Some(mut e) = map.remove(&victim) {
                             if let Some(mut child) = e.child.take() {
@@ -759,6 +768,7 @@ mod tests {
             command: spec(),
             vram_need: 0,
             vram_budget: 0,
+            allow_evict: true,
         }
     }
 

@@ -172,6 +172,9 @@ pub const INDEX_HTML: &str = r##"
   .ncard .who{font-size:12px;color:var(--muted);margin-top:8px}
   #view-deck .serve{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
   #view-deck .serve input{flex:1;min-width:80px}
+  .mission-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+  button.mini{padding:5px 8px;font-size:10px}
+  button.mini.warn{color:var(--ember-soft);border-color:var(--ember)}
   @media(max-width:820px){#view-deck.show{grid-template-columns:1fr;height:auto}.rail{border:1px solid var(--line);border-top:none}}
 </style>
 </head>
@@ -188,7 +191,7 @@ pub const INDEX_HTML: &str = r##"
 </div>
 <nav class="tabs">
   <button id="tab-console" class="on" onclick="showView('console')">Console</button>
-  <button id="tab-deck" onclick="showView('deck')">Fleet</button>
+  <button id="tab-deck" onclick="showView('deck')">Deck</button>
 </nav>
 
 <main>
@@ -276,6 +279,7 @@ pub const INDEX_HTML: &str = r##"
     </div>
     <h3 style="margin-top:18px">Who</h3>
     <div id="deck-sessions" class="muted">No harness heartbeats yet.</div>
+    <div class="muted" style="margin-top:12px;font-size:11px">Knossos can reserve a resident model here. Loading a model that would displace another endpoint always needs a second operator confirmation.</div>
   </aside>
 </div>
 </main>
@@ -614,12 +618,44 @@ function layoutFleet(nodes){
     const files=(u.changed_files&&u.changed_files.length?u.changed_files:u.files)||[];
     return '<div class="dcard">'+esc(u.name||u.label||u.id)+' <span class="muted">'+esc(facts.join(' · '))+'</span>'+(files.length?'<div class="muted">changed: '+esc(files.join(', '))+'</div>':'')+(u.trace_ref?'<div class="muted">trace: '+esc(u.trace_ref)+'</div>':'')+'</div>';
   }).join(''):'<div class="empty">No harness heartbeats yet. Point Knossos at this node.</div>';
+  units.forEach((u,i)=>{
+    const card=sEl.children[i]; if(!card) return;
+    const v=u.vram||{}; const model=u.model||v.model||'';
+    if(v.status&&v.status!=='none') card.insertAdjacentHTML('beforeend','<div class="muted">VRAM: '+esc(v.status)+(v.impact?' / '+esc(v.impact):'')+'</div>');
+    const reserve=model?'<button class="ghost mini reserve" data-id="'+esc(u.id)+'" data-model="'+esc(model)+'">Reserve '+esc(model)+'</button>':'';
+    const release=v.status==='resident'?'<button class="ghost mini release" data-id="'+esc(u.id)+'">Release</button>':'';
+    const confirm=v.status==='blocked'&&v.evicts&&v.evicts.length?'<button class="ghost mini warn evict" data-id="'+esc(u.id)+'" data-model="'+esc(model)+'">Evict &amp; load</button>':'';
+    if(reserve||release||confirm) card.insertAdjacentHTML('beforeend','<div class="mission-actions">'+reserve+release+confirm+'</div>');
+  });
+  sEl.querySelectorAll('button.reserve').forEach(b=>b.onclick=()=>ensureMissionVram(b.dataset.id,b.dataset.model,false));
+  sEl.querySelectorAll('button.evict').forEach(b=>b.onclick=()=>ensureMissionVram(b.dataset.id,b.dataset.model,true));
+  sEl.querySelectorAll('button.release').forEach(b=>b.onclick=()=>releaseMissionVram(b.dataset.id));
   if(focus) pick(focus);
 }
 async function tickDeck(){
   const local=await localNode();
   const remotes=await remoteNodes();
   layoutFleet(mergeFleet(local, remotes));
+}
+function nextDeckPort(){
+  const used=new Set((selectedNode&&selectedNode.endpoints||[]).map(e=>Number(e.port)).filter(Boolean));
+  let port=8080; while(used.has(port)) port++;
+  return port;
+}
+async function ensureMissionVram(id,model,allowEvict){
+  if(allowEvict&&!confirm('Load '+model+' and evict the endpoints named in the mission impact?')) return;
+  const r=await api('/api/knossos/sessions/'+encodeURIComponent(id)+'/vram',{method:'POST',body:JSON.stringify({model,host:'127.0.0.1',port:nextDeckPort(),allow_evict:allowEvict})});
+  const d=await r.json().catch(()=>({}));
+  if(r.ok) flash('ok',d.reused?'Reserved resident '+model:'Loaded and reserved '+model);
+  else flash('err',d.error||('VRAM request failed ('+r.status+')'));
+  tickDeck(); loadServers(); loadPlayground();
+}
+async function releaseMissionVram(id){
+  const r=await api('/api/knossos/sessions/'+encodeURIComponent(id)+'/vram',{method:'DELETE'});
+  const d=await r.json().catch(()=>({}));
+  if(r.ok) flash('ok','Released the mission VRAM reservation.');
+  else flash('err',d.error||('release failed ('+r.status+')'));
+  tickDeck(); loadServers();
 }
 document.getElementById('deck-serve').onclick=async()=>{
   const model=document.getElementById('deck-model').value.trim();

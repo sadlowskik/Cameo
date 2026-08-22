@@ -49,6 +49,9 @@ A keyless daemon (loopback dev) serves `/metrics` openly, like every other route
 | `GET`, `POST /api/sessions` | List or heartbeat a harness session for the Deck. |
 | `DELETE /api/sessions/{id}` | Remove a session and release its model lease, if any. |
 | `GET`, `POST`, `DELETE /api/sessions/{id}/lease` | Inspect, claim, or release an explicit session-to-model residency lease. |
+| `GET`, `POST /api/knossos/sessions` | Native Knossos session control; aliases the compatible session board. |
+| `GET /api/knossos/sessions/{id}` | One mission's session record plus its lease, if any. |
+| `GET`, `POST`, `DELETE /api/knossos/sessions/{id}/vram` | Inspect, ensure/reserve, or release a session-bound Cameo VRAM capability. |
 | `GET /api/servers` | List supervised endpoints (state, VRAM, restarts, uptime). |
 | `POST /api/servers` | Plan + start an endpoint. `507` if it won't fit VRAM; `409` when only active session leases prevent eviction (F10). |
 | `GET /api/servers/{id}` | One endpoint's live view. |
@@ -119,6 +122,23 @@ makes an agent decision from them.
 In authenticated `GET /api/node` and hub heartbeats, a session with a lease also
 contains a nested `lease` view (`endpoint_id`, `model`, `state`). The Deck uses
 that relationship to show exactly which session owns a resident endpoint.
+
+### Knossos VRAM capability
+
+`POST /api/knossos/sessions/{id}/vram` accepts the normal model start fields
+plus optional `allow_evict: false`. Cameo first reuses an already-running model;
+otherwise it plans and starts it, then creates the session lease. The route is
+operator-only (or the host-only self-host socket), and defaults to **no
+eviction**. A cold model that needs to displace unleased endpoints returns `409`
+with `requires_operator_confirmation: true` and `evicts: [endpoint_id, ...]`.
+The caller must show that impact and retry with `allow_evict: true`; endpoints
+claimed by another live session are never evicted implicitly.
+
+The session receives a `vram` record with `status`, `model`, `endpoint_id`,
+`impact`, and any proposed `evicts`. This is intentionally not a raw GPU handle:
+Cameo remains the sole owner of device/runtime operations and the supervised
+model children. `DELETE` releases only the session's residency claim; it leaves
+the warmed model running for reuse.
 
 ## Notes
 
