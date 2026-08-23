@@ -40,11 +40,10 @@ jobs:
           docker push "$repo:$ver"
           docker push "$repo:latest"
 
-  # The ROCm accelerator image is larger and not yet CI-smoked, so a broken rocm
-  # build must not block a release: publish it best-effort.
+  # The ROCm artifact is a distinct backend build. A tag is not a successful
+  # release if that advertised artifact cannot be assembled and pushed.
   rocm:
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - name: Log in to GHCR

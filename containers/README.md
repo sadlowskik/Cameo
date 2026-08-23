@@ -18,9 +18,11 @@ Or directly:
 
 ## Run
 
-    # Console on :9090, models on a named volume. The entrypoint prints a
-    # generated bearer key on first start (never unauthenticated on a network).
-    podman run --rm -p 9090:9090 -v cameo-models:/var/lib/cameo/models cameo:vulkan
+    # Console on :9090, models on a named volume. Name the container so the
+    # generated bearer key can be read without exposing it in shared logs.
+    podman run --rm --name cameo -p 9090:9090 \
+      -v cameo-models:/var/lib/cameo/models cameo:vulkan
+    podman exec cameo cat /var/lib/cameo/models/.console-key
 
     # Starter model is in the image; the entrypoint seeds it into the volume.
     podman run --rm -v cameo-models:/var/lib/cameo/models cameo:vulkan cameo serve qwen2.5-0.5b
@@ -38,6 +40,11 @@ The image is the universal Vulkan build; giving it a GPU is the caller's job:
       -p 9090:9090 -v cameo-models:/var/lib/cameo/models cameo:rocm
 
 NVIDIA uses the nvidia-container-toolkit; Intel exposes `/dev/dri` like AMD.
+
+The image runs as the unprivileged `cameo` account (UID/GID 10001). For a bind
+mount instead of a named volume, make the host model directory writable by that
+ID. The console is plain HTTP; keep it on a trusted LAN or terminate TLS in a
+reverse proxy before exposing it beyond that network.
 
 ## Two integration boundaries (don't confuse them)
 

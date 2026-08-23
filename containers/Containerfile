@@ -73,6 +73,12 @@ RUN pacman -Syu --noconfirm --needed \
  && pacman -Scc --noconfirm \
  && rm -rf /var/cache/pacman/pkg/*
 
+# The control plane and the model servers it supervises do not need root. A
+# fixed system account also keeps named-volume ownership stable across restarts.
+RUN groupadd --gid 10001 cameo \
+ && useradd --uid 10001 --gid cameo --no-create-home --home-dir /var/lib/cameo \
+      --shell /usr/bin/nologin cameo
+
 COPY --from=builder /out/cameo  /usr/local/bin/cameo
 COPY --from=builder /out/cameod /usr/local/bin/cameod
 COPY containers/entrypoint.sh /usr/local/bin/cameo-entrypoint
@@ -82,18 +88,21 @@ COPY scripts/fetch-starter-model.sh /tmp/fetch-starter-model.sh
 # Release/ISO builds leave it unset and bake qwen2.5-0.5b into the image.
 ARG CAMEO_SKIP_STARTER=0
 RUN chmod +x /usr/local/bin/cameo-entrypoint /usr/local/bin/cameo-seed-models /tmp/fetch-starter-model.sh \
- && install -d -m 0755 /var/lib/cameo/models /usr/share/cameo/models \
+ && install -d -o cameo -g cameo -m 0750 /var/lib/cameo/models \
+ && install -d -m 0755 /usr/share/cameo/models \
  && CAMEO_SKIP_STARTER="$CAMEO_SKIP_STARTER" \
       /tmp/fetch-starter-model.sh --cache /tmp/cameo-models --dest /usr/share/cameo/models \
  && rm -f /tmp/fetch-starter-model.sh
 
 # Models persist on a mounted volume; the path matches cameo_config and
 # cameo_models::models_dir (F2), so `cameo pull` inside the container lands here.
-ENV CAMEO_MODELS_DIR=/var/lib/cameo/models
+ENV CAMEO_MODELS_DIR=/var/lib/cameo/models \
+    HOME=/var/lib/cameo
 VOLUME /var/lib/cameo/models
 
 # 9090: the control-plane console (auto-keyed by the entrypoint).
 # 8080: llama-server's OpenAI-compatible port, once a model is served.
 EXPOSE 9090 8080
 
+USER cameo:cameo
 ENTRYPOINT ["/usr/local/bin/cameo-entrypoint"]

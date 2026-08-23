@@ -78,6 +78,10 @@ pub struct MemoryBudget {
     /// Bytes of GPU-local memory after headroom: a discrete card's VRAM, an
     /// APU's BIOS carve-out, or the sum of both on a mixed machine.
     pub vram_bytes: u64,
+    /// Live bytes already allocated according to the driver. Placement uses
+    /// free capacity, not the card's nameplate total.
+    pub vram_used_bytes: u64,
+    pub vram_used_known: bool,
     /// Bytes of host RAM an APU can additionally address through its GTT
     /// aperture. Real GPU capacity, but the *same bytes* as `usable_host_bytes`
     /// — which is why it is tracked apart rather than folded in.
@@ -103,6 +107,14 @@ impl MemoryBudget {
             .filter_map(|g| g.vram_bytes())
             .fold(0, u64::saturating_add);
         let vram_usable = scale(vram_total, VRAM_HEADROOM);
+        let vram_used_known =
+            !topo.gpus.is_empty() && topo.gpus.iter().all(|gpu| gpu.vram_used_mb.is_some());
+        let vram_used_bytes = topo
+            .gpus
+            .iter()
+            .filter_map(|gpu| gpu.vram_used_mb)
+            .map(|mb| mb.saturating_mul(1024 * 1024))
+            .fold(0, u64::saturating_add);
 
         let usable_host_bytes = topo
             .host_mem
@@ -128,6 +140,8 @@ impl MemoryBudget {
 
         Self {
             vram_bytes: vram_usable,
+            vram_used_bytes,
+            vram_used_known,
             gtt_reachable_bytes: gtt_reachable,
             usable_host_bytes,
             vram_known,
@@ -138,7 +152,9 @@ impl MemoryBudget {
     /// Everything the GPU(s) can hold: their own memory plus, on an APU, the
     /// host RAM they can reach through GTT.
     pub fn usable_vram(&self) -> u64 {
-        self.vram_bytes.saturating_add(self.gtt_reachable_bytes)
+        self.vram_bytes
+            .saturating_sub(self.vram_used_bytes)
+            .saturating_add(self.gtt_reachable_bytes)
     }
 
     /// The most this machine can hold in total, counting the shared pool once.
@@ -204,7 +220,10 @@ pub fn plan(
     if assessments.is_empty() {
         return Err(Error::NoGpus);
     }
-    let top = &assessments[0];
+    let top = assessments
+        .iter()
+        .min_by_key(|assessment| assessment.tier.as_number())
+        .ok_or(Error::NoGpus)?;
 
     let backend = resolve_backend(settings.backend, top, task)?;
 
@@ -222,6 +241,12 @@ pub fn plan(
     let mut notes = Vec::new();
     if !budget.vram_known {
         notes.push("VRAM unknown for at least one GPU; planning conservatively.".to_string());
+    }
+    if budget.vram_used_known && budget.vram_used_bytes > 0 {
+        notes.push(format!(
+            "~{:.1} GiB of VRAM is already in use and excluded from this plan.",
+            gib(budget.vram_used_bytes)
+        ));
     }
     if assessments.iter().any(|a| a.tier != top.tier) {
         notes.push("Mixed GPU tiers detected; planning to the top GPU's tier.".to_string());
@@ -332,7 +357,13 @@ fn resolve_backend(
         }
         Task::Inference => Ok(match override_backend {
             Some(Backend::Vulkan) => Backend::Vulkan,
-            Some(Backend::Rocm) => Backend::Rocm,
+            Some(Backend::Rocm) if top.training_supported => Backend::Rocm,
+            Some(Backend::Rocm) => {
+                return Err(Error::BackendUnsupported(format!(
+                    "ROCm was forced but the best detected GPU is Tier {}",
+                    top.tier.as_number()
+                )))
+            }
             _ if top.training_supported => Backend::Rocm, // Tier 1/2
             _ => Backend::Vulkan,                         // Tier 3
         }),
@@ -545,19 +576,18 @@ fn choose_inference_multi_gpu(
     // VRAM buys KV-cache / batch headroom — which serving especially benefits from.
     // Only a host-only link (above) makes the split not worth it. Override with an
     // explicit backend/placement if you want single-GPU on a fast link.
-    if model.is_moe && !experts_on_host {
-        notes.push(format!(
-            "Distributing MoE experts across {n} GPUs (expert-parallel) over {link:?} link."
-        ));
-        MultiGpu::ExpertParallel
-    } else {
+    {
         // Expert-parallel and experts-on-host are mutually exclusive: one asks
         // the cards to share the expert tensors, the other pins those same
         // tensors to the CPU. Emitting both produced a command that told
         // llama.cpp to do each. With experts on host, what is left to spread
         // across cards is the resident (non-expert) weights — a layer split.
         let fractions = vram_fractions(topo);
-        if model.is_moe {
+        if model.is_moe && !experts_on_host {
+            notes.push(format!(
+                "Native expert-parallel execution is not available in the current llama.cpp boundary; splitting the MoE model by layer across {n} GPUs over {link:?}."
+            ));
+        } else if model.is_moe {
             notes.push(format!(
                 "MoE experts are on host RAM, so the {n} GPUs split the resident \
                  (non-expert) weights by VRAM proportion over {link:?} link."
@@ -937,7 +967,7 @@ mod tests {
     }
 
     #[test]
-    fn moe_that_fits_the_cards_still_goes_expert_parallel() {
+    fn moe_that_fits_uses_honest_layer_split_until_expert_parallel_exists() {
         let links = vec![cameo_gpu_detect::Link {
             a: 0,
             b: 1,
@@ -947,6 +977,7 @@ mod tests {
         let m = ModelMeta::moe("mixtral-47b", 47.0, QuantLevel::Q4_K_M);
         let p = plan(&topo, &a, &m, Task::Inference, &Settings::default()).unwrap();
         assert!(!p.offload.experts_on_host);
-        assert_eq!(p.multi_gpu, MultiGpu::ExpertParallel);
+        assert!(matches!(p.multi_gpu, MultiGpu::LayerSplit { .. }));
+        assert!(p.notes.iter().any(|note| note.contains("not available")));
     }
 }

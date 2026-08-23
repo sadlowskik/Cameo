@@ -8,6 +8,8 @@ Wants=network.target cameo-storage-init.service cameo-seed-models.service
 
 [Service]
 Type=simple
+User=cameo
+Group=cameo
 # Two env layers, later wins for a duplicate key:
 #   1. /run/cameo/cameod.env — generated each boot by cameo-console-init: a random
 #      key + an all-interfaces bind, so the box is a reachable "home console".
@@ -23,12 +25,40 @@ EnvironmentFile=-/etc/cameo/cameod.env
 # to disk by cameo-install, defeated F2's persistent default there.) `mkdir -p`
 # rather than `install -d` so an existing directory's mode/group — the installer
 # makes it wheel-writable — is never clobbered.
-ExecStartPre=/usr/bin/mkdir -p /var/lib/cameo/models
+StateDirectory=cameo
+StateDirectoryMode=0750
+RuntimeDirectory=cameo
+RuntimeDirectoryMode=0750
+ExecStartPre=+/usr/bin/install -d -o cameo -g cameo -m 0750 /var/lib/cameo/models
 ExecStart=/usr/local/bin/cameod
 # A crashed daemon takes its supervised endpoints with it (PR_SET_PDEATHSIG), so
 # restarting is clean — no orphaned llama-server holding VRAM.
 Restart=on-failure
 RestartSec=2
+
+# The daemon launches model servers and needs the GPU devices, network, and its
+# own state directory. Everything else is denied or made read-only.
+UMask=0077
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+SystemCallArchitectures=native
+DevicePolicy=closed
+DeviceAllow=/dev/kfd rw
+DeviceAllow=char-drm rw
 
 [Install]
 WantedBy=multi-user.target

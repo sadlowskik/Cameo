@@ -323,6 +323,20 @@ done < <(find "$BUILD/syslinux" "$BUILD/efiboot" "$BUILD/grub" \
            -type f \( -name '*.cfg' -o -name '*.conf' \) -print0 2>/dev/null)
 log "Rebranded $branded boot config file(s)"
 
+# Keep a serial console on every boot entry. It is useful on headless boxes and
+# gives CI a deterministic channel for proving that the built ISO reached
+# userspace; tty1 remains the local screen and primary interactive console.
+for e in "$BUILD"/efiboot/loader/entries/*.conf; do
+  [ -e "$e" ] || continue
+  grep -q '^options .*console=ttyS0' "$e" \
+    || sed -i '/^options / s/$/ console=ttyS0,115200n8 console=tty1/' "$e"
+done
+for f in "$BUILD"/syslinux/*.cfg; do
+  [ -e "$f" ] || continue
+  sed -i '/^[[:space:]]*APPEND / { /console=ttyS0/! s/$/ console=ttyS0,115200n8 console=tty1/; }' "$f"
+done
+log "Enabled ttyS0 boot diagnostics for headless systems and CI"
+
 # 1e-bis. Add an "Install Cameo to disk" boot entry to every bootloader AND make
 # it the DEFAULT selection.
 #
@@ -475,28 +489,37 @@ done
 # Both front ends ship: `cameo` (the CLI) and `cameod` (the control-plane daemon
 # that serves the browser console). One `cargo build` produces both.
 CARGO_TARGET="${CAMEO_CARGO_TARGET_DIR:-$WORK/cargo-target}"
+DAEDALUS_TARGET="${CAMEO_DAEDALUS_TARGET_DIR:-$WORK/daedalus-target}"
 if [ "${CAMEO_SKIP_CARGO:-}" = "1" ]; then
   log "CAMEO_SKIP_CARGO=1 — using prebuilt bins in $CARGO_TARGET/release"
 else
   log "Building the cameo CLI + cameod daemon (release)..."
-  mkdir -p "$CARGO_TARGET"
+  mkdir -p "$CARGO_TARGET" "$DAEDALUS_TARGET"
   if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ] && command -v runuser >/dev/null 2>&1; then
     log "Dropping privileges to $SUDO_USER for the build"
-    chown -R "$SUDO_USER" "$CARGO_TARGET"
+    chown -R "$SUDO_USER" "$CARGO_TARGET" "$DAEDALUS_TARGET"
     runuser -u "$SUDO_USER" -- env CARGO_TARGET_DIR="$CARGO_TARGET" \
-      cargo build --release -p cameo-cli -p cameo-daemon --manifest-path "$REPO/Cargo.toml"
+      cargo build --release --locked -p cameo-cli -p cameo-daemon --manifest-path "$REPO/Cargo.toml"
+    runuser -u "$SUDO_USER" -- env CARGO_TARGET_DIR="$DAEDALUS_TARGET" \
+      cargo build --release --locked --bin daedalus --manifest-path "$REPO/daedalus/knossos-rs/Cargo.toml"
   else
     log "No SUDO_USER — compiling as root. Build scripts and proc-macros will run"
     log "with full privileges; prefer 'sudo $0' from a normal account."
     CARGO_TARGET_DIR="$CARGO_TARGET" \
-      cargo build --release -p cameo-cli -p cameo-daemon --manifest-path "$REPO/Cargo.toml"
+      cargo build --release --locked -p cameo-cli -p cameo-daemon --manifest-path "$REPO/Cargo.toml"
+    CARGO_TARGET_DIR="$DAEDALUS_TARGET" \
+      cargo build --release --locked --bin daedalus --manifest-path "$REPO/daedalus/knossos-rs/Cargo.toml"
   fi
 fi
 if [ ! -x "$CARGO_TARGET/release/cameo" ] || [ ! -x "$CARGO_TARGET/release/cameod" ]; then
   die "missing $CARGO_TARGET/release/cameo or cameod (build them, or unset CAMEO_SKIP_CARGO)"
 fi
+if [ ! -x "$DAEDALUS_TARGET/release/daedalus" ]; then
+  die "missing $DAEDALUS_TARGET/release/daedalus (build it, or unset CAMEO_SKIP_CARGO)"
+fi
 install -Dm755 "$CARGO_TARGET/release/cameo" "$BUILD/airootfs/usr/local/bin/cameo"
 install -Dm755 "$CARGO_TARGET/release/cameod" "$BUILD/airootfs/usr/local/bin/cameod"
+install -Dm755 "$DAEDALUS_TARGET/release/daedalus" "$BUILD/airootfs/usr/local/bin/daedalus"
 
 # 3. Lite edition: drop the heavy ROCm / PyTorch packages (Vulkan-only, much smaller).
 #

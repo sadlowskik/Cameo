@@ -84,6 +84,25 @@ pub struct ModelMeta {
     pub n_layers: u32,
     /// Context length to plan the KV cache for.
     pub context_len: u32,
+    /// Exact GGUF file bytes when a local model was resolved. This is a much
+    /// better resident-weight estimate than parameter-count quantization math.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub weights_bytes_override: Option<u64>,
+    /// Structural KV metadata from GGUF/model config when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kv_heads: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head_dim: Option<u32>,
+    /// Bytes per K/V element (2 for fp16, 1 for q8 cache).
+    #[serde(default = "default_kv_element_bytes")]
+    pub kv_element_bytes: u8,
+    /// Measured/model-specific expert fraction when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expert_param_fraction: Option<f64>,
+}
+
+fn default_kv_element_bytes() -> u8 {
+    2
 }
 
 impl ModelMeta {
@@ -96,6 +115,11 @@ impl ModelMeta {
             is_moe: false,
             n_layers: default_layers(params_b),
             context_len: 4096,
+            weights_bytes_override: None,
+            kv_heads: None,
+            head_dim: None,
+            kv_element_bytes: default_kv_element_bytes(),
+            expert_param_fraction: None,
         }
     }
 
@@ -144,12 +168,35 @@ impl ModelMeta {
                 self.n_layers
             )));
         }
+        if self.kv_element_bytes == 0 || self.kv_element_bytes > 8 {
+            return Err(Error::InvalidModel(format!(
+                "KV element width must be between 1 and 8 bytes, got {}",
+                self.kv_element_bytes
+            )));
+        }
+        if self
+            .expert_param_fraction
+            .is_some_and(|fraction| !fraction.is_finite() || !(0.0..=1.0).contains(&fraction))
+        {
+            return Err(Error::InvalidModel(
+                "expert parameter fraction must be between 0 and 1".into(),
+            ));
+        }
         Ok(())
+    }
+
+    /// Enrich estimates from a resolved local model. File size is exact; KV
+    /// structure can be supplied by a GGUF/config inspector when available.
+    pub fn with_file_size(mut self, path: &std::path::Path) -> Self {
+        self.weights_bytes_override = std::fs::metadata(path).ok().map(|meta| meta.len());
+        self
     }
 
     /// Estimated resident bytes of the weights.
     pub fn weights_bytes(&self) -> u64 {
-        bytes_from_f64(self.params_b * 1e9 * self.quant.bits_per_weight() / 8.0)
+        self.weights_bytes_override.unwrap_or_else(|| {
+            bytes_from_f64(self.params_b * 1e9 * self.quant.bits_per_weight() / 8.0)
+        })
     }
 
     /// Bytes that can be offloaded to host RAM without hurting latency-critical
@@ -157,7 +204,12 @@ impl ModelMeta {
     /// by whole layers, handled in the planner).
     pub fn offloadable_expert_bytes(&self) -> u64 {
         if self.is_moe {
-            bytes_from_f64(self.weights_bytes() as f64 * MOE_EXPERT_PARAM_FRACTION)
+            bytes_from_f64(
+                self.weights_bytes() as f64
+                    * self
+                        .expert_param_fraction
+                        .unwrap_or(MOE_EXPERT_PARAM_FRACTION),
+            )
         } else {
             0
         }
@@ -165,9 +217,16 @@ impl ModelMeta {
 
     /// Estimated KV-cache bytes for this model's context.
     pub fn kv_bytes(&self) -> u64 {
+        let per_layer_token = match (self.kv_heads, self.head_dim) {
+            (Some(heads), Some(dim)) => 2u64
+                .saturating_mul(heads as u64)
+                .saturating_mul(dim as u64)
+                .saturating_mul(self.kv_element_bytes as u64),
+            _ => KV_BYTES_PER_LAYER_PER_TOKEN,
+        };
         (self.n_layers as u64)
             .saturating_mul(self.context_len as u64)
-            .saturating_mul(KV_BYTES_PER_LAYER_PER_TOKEN)
+            .saturating_mul(per_layer_token)
     }
 
     /// Total resident bytes if everything is on the GPU (weights + KV).

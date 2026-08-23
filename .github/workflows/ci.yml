@@ -23,6 +23,31 @@ jobs:
       - name: Test
         run: cargo test --workspace
 
+  knossos:
+    name: Knossos submodule
+    runs-on: ubuntu-latest
+    steps:
+      # `true` fetches Cameo's direct Knossos submodule without recursively
+      # pulling Knossos's optional editor checkout.
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: daedalus/knossos-rs
+      - name: Format
+        working-directory: daedalus/knossos-rs
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        working-directory: daedalus/knossos-rs
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: Test
+        working-directory: daedalus/knossos-rs
+        run: cargo test --all-targets --locked
+
   shellcheck:
     runs-on: ubuntu-latest
     steps:
@@ -54,6 +79,7 @@ jobs:
         run: docker build -f containers/Containerfile --build-arg CAMEO_SKIP_STARTER=1 -t cameo:vulkan .
       - name: Smoke — binaries run and serving deps are present
         run: |
+          test "$(docker run --rm cameo:vulkan id -u)" = "10001"
           docker run --rm cameo:vulkan cameo pull --list
           docker run --rm cameo:vulkan cameod --help
           docker run --rm cameo:vulkan sh -c 'command -v llama-server && command -v vulkaninfo'

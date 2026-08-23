@@ -833,9 +833,9 @@ header{box-shadow:0 1px 0 rgba(255,176,90,.06)}
       <kbd>Install Cameo to disk</kbd>
       <span>→ chat</span>
       <kbd>cameo.local:9090</kbd>
-      <button class="chip copy" type="button" data-copy="https://github.com/sadlowskik/Cameo/releases/tag/v0.1.0-beta.2" aria-label="Copy lite ISO release URL">
+      <button class="chip copy" type="button" data-copy="https://github.com/sadlowskik/Cameo/releases/tag/v0.5.0" aria-label="Copy Cameo release URL">
         <svg class="ico cp" data-copy-icon viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
-        copy lite URL
+        copy release URL
       </button>
     </div>
 
@@ -844,17 +844,39 @@ header{box-shadow:0 1px 0 rgba(255,176,90,.06)}
       <p>Take the file named <code style="font-family:var(--mono);font-size:.9em;color:var(--amber)">cameo-*.iso</code> (or <code style="font-family:var(--mono);font-size:.9em;color:var(--amber)">.iso.part*</code> if it was split). Ignore “Source code” zip/tar — those are not flashable. If the newest tag has no ISO yet, use the last tag that lists one.</p>
       <div class="eds">
         <div class="ed rec">
-          <div class="ed-h"><span class="ed-name">Universal</span><span class="tag-rec">any AMD card</span></div>
-          <p>Vulkan always; ROCm only when the card can train. Unsure? This one. Pick a release that includes an <code style="font-family:var(--mono);font-size:.85em;color:var(--amber)">.iso</code>.</p>
-          <a class="btn-primary" href="https://github.com/sadlowskik/Cameo/releases" rel="noopener">
+          <div class="ed-h"><span class="ed-name">Universal</span><span class="tag-rec">Vulkan + ROCm</span></div>
+          <p>Includes both AMD runtime paths. ROCm is enabled only on supported cards; other compatible AMD GPUs use Vulkan.</p>
+          <a class="btn-primary" href="https://github.com/sadlowskik/Cameo/releases/tag/v0.5.0" rel="noopener">
             <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
-            releases — pick an .iso
+            Cameo v0.5.0 downloads
           </a>
         </div>
         <div class="ed">
           <div class="ed-h"><span class="ed-name">Lite</span><span class="tag-s">smaller · vulkan only</span></div>
-          <p>Known old card (RX 580, APU). Last flashable lite image:</p>
-          <a class="btn" href="https://github.com/sadlowskik/Cameo/releases/tag/v0.1.0-beta.2" rel="noopener">v0.1.0-beta.2 ISO</a>
+          <p>For Vulkan-capable AMD hardware that does not need the much larger ROCm training stack.</p>
+          <a class="btn" href="https://github.com/sadlowskik/Cameo/releases/tag/v0.5.0" rel="noopener">Cameo Lite v0.5.0</a>
+        </div>
+      </div>
+    </article>
+
+    <article class="install rise">
+      <h3>Daedalus standalone harness</h3>
+      <p>Both Cameo images include the Rust-native <code style="font-family:var(--mono);font-size:.9em;color:var(--amber)">daedalus</code> harness. To run it on an existing workstation, download the versioned archive for your operating system and verify it against <a href="https://github.com/sadlowskik/Knossos-Harness/releases/download/v0.1.0/SHA256SUMS" rel="noopener" style="color:var(--amber)">SHA256SUMS</a>.</p>
+      <div class="eds">
+        <div class="ed rec">
+          <div class="ed-h"><span class="ed-name">Linux</span><span class="tag-rec">x86_64</span></div>
+          <p>Native build for current 64-bit Linux distributions.</p>
+          <a class="btn-primary" href="https://github.com/sadlowskik/Knossos-Harness/releases/download/v0.1.0/daedalus-v0.1.0-linux-x86_64.zip" rel="noopener">download Daedalus</a>
+        </div>
+        <div class="ed">
+          <div class="ed-h"><span class="ed-name">Windows</span><span class="tag-s">x86_64</span></div>
+          <p>Standalone <code style="font-family:var(--mono);font-size:.85em;color:var(--amber)">daedalus.exe</code> plus documentation.</p>
+          <a class="btn" href="https://github.com/sadlowskik/Knossos-Harness/releases/download/v0.1.0/daedalus-v0.1.0-windows-x86_64.zip" rel="noopener">Windows zip</a>
+        </div>
+        <div class="ed">
+          <div class="ed-h"><span class="ed-name">macOS</span><span class="tag-s">Apple silicon</span></div>
+          <p>Native arm64 build for M-series Macs.</p>
+          <a class="btn" href="https://github.com/sadlowskik/Knossos-Harness/releases/download/v0.1.0/daedalus-v0.1.0-macos-arm64.zip" rel="noopener">macOS zip</a>
         </div>
       </div>
     </article>
@@ -942,7 +964,7 @@ sudo CAMEO_EDITION=lite ./scripts/build-iso.sh</pre>
 <footer><div class="wrap">
   <div class="foot">
     <a class="brand" href="#top"><svg viewBox="0 0 26 26"><use href="#mark"/></svg>cameo</a>
-    <p class="tag">any AMD card <span class="e">→</span> a working LLM box · apache-2.0</p>
+    <p class="tag">a supported AMD GPU <span class="e">→</span> a working LLM box · apache-2.0</p>
     <div class="fl">
       <a href="legal.html#terms">terms</a>
       <a href="legal.html#privacy">privacy</a>

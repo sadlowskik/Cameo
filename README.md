@@ -45,10 +45,11 @@ After that the machine does not need the internet. Full walkthrough:
 
 ### ISO appliance
 
-Flash an `.iso` from [Releases](https://github.com/sadlowskik/Cameo/releases)
-(not the Source code zip). **Universal** for any AMD box; **lite** for a known
-old / Vulkan-only card. If the newest tag has no ISO, use the last tag that lists
-one — lite today: [v0.1.0-beta.2](https://github.com/sadlowskik/Cameo/releases/tag/v0.1.0-beta.2).
+Flash an `.iso` from [Cameo v0.5.0](https://github.com/sadlowskik/Cameo/releases/tag/v0.5.0)
+(not the Source code zip). **Universal** includes Vulkan and ROCm; **lite** is the
+smaller Vulkan-only image. Both editions also include the Rust-native Daedalus
+agentic harness. Standalone Linux, Windows, and Apple silicon builds are published
+from the [Knossos Harness releases](https://github.com/sadlowskik/Knossos-Harness/releases/tag/v0.1.0).
 Rufus **DD Image mode**, Etcher, or `dd`. **Disable Secure Boot** if the stick is
 ignored. Boot **Install Cameo to disk**. Log in, open `http://cameo.local:9090`,
 press **Start qwen2.5-0.5b and chat**. No Wi-Fi for that. Network is later: extra

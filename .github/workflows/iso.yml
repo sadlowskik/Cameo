@@ -52,6 +52,8 @@ jobs:
       EDITION: ${{ matrix.edition }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true
 
       - name: Runner diagnostics
         run: |
@@ -115,8 +117,10 @@ jobs:
       - name: Verify toolchain
         run: docker exec arch bash -euo pipefail -c "mkarchiso -h >/dev/null && cargo --version && rustc --version"
 
-      - name: Build cameo CLI + cameod
-        run: docker exec arch bash -euo pipefail -c "CARGO_TARGET_DIR=/repo/build/cargo-target cargo build --release -p cameo-cli -p cameo-daemon"
+      - name: Build Cameo + Daedalus
+        run: |
+          docker exec arch bash -euo pipefail -c "CARGO_TARGET_DIR=/repo/build/cargo-target cargo build --release --locked -p cameo-cli -p cameo-daemon"
+          docker exec arch bash -euo pipefail -c "CARGO_TARGET_DIR=/repo/build/daedalus-target cargo build --release --locked --manifest-path daedalus/knossos-rs/Cargo.toml --bin daedalus"
 
       # pacman 7 runs downloads under an unprivileged DownloadUser confined by
       # landlock. That sandbox cannot be set up inside a container and aborts
@@ -142,6 +146,7 @@ jobs:
             echo "=== build attempt $attempt ===" | tee -a build.log
             if docker exec -e CAMEO_EDITION="$EDITION" -e CAMEO_SKIP_CARGO=1 \
                  -e CAMEO_CARGO_TARGET_DIR=/repo/build/cargo-target arch \
+                 -e CAMEO_DAEDALUS_TARGET_DIR=/repo/build/daedalus-target \
                  bash -euo pipefail -c "rm -rf /repo/build/tmp; bash ./scripts/build-iso.sh" 2>&1 | tee -a build.log; then
               exit 0
             fi
@@ -158,11 +163,9 @@ jobs:
       # QEMU/OVMF boot-smoke (F16). CI runners have no GPU, so this proves the
       # image *boots to userspace* under UEFI — the regression class that shipped
       # "won't boot" surprises — not that it serves on a GPU (that stays the gated
-      # scripts/phase1 checklist). Informational until the first real run
-      # calibrates the serial markers: `continue-on-error` so a miscalibrated
-      # assertion never discards a good ISO. Flip it to required once green.
-      - name: QEMU boot-smoke (informational)
-        continue-on-error: true
+      # scripts/phase1 checklist). Every boot entry includes ttyS0, making the
+      # serial userspace marker a required release gate.
+      - name: QEMU boot-smoke
         run: |
           docker exec arch bash -euo pipefail -c '
             pacman -Sy --noconfirm --needed qemu-system-x86 edk2-ovmf || \
@@ -172,20 +175,25 @@ jobs:
                       /usr/share/edk2/x64/OVMF.4m.fd \
                       /usr/share/ovmf/x64/OVMF.fd 2>/dev/null | head -1)
             echo "booting $ISO with firmware $OVMF"
-            ( timeout 240 qemu-system-x86_64 \
+            set +e
+            timeout 240 qemu-system-x86_64 \
                 -m 2560 -smp 2 -nographic -no-reboot \
                 -drive if=pflash,format=raw,readonly=on,file="$OVMF" \
                 -cdrom "$ISO" -boot d \
-                -serial file:/repo/boot-serial.log >/dev/null 2>&1 || true ) &
-            sleep 210
-            pkill -f qemu-system-x86_64 || true
+                -serial file:/repo/boot-serial.log >/dev/null 2>&1
+            qemu_status=$?
+            set -e
+            if [ "$qemu_status" -ne 0 ] && [ "$qemu_status" -ne 124 ]; then
+              echo "BOOT-SMOKE: qemu failed with status $qemu_status"
+              exit "$qemu_status"
+            fi
             echo "=== serial tail ==="
             tail -c 6000 /repo/boot-serial.log 2>/dev/null || echo "(no serial output captured)"
             if grep -qiE "cameo|reached target|Welcome to|login:" /repo/boot-serial.log 2>/dev/null; then
               echo "BOOT-SMOKE: reached userspace"
             else
-              echo "BOOT-SMOKE: no boot markers yet — the ISO may need console=ttyS0 on the"
-              echo "kernel cmdline for serial capture; calibrate on this first run."
+              echo "BOOT-SMOKE: no userspace marker appeared on ttyS0"
+              exit 1
             fi
           '
 
@@ -215,6 +223,9 @@ jobs:
           A=$(sudo find build/tmp -maxdepth 3 -type d -name airootfs | head -1)
           echo "airootfs: $A"
           test -n "$A" || { echo "FAIL: no built airootfs found"; exit 1; }
+
+          echo "--- systemd unit verification ---"
+          sudo systemd-analyze --root="$A" verify cameod.service
 
           echo "--- root account ---"
           sudo grep '^root:' "$A/etc/shadow"
@@ -275,6 +286,11 @@ jobs:
               || { echo "FAIL: $u not enabled"; exit 1; }
           done
           echo "OK: cameod shipped and enabled"
+
+          echo "--- Daedalus agentic harness ---"
+          sudo test -x "$A/usr/local/bin/daedalus" \
+            || { echo "FAIL: daedalus binary missing"; exit 1; }
+          echo "OK: Daedalus shipped"
 
           # Starter GGUF: first chat with no internet. Seed unit must run
           # before cameod, and the baked file must be in /usr/share/cameo/models.

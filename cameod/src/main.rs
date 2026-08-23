@@ -237,6 +237,11 @@ fn run(args: Args) -> Result<()> {
         open_inference: is_loopback(&args.host)
             || std::env::var_os("CAMEO_OPEN_INFERENCE").is_some(),
     });
+    let maintenance = Arc::clone(&state);
+    std::thread::spawn(move || loop {
+        maintenance.sup.maintain();
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    });
 
     // Node mode: if told where the hub is, phone home in the background. The agent
     // sends this box's own /api/node description and heartbeats on an interval.

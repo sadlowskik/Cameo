@@ -380,6 +380,10 @@ struct PullArgs {
     /// List the built-in aliases and what is already cached, then exit.
     #[arg(long)]
     list: bool,
+    /// Expected SHA-256 for a custom URL or owner/repo:file reference.
+    /// Curated aliases already carry a pinned digest.
+    #[arg(long, value_name = "64-HEX")]
+    sha256: Option<String>,
 }
 
 #[derive(clap::Args)]
@@ -953,7 +957,9 @@ fn cmd_pull(cli: &Cli, args: &PullArgs) -> Result<()> {
         .as_deref()
         .expect("clap requires model unless --list");
     // The CLI surfaces pull progress on stderr, matching its other status lines.
-    let path = cameo_models::pull(spec, &mut |line| eprintln!("cameo: {line}"))?;
+    let path = cameo_models::pull_with_checksum(spec, args.sha256.as_deref(), &mut |line| {
+        eprintln!("cameo: {line}")
+    })?;
     if cli.json {
         println!(
             "{}",
@@ -1327,6 +1333,9 @@ fn plan_error(cli: &Cli, e: cameo_placement::Error) -> anyhow::Error {
             "tier_unsupported",
             &format!("training requires a Tier 1/2 (ROCm) GPU; top GPU is Tier {tier}"),
         ),
+        cameo_placement::Error::BackendUnsupported(message) => {
+            fail(cli.json, "backend_unsupported", &message)
+        }
         e @ cameo_placement::Error::InsufficientMemory { .. } => {
             fail(cli.json, "insufficient_memory", &e.to_string())
         }
@@ -1349,6 +1358,7 @@ fn fail(json: bool, code: &str, message: &str) -> ! {
     }
     exit(match code {
         "tier_unsupported" => 2,
+        "backend_unsupported" => 2,
         "exec_error" => 3,
         "insufficient_memory" => 4,
         "invalid_model" => 5,

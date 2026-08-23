@@ -91,6 +91,8 @@ Model acquisition and cache resolution, shared by both front ends so there is on
 cache layout and one alias table. `resolve(name)` turns an alias or bare name into
 a local `.gguf` path (paths pass through untouched); `pull(spec, report)` fetches
 one by shelling out to `curl` (an alias, a `https://` URL, or `owner/repo:file.gguf`),
+then verifies the payload before the atomic rename. Curated aliases carry pinned
+SHA-256 digests; custom sources require `cameo pull --sha256 <digest> ...`,
 writing to a `.part` sidecar and renaming on success. `aliases()` / `cached_models()`
 return data, never printing — presentation belongs to the caller (the CLI prints a
 table; the daemon serves JSON).

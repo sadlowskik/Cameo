@@ -15,6 +15,11 @@ members = [
     "cli",
     "cameod",
 ]
+# Knossos is versioned as its own submodule and keeps its own Cargo.lock.  Cargo
+# still walks up to this manifest when invoked inside it, so explicitly exclude
+# the nested crate rather than accidentally absorbing it into Cameo's release
+# workspace.
+exclude = ["daedalus/knossos-rs"]
 
 [workspace.package]
 version = "0.1.0"

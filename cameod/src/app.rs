@@ -25,9 +25,23 @@ use crate::hub::{Farm, Registration};
 use crate::sessions::{Board, Session, VramCapability};
 use crate::supervisor::{LeaseError, StartError, StartRequest, Supervisor};
 
-/// llama.cpp's HTTP server binary. As in the CLI, the backend selects the build,
-/// not the name, so both tiers resolve to the same program today.
-const SERVER_BINARY: &str = "llama-server";
+/// Resolve a backend-specific server binary. ROCm must never silently launch a
+/// Vulkan build and report itself as ROCm; a missing ROCm binary is an explicit
+/// spawn failure. Operators may override packaged paths without changing the
+/// placement contract.
+fn server_binary(backend: Backend) -> String {
+    match backend {
+        Backend::Rocm => {
+            std::env::var("CAMEO_LLAMA_SERVER_ROCM").unwrap_or_else(|_| "llama-server-rocm".into())
+        }
+        Backend::Vulkan => {
+            std::env::var("CAMEO_LLAMA_SERVER_VULKAN").unwrap_or_else(|_| "llama-server".into())
+        }
+        Backend::Cpu | Backend::Auto => {
+            std::env::var("CAMEO_LLAMA_SERVER_CPU").unwrap_or_else(|_| "llama-server".into())
+        }
+    }
+}
 
 /// Shared daemon state, handed to every request handler.
 pub struct AppState {
@@ -987,6 +1001,7 @@ fn api_models() -> Response {
                 "name": a.name,
                 "repo": a.repo,
                 "file": a.file,
+                "sha256": a.sha256,
                 "params_b": cameo_models::params_b_for(a.name),
             })
         })
@@ -1025,7 +1040,10 @@ fn plan_for(
         settings.backend = Some(b);
     }
 
-    let model = body.meta();
+    let model_path = cameo_models::resolve(&body.model).unwrap_or_else(|_| body.model.clone());
+    let model = body
+        .meta()
+        .with_file_size(std::path::Path::new(&model_path));
     let plan = make_plan(&topo, &assessments, &model, Task::Inference, &settings)
         .map_err(plan_error_response)?;
 
@@ -1034,8 +1052,8 @@ fn plan_for(
         &plan,
         &model,
         // A path is only needed to actually spawn; the preview keeps the name.
-        &cameo_models::resolve(&body.model).unwrap_or_else(|_| body.model.clone()),
-        SERVER_BINARY,
+        &model_path,
+        &server_binary(plan.backend),
         &body.host,
         body.port,
         api_key.as_deref(),
@@ -1335,7 +1353,13 @@ fn start_server_with_eviction(
     let vram_need = if vram_budget > 0 {
         // A model that fits keeps its true size; one that spills wants the whole
         // GPU, so cap the need at the budget.
-        body.meta().total_bytes().min(vram_budget)
+        let resolved = cameo_models::resolve(&body.model).ok();
+        let measured = resolved
+            .as_deref()
+            .map(std::path::Path::new)
+            .map(|path| body.meta().with_file_size(path).total_bytes())
+            .unwrap_or_else(|| body.meta().total_bytes());
+        measured.min(vram_budget)
     } else {
         0
     };
@@ -1418,6 +1442,7 @@ fn plan_error_response(e: cameo_placement::Error) -> Response {
             400,
             format!("training requires a Tier 1/2 (ROCm) GPU; top GPU is Tier {tier}"),
         ),
+        cameo_placement::Error::BackendUnsupported(message) => Response::error(400, message),
         e @ cameo_placement::Error::InsufficientMemory { .. } => {
             Response::error(400, e.to_string())
         }

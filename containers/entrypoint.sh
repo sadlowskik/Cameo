@@ -29,7 +29,11 @@ if [ -z "${CAMEO_CONSOLE_KEY:-}" ] && [ "${CAMEO_CONSOLE_HOST:-0.0.0.0}" != "127
         CAMEO_CONSOLE_HOST=${CAMEO_CONSOLE_HOST:-0.0.0.0}
         CAMEO_CONSOLE_KEY=$key
         export CAMEO_CONSOLE_HOST CAMEO_CONSOLE_KEY
-        echo "cameo: console on ${CAMEO_CONSOLE_HOST}:9090 with generated bearer key: $key"
+        key_file="${CAMEO_MODELS_DIR:-/var/lib/cameo/models}/.console-key"
+        umask 077
+        printf '%s\n' "$key" > "$key_file"
+        echo "cameo: console on ${CAMEO_CONSOLE_HOST}:9090 with a generated bearer key"
+        echo "cameo: read it with: podman exec <container> cat $key_file"
     else
         export CAMEO_CONSOLE_HOST=127.0.0.1
         echo "cameo: no entropy for a key; console bound loopback-only" >&2

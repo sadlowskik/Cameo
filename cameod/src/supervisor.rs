@@ -13,6 +13,8 @@
 //! that died on its own is reported as `exited`, not falsely `running`.
 
 use std::collections::{HashMap, HashSet};
+use std::io::{BufRead, BufReader, Write};
+use std::net::{TcpStream, ToSocketAddrs};
 use std::process::Child;
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
@@ -33,6 +35,8 @@ const RESTART_BACKOFF: Duration = Duration::from_secs(2);
 /// five restarts and is parked `failed` for good, which punishes exactly the
 /// endpoints that were healthy.
 const STABLE_UPTIME_RESET: Duration = Duration::from_secs(300);
+const HEALTH_PROBE_INTERVAL: Duration = Duration::from_millis(500);
+const HEALTH_PROBE_TIMEOUT: Duration = Duration::from_millis(250);
 
 /// What to do with an endpoint whose child process is gone. Kept as a pure
 /// decision so the timing and counting are unit-tested without spawning.
@@ -171,6 +175,11 @@ pub struct Endpoint {
     /// When this endpoint last served (or started). Drives LRU eviction; bumped by
     /// [`Supervisor::touch`] when the gateway routes a request to it.
     last_used: SystemTime,
+    /// A live process is only `starting`; it becomes routable after llama.cpp's
+    /// `/health` endpoint answers successfully.
+    ready: bool,
+    last_health_probe: Option<SystemTime>,
+    readiness_error: Option<String>,
 }
 
 impl Endpoint {
@@ -191,6 +200,25 @@ impl Endpoint {
                 Err(e) => {
                     self.error = Some(format!("wait failed: {e}"));
                     self.child = None;
+                }
+            }
+        }
+        if self.child.is_some()
+            && self
+                .last_health_probe
+                .and_then(|at| at.elapsed().ok())
+                .map(|age| age >= HEALTH_PROBE_INTERVAL)
+                .unwrap_or(true)
+        {
+            self.last_health_probe = Some(SystemTime::now());
+            match probe_health(&self.host, self.port) {
+                Ok(()) => {
+                    self.ready = true;
+                    self.readiness_error = None;
+                }
+                Err(error) => {
+                    self.ready = false;
+                    self.readiness_error = Some(error);
                 }
             }
         }
@@ -217,6 +245,9 @@ impl Endpoint {
                     self.exit_code = None;
                     self.last_exit_at = None;
                     self.started_at = SystemTime::now();
+                    self.ready = false;
+                    self.last_health_probe = None;
+                    self.readiness_error = None;
                 }
                 Err(e) => self.error = Some(format!("restart failed: {e}")),
             },
@@ -234,8 +265,10 @@ impl Endpoint {
     fn state(&self) -> &'static str {
         if self.error.is_some() {
             "failed"
-        } else if self.child.is_some() {
+        } else if self.child.is_some() && self.ready {
             "running"
+        } else if self.child.is_some() {
+            "starting"
         } else {
             "exited"
         }
@@ -257,6 +290,7 @@ impl Endpoint {
             "pid": self.child.as_ref().map(Child::id),
             "exit_code": self.exit_code,
             "error": self.error,
+            "readiness_error": self.readiness_error,
             "restarts": self.restarts,
             "fits_vram": self.fits_vram,
             "vram_bytes": self.vram_bytes,
@@ -265,6 +299,52 @@ impl Endpoint {
             "command": self.command.display(),
             "uptime_secs": uptime,
         })
+    }
+
+    fn process_running(&self) -> bool {
+        self.child.is_some()
+    }
+
+    fn is_ready(&self) -> bool {
+        self.child.is_some() && self.ready && self.error.is_none()
+    }
+}
+
+fn probe_health(host: &str, port: u16) -> Result<(), String> {
+    let connect_host = match host {
+        "0.0.0.0" => "127.0.0.1",
+        "::" => "::1",
+        other => other,
+    };
+    let addr = (connect_host, port)
+        .to_socket_addrs()
+        .map_err(|e| format!("health address: {e}"))?
+        .next()
+        .ok_or_else(|| "health address did not resolve".to_string())?;
+    let mut stream = TcpStream::connect_timeout(&addr, HEALTH_PROBE_TIMEOUT)
+        .map_err(|e| format!("health connect: {e}"))?;
+    stream
+        .set_read_timeout(Some(HEALTH_PROBE_TIMEOUT))
+        .map_err(|e| e.to_string())?;
+    stream
+        .set_write_timeout(Some(HEALTH_PROBE_TIMEOUT))
+        .map_err(|e| e.to_string())?;
+    stream
+        .write_all(b"GET /health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        .map_err(|e| format!("health write: {e}"))?;
+    let mut status = String::new();
+    BufReader::new(stream)
+        .read_line(&mut status)
+        .map_err(|e| format!("health read: {e}"))?;
+    let code = status
+        .split_whitespace()
+        .nth(1)
+        .and_then(|value| value.parse::<u16>().ok())
+        .ok_or_else(|| format!("invalid health response: {}", status.trim()))?;
+    if (200..300).contains(&code) {
+        Ok(())
+    } else {
+        Err(format!("health returned HTTP {code}"))
     }
 }
 
@@ -333,6 +413,14 @@ impl Supervisor {
         Self::default()
     }
 
+    /// Reap, restart, and probe all endpoints. Called by a daemon maintenance
+    /// thread so lifecycle progress does not depend on dashboard traffic.
+    pub fn maintain(&self) {
+        for endpoint in self.endpoints.lock().unwrap().values_mut() {
+            endpoint.refresh();
+        }
+    }
+
     /// Start (or record the failure of starting) an endpoint. On a spawn error
     /// the endpoint is still stored in the `failed` state and its view returned,
     /// so the dashboard shows *why* it did not come up rather than nothing.
@@ -345,7 +433,7 @@ impl Supervisor {
         // crashed endpoint should not block re-launching on the same port.
         if let Some(existing) = map.get_mut(&id) {
             existing.refresh();
-            if existing.state() == "running" {
+            if existing.process_running() {
                 return Err(StartError::PortInUse(id));
             }
         }
@@ -359,7 +447,7 @@ impl Supervisor {
             .filter(|e| e.id != id && e.port == req.port)
             .find_map(|e| {
                 e.refresh();
-                (e.state() == "running").then(|| e.id.clone())
+                e.process_running().then(|| e.id.clone())
             })
         {
             return Err(StartError::PortInUse(holder));
@@ -377,12 +465,10 @@ impl Supervisor {
                 .values_mut()
                 .filter_map(|e| {
                     e.refresh();
-                    (e.id != id && e.state() == "running" && e.vram_bytes > 0).then(|| {
-                        ResidentVram {
-                            id: e.id.clone(),
-                            vram_bytes: e.vram_bytes,
-                            last_used: e.last_used,
-                        }
+                    (e.id != id && e.process_running() && e.vram_bytes > 0).then(|| ResidentVram {
+                        id: e.id.clone(),
+                        vram_bytes: e.vram_bytes,
+                        last_used: e.last_used,
                     })
                 })
                 .collect();
@@ -408,7 +494,7 @@ impl Supervisor {
                         .filter(|e| protected.contains(e.id.as_str()))
                         .map(|e| {
                             e.refresh();
-                            if e.state() == "running" {
+                            if e.process_running() {
                                 e.vram_bytes
                             } else {
                                 0
@@ -455,6 +541,9 @@ impl Supervisor {
             last_exit_at: None,
             vram_bytes: req.vram_need,
             last_used: SystemTime::now(),
+            ready: false,
+            last_health_probe: None,
+            readiness_error: None,
         };
         let view = endpoint.view();
         map.insert(id, endpoint);
@@ -475,8 +564,7 @@ impl Supervisor {
         let mut map = self.endpoints.lock().unwrap();
         map.values_mut().find_map(|e| {
             e.refresh();
-            (e.model == model && e.state() == "running")
-                .then(|| (e.host.clone(), e.port, e.id.clone()))
+            (e.model == model && e.is_ready()).then(|| (e.host.clone(), e.port, e.id.clone()))
         })
     }
 
@@ -487,7 +575,7 @@ impl Supervisor {
             .values_mut()
             .filter_map(|e| {
                 e.refresh();
-                (e.state() == "running").then(|| e.model.clone())
+                e.is_ready().then(|| e.model.clone())
             })
             .collect();
         names.sort();
@@ -504,7 +592,7 @@ impl Supervisor {
             .values_mut()
             .filter_map(|endpoint| {
                 endpoint.refresh();
-                (endpoint.state() == "running").then(|| {
+                endpoint.is_ready().then(|| {
                     let lease_count = leases
                         .values()
                         .filter(|lease| lease.endpoint_id == endpoint.id)
@@ -535,7 +623,7 @@ impl Supervisor {
         let mut leases = self.leases.lock().unwrap();
         let endpoint_id = map.values_mut().find_map(|endpoint| {
             endpoint.refresh();
-            (endpoint.model == model && endpoint.state() == "running").then(|| endpoint.id.clone())
+            (endpoint.model == model && endpoint.is_ready()).then(|| endpoint.id.clone())
         });
         let Some(endpoint_id) = endpoint_id else {
             return Err(LeaseError::Unavailable(model.to_string()));
@@ -622,7 +710,8 @@ impl Supervisor {
         let mut vram = String::new();
         for e in map.values_mut() {
             e.refresh();
-            let running = if e.state() == "running" { 1 } else { 0 };
+            let running = if e.process_running() { 1 } else { 0 };
+            let ready = if e.is_ready() { 1 } else { 0 };
             let labels = format!(
                 "id=\"{}\",model=\"{}\",port=\"{}\",backend=\"{}\",state=\"{}\"",
                 esc(&e.id),
@@ -632,6 +721,7 @@ impl Supervisor {
                 e.state()
             );
             up.push_str(&format!("cameo_endpoint_up{{{labels}}} {running}\n"));
+            up.push_str(&format!("cameo_endpoint_ready{{{labels}}} {ready}\n"));
             let id_label = format!("id=\"{}\"", esc(&e.id));
             restarts.push_str(&format!(
                 "cameo_endpoint_restarts_total{{{id_label}}} {}\n",
@@ -657,6 +747,8 @@ impl Supervisor {
         ));
         out.push_str("# HELP cameo_endpoint_up 1 if the endpoint's process is running.\n");
         out.push_str("# TYPE cameo_endpoint_up gauge\n");
+        out.push_str("# HELP cameo_endpoint_ready 1 if the endpoint passed its health probe.\n");
+        out.push_str("# TYPE cameo_endpoint_ready gauge\n");
         out.push_str(&up);
         out.push_str("# HELP cameo_endpoint_restarts_total Auto-restarts since creation.\n");
         out.push_str("# TYPE cameo_endpoint_restarts_total counter\n");
@@ -680,7 +772,7 @@ fn lease_view(lease: &Lease, endpoints: &mut HashMap<String, Endpoint>) -> Value
     let state = match endpoints.get_mut(&lease.endpoint_id) {
         Some(endpoint) => {
             endpoint.refresh();
-            if endpoint.state() == "running" {
+            if endpoint.is_ready() {
                 "active"
             } else {
                 "unavailable"

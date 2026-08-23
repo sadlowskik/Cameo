@@ -21,26 +21,30 @@ use anyhow::{anyhow, bail, Result};
 /// A curated alias → (HuggingFace repo, file) table. Weighted toward models that
 /// fit a 4 GB Tier-3 APU, since that is Cameo's proving-ground hardware.
 /// Filenames verified against the HuggingFace model API.
-/// (alias, huggingface repo, filename, params in billions). The last column
-/// is what the planner uses when the caller omits `--params`.
-const ALIASES: &[(&str, &str, &str, f64)] = &[
+/// (alias, HuggingFace repo, filename, params in billions, SHA-256). The digest
+/// is the publisher's LFS/Xet object SHA-256 and makes aliases reproducible even
+/// though their human-facing URL uses a branch name.
+const ALIASES: &[(&str, &str, &str, f64, &str)] = &[
     (
         "qwen2.5-0.5b",
         "bartowski/Qwen2.5-0.5B-Instruct-GGUF",
         "Qwen2.5-0.5B-Instruct-Q4_K_M.gguf",
         0.5,
+        "6eb923e7d26e9cea28811e1a8e852009b21242fb157b26149d3b188f3a8c8653",
     ),
     (
         "tinyllama",
         "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF",
         "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
         1.1,
+        "9fecc3b3cd76bba89d504f29b616eedf7da85b96540e490ca5824d3f7d2776a0",
     ),
     (
         "llama3.2-3b",
         "bartowski/Llama-3.2-3B-Instruct-GGUF",
         "Llama-3.2-3B-Instruct-Q4_K_M.gguf",
         3.0,
+        "6c1a2b41161032677be168d354123594c0e6e67d2b9227c84f296ad037c728ff",
     ),
 ];
 
@@ -53,13 +57,20 @@ pub struct Alias {
     pub repo: &'static str,
     /// The GGUF filename within that repo.
     pub file: &'static str,
+    /// Expected lowercase SHA-256 of the GGUF payload.
+    pub sha256: &'static str,
 }
 
 /// The built-in alias table, as structured data for a caller to render.
 pub fn aliases() -> Vec<Alias> {
     ALIASES
         .iter()
-        .map(|(name, repo, file, _)| Alias { name, repo, file })
+        .map(|(name, repo, file, _, sha256)| Alias {
+            name,
+            repo,
+            file,
+            sha256,
+        })
         .collect()
 }
 
@@ -70,8 +81,8 @@ pub fn params_b_for(name: &str) -> Option<f64> {
     let key = name.strip_suffix(".gguf").unwrap_or(name);
     ALIASES
         .iter()
-        .find(|(n, _, _, _)| *n == key)
-        .map(|(_, _, _, p)| *p)
+        .find(|(n, _, _, _, _)| *n == key)
+        .map(|(_, _, _, p, _)| *p)
 }
 
 /// Where pulled models live, in precedence order:
@@ -229,7 +240,7 @@ pub fn resolve(name: &str) -> Result<String> {
 /// Accepted forms: a curated alias, a full `http(s)://` URL, or a HuggingFace
 /// `owner/repo:file.gguf` reference.
 fn spec_to_url(spec: &str) -> Result<(String, String)> {
-    if let Some((_, repo, file, _)) = ALIASES.iter().find(|(a, _, _, _)| *a == spec) {
+    if let Some((_, repo, file, _, _)) = ALIASES.iter().find(|(a, _, _, _, _)| *a == spec) {
         let url = format!("https://huggingface.co/{repo}/resolve/main/{file}");
         // Save under the alias so `cameo serve <alias>` resolves predictably.
         return Ok((url, format!("{spec}.gguf")));
@@ -362,18 +373,92 @@ fn preflight_space(dir: &Path, url: &str, spec: &str) -> Result<()> {
 /// choosing an output stream.
 pub type Progress<'a> = dyn FnMut(&str) + 'a;
 
+fn normalize_sha256(value: &str) -> Result<String> {
+    let digest = value.trim().to_ascii_lowercase();
+    if digest.len() != 64 || !digest.bytes().all(|b| b.is_ascii_hexdigit()) {
+        bail!("SHA-256 must be exactly 64 hexadecimal characters");
+    }
+    Ok(digest)
+}
+
+fn expected_sha256(spec: &str, supplied: Option<&str>) -> Result<String> {
+    let supplied = supplied.map(normalize_sha256).transpose()?;
+    let curated = ALIASES
+        .iter()
+        .find(|(alias, _, _, _, _)| *alias == spec)
+        .map(|(_, _, _, _, sha256)| (*sha256).to_string());
+    if let (Some(given), Some(known)) = (&supplied, &curated) {
+        if given != known {
+            bail!("--sha256 conflicts with the curated digest for alias '{spec}'");
+        }
+    }
+    supplied.or(curated).ok_or_else(|| {
+        anyhow!("custom model sources require an expected digest; pass --sha256 <64-hex-digest>")
+    })
+}
+
+fn parse_sha256_output(output: &str) -> Option<String> {
+    output.split_whitespace().find_map(|word| {
+        let candidate = word.trim().to_ascii_lowercase();
+        (candidate.len() == 64 && candidate.bytes().all(|b| b.is_ascii_hexdigit()))
+            .then_some(candidate)
+    })
+}
+
+fn file_sha256(path: &Path) -> Result<String> {
+    if let Ok(out) = Command::new("sha256sum").arg(path).output() {
+        if out.status.success() {
+            if let Some(value) = parse_sha256_output(&String::from_utf8_lossy(&out.stdout)) {
+                return Ok(value);
+            }
+        }
+    }
+    if let Ok(out) = Command::new("certutil")
+        .args(["-hashfile"])
+        .arg(path)
+        .arg("SHA256")
+        .output()
+    {
+        if out.status.success() {
+            if let Some(value) = parse_sha256_output(&String::from_utf8_lossy(&out.stdout)) {
+                return Ok(value);
+            }
+        }
+    }
+    bail!("could not calculate SHA-256 (need sha256sum or certutil)")
+}
+
 /// Download a model into the cache, resuming a partial file if present. Returns
 /// the final path. Writes to a `.part` sidecar and renames on success so an
 /// interrupted pull never leaves a truncated file that looks complete.
 ///
 /// `report` receives human-readable progress lines; pass `|_| {}` to ignore them.
 pub fn pull(spec: &str, report: &mut Progress<'_>) -> Result<PathBuf> {
+    pull_with_checksum(spec, None, report)
+}
+
+/// Pull a model and verify it against either the curated alias digest or the
+/// caller-supplied digest. Custom URLs and repository references fail closed
+/// when `sha256` is absent.
+pub fn pull_with_checksum(
+    spec: &str,
+    sha256: Option<&str>,
+    report: &mut Progress<'_>,
+) -> Result<PathBuf> {
     let (url, filename) = spec_to_url(spec)?;
+    let expected = expected_sha256(spec, sha256)?;
     let dir = models_dir();
     std::fs::create_dir_all(&dir).map_err(|e| anyhow!("creating {}: {e}", dir.display()))?;
 
     let dest = dir.join(&filename);
     if dest.is_file() {
+        let actual = file_sha256(&dest)?;
+        if actual != expected {
+            bail!(
+                "cached model {} failed SHA-256 verification (got {actual}, want {expected})",
+                dest.display()
+            );
+        }
         report(&format!("{} already present at {}", spec, dest.display()));
         return Ok(dest);
     }
@@ -411,8 +496,14 @@ pub fn pull(spec: &str, report: &mut Progress<'_>) -> Result<PathBuf> {
         );
     }
 
+    let actual = file_sha256(&part)?;
+    if actual != expected {
+        let _ = std::fs::remove_file(&part);
+        bail!("SHA-256 mismatch for '{spec}' (got {actual}, want {expected})");
+    }
+
     std::fs::rename(&part, &dest).map_err(|e| anyhow!("finalising {}: {e}", dest.display()))?;
-    report(&format!("saved {}", dest.display()));
+    report(&format!("verified {expected}\nsaved {}", dest.display()));
     Ok(dest)
 }
 
@@ -472,9 +563,41 @@ mod tests {
         let a = aliases();
         assert!(a.iter().any(|x| x.name == "tinyllama"));
         assert!(a.iter().all(|x| x.file.ends_with(".gguf")));
+        assert!(a.iter().all(|x| x.sha256.len() == 64));
         assert_eq!(params_b_for("qwen2.5-0.5b"), Some(0.5));
         assert_eq!(params_b_for("qwen2.5-0.5b.gguf"), Some(0.5));
         assert_eq!(params_b_for("mystery-model"), None);
+    }
+
+    #[test]
+    fn custom_sources_require_a_well_formed_digest() {
+        assert!(expected_sha256("https://example.com/x.gguf", None).is_err());
+        assert!(expected_sha256("https://example.com/x.gguf", Some("nope")).is_err());
+        let digest = "a".repeat(64);
+        assert_eq!(
+            expected_sha256("https://example.com/x.gguf", Some(&digest)).unwrap(),
+            digest
+        );
+    }
+
+    #[test]
+    fn curated_digest_cannot_be_overridden() {
+        let wrong = "a".repeat(64);
+        assert!(expected_sha256("tinyllama", Some(&wrong)).is_err());
+        assert_eq!(expected_sha256("tinyllama", None).unwrap(), ALIASES[1].4);
+    }
+
+    #[test]
+    fn sha256_output_parser_accepts_common_tool_formats() {
+        let digest = "0123456789abcdef".repeat(4);
+        assert_eq!(
+            parse_sha256_output(&format!("{digest}  model.gguf\n")),
+            Some(digest.clone())
+        );
+        assert_eq!(
+            parse_sha256_output(&format!("SHA256 hash of file:\r\n{digest}\r\nCertUtil: ok")),
+            Some(digest)
+        );
     }
 
     #[test]

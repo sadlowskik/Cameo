@@ -19,6 +19,9 @@ pub enum Error {
     #[error("training requires a Tier 1/2 (ROCm) GPU; the top detected GPU is Tier {0}")]
     TrainingUnsupported(u8),
 
+    #[error("requested backend is unsupported: {0}")]
+    BackendUnsupported(String),
+
     #[error(
         "training needs a GPU; this machine has no usable GPU, so only CPU inference is available"
     )]
