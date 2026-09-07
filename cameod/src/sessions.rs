@@ -108,6 +108,7 @@ fn default_mode() -> String {
 struct Live {
     session: Session,
     seen: Instant,
+    recovered: bool,
 }
 
 pub struct Board {
@@ -121,7 +122,36 @@ impl Board {
         }
     }
 
-    pub fn upsert(&self, mut session: Session) -> Session {
+    #[cfg(test)]
+    pub fn upsert(&self, session: Session) -> Session {
+        self.upsert_durable(session, |_| Ok(()))
+            .expect("ephemeral session update")
+    }
+
+    pub fn recover(records: Vec<Value>) -> Result<Self, String> {
+        let board = Self::new();
+        for record in records {
+            let mut session: Session =
+                serde_json::from_value(record).map_err(|_| "invalid persisted session")?;
+            session.state = "recovery_required".into();
+            session.vram = VramCapability::default();
+            board.inner.lock().unwrap().insert(
+                session.id.clone(),
+                Live {
+                    session,
+                    seen: Instant::now(),
+                    recovered: true,
+                },
+            );
+        }
+        Ok(board)
+    }
+
+    pub fn upsert_durable(
+        &self,
+        mut session: Session,
+        persist: impl FnOnce(&Session) -> Result<(), String>,
+    ) -> Result<Session, String> {
         if session.id.is_empty() {
             session.id = format!("s{}", now_millis());
         }
@@ -130,23 +160,21 @@ impl Board {
         }
         let id = session.id.clone();
         let mut inner = self.inner.lock().unwrap();
-        // Existing harness heartbeats know nothing about the Cameo-owned VRAM
-        // record and deserialize it as `none`.  Preserve the record unless the
-        // caller deliberately supplies a non-default capability; release is
-        // otherwise performed through the dedicated operator route.
-        if session.vram.status == "none" {
-            if let Some(previous) = inner.get(&id) {
-                session.vram = previous.session.vram.clone();
-            }
-        }
+        // Only supervisor operations may assert a resource capability.
+        session.vram = inner
+            .get(&id)
+            .map(|previous| previous.session.vram.clone())
+            .unwrap_or_default();
+        persist(&session)?;
         inner.insert(
             id,
             Live {
                 session: session.clone(),
                 seen: Instant::now(),
+                recovered: false,
             },
         );
-        session
+        Ok(session)
     }
 
     pub fn remove(&self, id: &str) -> bool {
@@ -180,7 +208,7 @@ impl Board {
             .lock()
             .unwrap()
             .get(id)
-            .is_some_and(|live| live.seen.elapsed() <= STALE)
+            .is_some_and(|live| !live.recovered && live.seen.elapsed() <= STALE)
     }
 
     /// Session ids whose last heartbeat is too old to retain a resource lease.
@@ -191,7 +219,7 @@ impl Board {
             .lock()
             .unwrap()
             .iter()
-            .filter(|(_, live)| live.seen.elapsed() > STALE)
+            .filter(|(_, live)| !live.recovered && live.seen.elapsed() > STALE)
             .map(|(id, _)| id.clone())
             .collect()
     }
@@ -199,13 +227,14 @@ impl Board {
     pub fn list(&self) -> Vec<Value> {
         let now = Instant::now();
         let mut map = self.inner.lock().unwrap();
-        map.retain(|_, live| now.duration_since(live.seen) < STALE * 4);
+        map.retain(|_, live| live.recovered || now.duration_since(live.seen) < STALE * 4);
         map.values()
             .map(|live| {
-                let stale = now.duration_since(live.seen) > STALE;
+                let stale = live.recovered || now.duration_since(live.seen) > STALE;
                 let mut v = serde_json::to_value(&live.session).unwrap_or(json!({}));
                 if let Some(obj) = v.as_object_mut() {
                     obj.insert("stale".into(), json!(stale));
+                    obj.insert("recovered".into(), json!(live.recovered));
                     obj.insert(
                         "age_secs".into(),
                         json!(now.duration_since(live.seen).as_secs()),
@@ -354,5 +383,32 @@ mod tests {
         assert_eq!(refreshed.state, "verifying");
         assert_eq!(refreshed.vram.status, "resident");
         assert_eq!(refreshed.vram.model, "daedalus-bitnet");
+    }
+
+    #[test]
+    fn recovered_session_requires_heartbeat_and_failed_write_cannot_activate_it() {
+        let board = Board::recover(vec![json!({"id":"recovered", "state":"working",
+            "vram":{"status":"resident"}})])
+        .unwrap();
+        assert_eq!(board.get("recovered").unwrap().state, "recovery_required");
+        assert_eq!(board.get("recovered").unwrap().vram.status, "none");
+        assert!(!board.contains("recovered"));
+        assert!(
+            board.stale_ids().is_empty(),
+            "restored lease retains its independent recovery window"
+        );
+        assert!(board
+            .upsert_durable(sess(json!({"id":"recovered"})), |_| Err("disk full".into()))
+            .is_err());
+        assert!(!board.contains("recovered"));
+        board.upsert(sess(
+            json!({"id":"recovered", "vram":{"status":"resident"}}),
+        ));
+        assert!(board.contains("recovered"));
+        assert_eq!(
+            board.get("recovered").unwrap().vram.status,
+            "none",
+            "heartbeat cannot mint VRAM authority"
+        );
     }
 }

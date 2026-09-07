@@ -5,9 +5,9 @@ one stable, OpenAI-compatible engine URL per Cameo box or fleet. This is the
 worked example: how a harness discovers Cameo's engines and points an engine slot
 at them.
 
-The standalone Rust Daedalus workspace is the harness source of truth. Cameo
-does not vendor, build, or mutate agent code; its `daedalus` submodule is not an
-integration target.
+The standalone Rust Knossos workspace is the harness source of truth. Cameo
+does not vendor, build, or mutate agent code; its `daedalus` checkout path is a
+legacy submodule name, not an integration target or product name.
 
 ## The contract
 
@@ -26,7 +26,9 @@ integration target.
   `agent-managed` fallback in its versioned capability block. Treat
   `limits.max_request_bytes` as a hard wire limit; a `null`
   `max_completion_tokens` means the selected endpoint, not Cameo, controls
-  generation length.
+  generation length. The same descriptor publishes each per-client request
+  allowance and `rate_window_seconds`; honor `429` and `Retry-After` rather than
+  retrying immediately.
 - **Auth:** when `auth_required` is true, present the serve key as
   `Authorization: Bearer <key>`. It is the same key for every model behind the one
   door.
@@ -75,7 +77,7 @@ export CAMEO_SERVE_KEY='<serve key>'
 # Omit this when Knossos must only reuse a resident model.
 export CAMEO_CONSOLE_KEY='<operator key>'
 
-daedalus --engine cameo task "add a regression test for the parser"
+knossos --engine cameo task "add a regression test for the parser"
 ```
 
 `CAMEO_CONSOLE_KEY` is intentionally separate from `CAMEO_SERVE_KEY`. In
@@ -136,8 +138,7 @@ victims.
 
 ## A fleet
 
-Discover the fleet and let the planner choose a node, then point the harness at
-the chosen node's `/v1`:
+For a static inventory, the CLI can inspect nodes and preview placement:
 
 ```bash
 cameo fleet status --node box-a:9090 --node box-b:9090
@@ -148,11 +149,24 @@ cameo fleet place llama3.2-3b --params 3 --node box-a:9090 --node box-b:9090
 there (as above), and the harness points at that node's `/v1`. When you outgrow
 this, k8s consumes the same `/api/node` description — no rewrite.
 
+For a live pool, pair each machine through **Cameo Link** and submit work to
+**Cameo Mesh** at `POST /hub/dispatch`. Knossos should provide a stable
+`request_id`, keep `allow_legacy_token: false` for strict trust, and select
+`privacy: "pool"` only when remote execution is allowed. The returned endpoint
+is the chosen node's `/v1`; identical retries do not start duplicate work.
+
+Mesh applies trust, health, protocol, privacy, capacity, and deadline as hard
+gates before affinity, warm-model, predicted-completion, and load scoring. This
+is request routing, not distributed inference: one request runs on one node and
+VRAM is not combined across machines. Pairing, durable revocation, and the mTLS
+boundary are documented in [Cameo Mesh](cameo-mesh.md).
+
 ## Why the resolver is not exposed raw
 
 Cameo's `agents::resolve_agents` binds abstract agent specs to cloud-or-local
 engines and, for a local agent, produces the exact `llama-server` command —
-**which carries the serve key**. That plan is secret-bearing by construction, so
-it is never serialized over HTTP. `/api/engines` is the safe, stable projection a
+**which carries the serve key in a redacted secret environment field**. The key
+never enters argv, rendered commands, debug text, or serialized HTTP output.
+`/api/engines` is the safe, stable projection a
 harness actually needs; the full resolver stays server-side, used by the
 `cameo fleet` controller to stand agents up.

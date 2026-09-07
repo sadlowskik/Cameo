@@ -1,14 +1,12 @@
 #!/usr/bin/env bash
 # Cameo console bootstrap.
 #
-# The image is a headless appliance: there is no local browser, so the console is
-# meant to be opened from your own machine — the "one home console" model, like
-# Proxmox. For that to work out of the box the daemon must (a) bind a reachable
-# address and (b) be authenticated, because cameod refuses a non-loopback bind
-# without a key on purpose (an unauthenticated GPU on the LAN is a footgun).
+# The image is a headless appliance and the built-in listener is HTTP-only, so
+# keep it on loopback. Reach it through an SSH/VPN tunnel or put a TLS reverse
+# proxy in front.
 #
 # So this oneshot, ordered *before* cameod, writes an ephemeral env file with a
-# freshly generated key and an all-interfaces bind. It runs before cameod's
+# freshly generated key and a loopback bind. It runs before cameod's
 # EnvironmentFile is read, which is why it is a separate unit and not an
 # ExecStartPre (systemd reads EnvironmentFile at service-start, before ExecStartPre).
 #
@@ -41,8 +39,8 @@ umask 077
 {
   echo "# Auto-generated each boot by cameo-console-init. Ephemeral (tmpfs)."
   echo "# Override anything here from /etc/cameo/cameod.env."
-  echo "CAMEO_CONSOLE_HOST=0.0.0.0"
+  echo "CAMEO_CONSOLE_HOST=127.0.0.1"
   echo "CAMEO_CONSOLE_KEY=$key"
 } >"$RUN_ENV"
 
-echo "cameo-console-init: console will bind 0.0.0.0 with a generated key."
+echo "cameo-console-init: console will bind loopback-only with a generated key."

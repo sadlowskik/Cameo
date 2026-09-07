@@ -1,22 +1,26 @@
 # Release readiness
 
+> Historical assessment below. For the current cross-product production roadmap,
+> outstanding blockers, and September 2026 verification, read the
+> [production audit](production-audit.md). The older test count and preview verdict
+> below do not qualify the current checkout for a production release.
+
 An honest assessment of whether the Cameo ISO is worth shipping, and of the two
 gates that cannot be closed from a non-Linux dev box. Updated 2026-08-18.
 
 ## What this image is
 
-A bootable Arch respin that turns any AMD box into a **GPU-aware home console**:
+A bootable Arch respin that turns a supported AMD box into a **GPU-aware home console**:
 
 - Boots to a text console (autologin, passwordless root — the archiso norm for a
   live image), with the `cameo` CLI on `PATH`.
 - **First boot prints your GPU's support tier** in plain language, then the URL and
   key for the web console.
-- **`cameod` runs as a service and is a home console out of the box.** Each boot,
-  `cameo-console-init` generates a random key and binds all interfaces; you open
-  the printed URL from *your own machine's* browser and manage GPUs, models, and
-  inference endpoints. A non-loopback bind without a key is refused, so the GPU is
-  never published unauthenticated. `/etc/cameo/cameod.env` overrides everything
-  (force loopback, pin a fixed key, change the port).
+- **`cameod` runs as a service with a loopback-only console.** Each boot,
+  `cameo-console-init` generates a random key. Use an SSH/VPN tunnel or TLS
+  reverse proxy from another machine; bearer credentials are never placed on
+  plaintext LAN HTTP by default. `/etc/cameo/cameod.env` can pin a fixed key or
+  change the port and bind explicitly.
 - Full and `lite` (Vulkan-only, ROCm stripped) editions; keeps the build
   toolchain, because Cameo is a dev platform, not a locked appliance.
 
@@ -28,14 +32,14 @@ A bootable Arch respin that turns any AMD box into a **GPU-aware home console**:
   GPU/tier report, plan preview, and the full endpoint lifecycle (start → list →
   stop). On a non-Linux host the final spawn reports "Linux only" — correct; on
   the real image it spawns `llama-server`.
-- The exact shipped auth/bind path was smoke-tested: with the generated key +
-  `0.0.0.0` bind, the API is 401 without/with a wrong key and 200 with the right
-  one, while the dashboard shell loads openly so the browser can prompt.
+- The daemon auth path was smoke-tested: the API is 401 without/with a wrong key
+  and 200 with the right one, while the dashboard shell loads so the browser can
+  prompt. The shipped loopback bind still needs live-image validation.
 - `build-iso.sh`, `cameo-firstboot`, `cameo-console-init` pass `bash -n`.
 
 ## Rust harness integration gate
 
-The standalone Daedalus Rust workspace is the agent implementation; Cameo owns
+The standalone Knossos Rust workspace is the agent implementation; Cameo owns
 only the engine contract, model lifecycle, and session board. Before a release
 that advertises the `cameo-engine/v1` contract, run these two gates:
 
@@ -49,7 +53,7 @@ that advertises the `cameo-engine/v1` contract, run these two gates:
    that only fits by evicting it and verify Cameo returns `409`; release the
    lease and verify normal LRU eviction resumes. Then stop the leased endpoint
    and verify `GET /api/sessions/{id}/lease` reports `unavailable` without
-   reserving capacity. Finally, run the Rust Daedalus binary with `--engine
+   reserving capacity. Finally, run the Rust Knossos binary with `--engine
    cameo` against the same node for non-streaming and SSE inference.
 
 The mock gate is necessary but not a substitute for the AMD-box run: Windows

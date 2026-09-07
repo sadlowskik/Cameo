@@ -215,7 +215,7 @@ you scale, **k8s replaces only the scheduling role**: the same `/api/node`
 feeds a device-plugin, `fleet.rs` becomes a scheduler-extender giving model-fit
 hints — no rewrite, because both tiers consume the same node description + brain.
 
-**F14 · Distributed execution for oversized models** 🟢 *(layout done — `net-strategy::rpc_layout` emits the `rpc-server` workers + head `--rpc host:port,…`; `cameo fleet place` prints it on a Distributed decision. Live sharded run is hardware-gated)*
+**F14 · Distributed execution for oversized models** 🟡 *(planning layout only — `net-strategy::rpc_layout` can describe workers and `cameo fleet place` can preview the decision, but Cameo does not execute or support a cross-node sharded model today)*
 Why: `FleetPlacement::Distributed` records intent but nothing shards a model
 across nodes; a model bigger than your largest box can't run. · Fixable: yes,
 largest/latest. · Compat: bandwidth-bound on consumer networks (`fleet.rs`
@@ -281,12 +281,12 @@ F10 residency · F11 metrics · F12 model mgmt.
 **Phase E — Usable by humans.** F18 console (playground, model mgmt, tiles).
 *Exit:* the product is driveable without the CLI.
 
-**Phase F — Fleet.** F13 node self-description + thin controller · F14 RPC.
-*Exit:* `cameo fleet` fronts several boxes behind one door; big models shard on a
-fast network; k8s-ready.
+**Phase F — Cameo Mesh.** F13 node self-description + paired request scheduler · F14 RPC remains future work.
+*Exit:* Cameo Mesh fronts several boxes behind one request-level door. Cross-node
+model sharding and Kubernetes integration remain later milestones.
 
 **Phase G — Platform.** F15 harness surface + Knossos example.
-*Exit:* a harness points its engine slot at a Cameo fleet from a documented API.
+*Exit:* a harness points its engine slot at Cameo or Cameo Mesh through a documented API.
 
 Continuous: F16 smoke on every build; real-GPU `scripts/phase1/` checklist per HW.
 

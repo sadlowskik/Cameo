@@ -23,8 +23,11 @@ use cameo_gpu_detect::{
 use cameo_placement::command::{
     build_llama_run, build_llama_server, build_quantize, build_training,
 };
-use cameo_placement::{plan as make_plan, CommandSpec, ModelMeta, PlacementPlan, QuantLevel, Task};
+use cameo_placement::{
+    plan as make_plan, CommandSpec, KvCacheType, ModelMeta, PlacementPlan, QuantLevel, Task,
+};
 
+mod doctor;
 mod fleet;
 
 /// Terminal styling. Zero-dependency ANSI, auto-off when piped, on a dumb
@@ -160,6 +163,13 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Inspect local readiness; optionally export the displayed, redacted JSON report.
+    Doctor {
+        #[arg(long, value_name = "FILE")]
+        bundle: Option<PathBuf>,
+    },
+    /// Print the versioned capability manifest (JSON; no hardware or daemon required).
+    Capabilities,
     /// Show detected GPU(s), topology, support tier, and selected backend.
     GpuStatus,
     /// Compute a placement plan for a model without running it.
@@ -170,6 +180,10 @@ enum Command {
     Serve(ServeArgs),
     /// Download a model into the local cache (alias, URL, or owner/repo:file.gguf).
     Pull(PullArgs),
+    /// Recommend a checksum-pinned local model from detected hardware and workload.
+    Recommend(RecommendArgs),
+    /// Detect, recommend, download, verify, configure, and serve a local model.
+    Setup(SetupArgs),
     /// Quantize a model to a target level (e.g. Q4_K_M).
     Quantize(QuantizeArgs),
     /// Start a training run (Tier 1/2 only; refused on Tier 3).
@@ -299,9 +313,44 @@ struct ModelOpts {
     /// Treat the model as Mixture-of-Experts (enables expert offloading).
     #[arg(long)]
     moe: bool,
-    /// Context length to plan the KV cache for.
-    #[arg(long, default_value_t = 4096)]
+    /// Context per slot. 0 auto-selects 80% of known native context, or 4096
+    /// when the model is unknown.
+    #[arg(long, default_value_t = 0)]
     context: u32,
+    /// Model-native context. Serving clamps the requested per-agent window to
+    /// 80% of this ceiling.
+    #[arg(long)]
+    native_context: Option<u32>,
+    /// Concurrent inference slots. Context and KV memory are per slot.
+    #[arg(long, default_value_t = 1)]
+    slots: u16,
+    /// KV cache format: f16, bf16, q8_0, or q4_0.
+    #[arg(long, default_value = "q8_0")]
+    kv_cache: String,
+    /// GQA key/value head count from model metadata.
+    #[arg(long)]
+    kv_heads: Option<u32>,
+    /// Attention head dimension from model metadata.
+    #[arg(long)]
+    head_dim: Option<u32>,
+    /// Logical prompt batch size.
+    #[arg(long, default_value_t = 2048)]
+    batch: u32,
+    /// Physical micro-batch size; lower this if prompt ingestion OOMs.
+    #[arg(long, default_value_t = 512)]
+    ubatch: u32,
+    /// Disable flash attention (enabled by default for serving efficiency).
+    #[arg(long)]
+    no_flash_attention: bool,
+    /// Minimum reusable prompt prefix in tokens.
+    #[arg(long, default_value_t = 256)]
+    cache_reuse: u32,
+    /// Host prompt-cache budget in MiB (0 accepts llama.cpp's default).
+    #[arg(long, default_value_t = 0)]
+    cache_ram_mib: u32,
+    /// Directory for llama.cpp slot save/restore checkpoints.
+    #[arg(long)]
+    slot_save_path: Option<PathBuf>,
     /// Transformer layer count (0 = estimate from parameter scale).
     #[arg(long, default_value_t = 0)]
     layers: u32,
@@ -386,6 +435,48 @@ struct PullArgs {
     sha256: Option<String>,
 }
 
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum WorkloadArg {
+    Chat,
+    Coding,
+    Agent,
+}
+
+impl From<WorkloadArg> for cameo_models::Workload {
+    fn from(value: WorkloadArg) -> Self {
+        match value {
+            WorkloadArg::Chat => Self::Chat,
+            WorkloadArg::Coding => Self::Coding,
+            WorkloadArg::Agent => Self::Agent,
+        }
+    }
+}
+
+#[derive(clap::Args)]
+struct RecommendArgs {
+    /// Primary workload used to rank the pinned model catalogue.
+    #[arg(long, value_enum, default_value_t = WorkloadArg::Agent)]
+    workload: WorkloadArg,
+}
+
+#[derive(clap::Args)]
+struct SetupArgs {
+    /// Primary workload used to pick the local model.
+    #[arg(long, value_enum, default_value_t = WorkloadArg::Agent)]
+    workload: WorkloadArg,
+    /// Address to serve on. A non-loopback address requires --api-key.
+    #[arg(long, default_value = "127.0.0.1")]
+    host: String,
+    #[arg(long, default_value_t = 8080)]
+    port: u16,
+    /// Force a backend; otherwise Cameo follows its hardware tier policy.
+    #[arg(long)]
+    backend: Option<BackendArg>,
+    /// Download and verify the recommendation without starting the server.
+    #[arg(long)]
+    download_only: bool,
+}
+
 #[derive(clap::Args)]
 struct ModelArgs {
     #[command(subcommand)]
@@ -463,11 +554,21 @@ fn main() {
 
 fn run(cli: &Cli) -> Result<()> {
     match &cli.command {
+        Command::Doctor { bundle } => doctor::run(cli, bundle.as_deref()),
+        Command::Capabilities => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(cameo_api::capability_manifest())?
+            );
+            Ok(())
+        }
         Command::GpuStatus => cmd_gpu_status(cli),
         Command::Plan(a) => cmd_plan(cli, a),
         Command::Run(a) => cmd_run(cli, a),
         Command::Serve(a) => cmd_serve(cli, a),
         Command::Pull(a) => cmd_pull(cli, a),
+        Command::Recommend(a) => cmd_recommend(cli, a),
+        Command::Setup(a) => cmd_setup(cli, a),
         Command::Quantize(a) => cmd_quantize(cli, a),
         Command::Train(a) => cmd_train(cli, a),
         Command::Model(a) => cmd_model(cli, a),
@@ -550,9 +651,51 @@ fn model_meta(name: &str, o: &ModelOpts) -> ModelMeta {
     } else {
         ModelMeta::dense(name, params, quant)
     };
-    m.context_len = o.context;
+    let discovered = cameo_models::inference_meta_for(name);
+    m.native_context_len = o.native_context.or(discovered.map(|x| x.native_context));
+    m.context_len = if o.context == 0 {
+        m.native_context_len
+            .map(|n| n.saturating_mul(80) / 100)
+            .unwrap_or(4096)
+    } else {
+        o.context
+    };
+    m.parallel_slots = o.slots;
+    m.kv_cache_type = KvCacheType::parse(&o.kv_cache);
+    m.kv_heads = o.kv_heads.or(discovered.map(|x| x.kv_heads));
+    m.head_dim = o.head_dim.or(discovered.map(|x| x.head_dim));
+    m.batch_size = o.batch;
+    m.ubatch_size = o.ubatch;
+    m.flash_attention = !o.no_flash_attention;
+    m.cache_reuse = o.cache_reuse;
+    m.cache_ram_mib = o.cache_ram_mib;
+    m.metrics = true;
+    m.slot_save_path = o.slot_save_path.as_ref().map(|p| p.display().to_string());
+    m.clamp_to_native_context();
     if o.layers > 0 {
         m.n_layers = o.layers;
+    } else if let Some(meta) = discovered {
+        m.n_layers = meta.layers;
+    }
+    if let Ok(path) = cameo_models::resolve(name) {
+        if let Ok(Some(meta)) = cameo_models::inspect_gguf(std::path::Path::new(&path)) {
+            if o.native_context.is_none() {
+                m.native_context_len = Some(meta.native_context);
+            }
+            if o.context == 0 {
+                m.context_len = meta.native_context.saturating_mul(80) / 100;
+            }
+            if o.layers == 0 {
+                m.n_layers = meta.layers;
+            }
+            if o.kv_heads.is_none() {
+                m.kv_heads = Some(meta.kv_heads);
+            }
+            if o.head_dim.is_none() {
+                m.head_dim = Some(meta.head_dim);
+            }
+            m.clamp_to_native_context();
+        }
     }
     m
 }
@@ -631,6 +774,187 @@ fn run_or_dry(cli: &Cli, plan: &PlacementPlan, spec: &CommandSpec) -> Result<()>
 }
 
 // ---- commands --------------------------------------------------------------
+
+fn recommendation_capacity(topo: &Topology) -> cameo_models::HardwareCapacity {
+    let accelerator_available =
+        !topo.gpus.is_empty() && topo.gpus.iter().all(|gpu| gpu.vram_mb.is_some());
+    let raw_accelerator = topo
+        .gpus
+        .iter()
+        .filter_map(|gpu| gpu.vram_mb)
+        .fold(0u64, |sum, mib| {
+            sum.saturating_add(mib.saturating_mul(1024 * 1024))
+        });
+    cameo_models::HardwareCapacity {
+        // Match the placement planner's 10% fragmentation/driver headroom.
+        accelerator_bytes: raw_accelerator.saturating_mul(9) / 10,
+        host_bytes: topo.host_mem.map(|m| m.available_bytes).unwrap_or(0),
+        accelerator_available,
+    }
+}
+
+fn recommendation_for(topo: &Topology, workload: WorkloadArg) -> cameo_models::ModelRecommendation {
+    cameo_models::recommend(recommendation_capacity(topo), workload.into())
+}
+
+fn emit_recommendation(cli: &Cli, recommendation: &cameo_models::ModelRecommendation) {
+    if cli.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(recommendation).expect("recommendation serializes")
+        );
+    } else {
+        println!("Recommended: {}", style::accent(&recommendation.model));
+        println!("Workload:    {:?}", recommendation.workload);
+        println!("Fit:         {:?}", recommendation.fit);
+        println!("Context:     {} tokens", recommendation.context_tokens);
+        println!(
+            "Runtime:     ~{}",
+            human_bytes(recommendation.estimated_runtime_bytes)
+        );
+        println!("Why:         {}", recommendation.reason);
+    }
+}
+
+fn recommended_model_opts(recommendation: &cameo_models::ModelRecommendation) -> ModelOpts {
+    ModelOpts {
+        params: cameo_models::params_b_for(&recommendation.model),
+        quant: recommendation.quant.clone(),
+        moe: false,
+        context: recommendation.context_tokens,
+        native_context: cameo_models::inference_meta_for(&recommendation.model)
+            .map(|meta| meta.native_context),
+        slots: 1,
+        kv_cache: "q8_0".into(),
+        kv_heads: None,
+        head_dim: None,
+        batch: 2048,
+        ubatch: 512,
+        no_flash_attention: false,
+        cache_reuse: 256,
+        cache_ram_mib: 0,
+        slot_save_path: None,
+        layers: 0,
+    }
+}
+
+fn cmd_recommend(cli: &Cli, args: &RecommendArgs) -> Result<()> {
+    let (topo, _) = detect(cli)?;
+    emit_recommendation(cli, &recommendation_for(&topo, args.workload));
+    Ok(())
+}
+
+/// The one-action local path. Detection and placement happen before any network
+/// or disk mutation; the runtime and remote-bind safety checks happen before a
+/// potentially large download; the model is checksum-verified before launch.
+fn cmd_setup(cli: &Cli, args: &SetupArgs) -> Result<()> {
+    if args.port == 0 {
+        return Err(anyhow!("setup port must be non-zero"));
+    }
+    let (topo, assessments) = detect(cli)?;
+    let recommendation = recommendation_for(&topo, args.workload);
+    let settings = settings_from(cli, args.backend.map(Backend::from))?;
+    let api_key = settings.serve_api_key.clone();
+    if !args.download_only && !is_loopback(&args.host) && api_key.is_none() {
+        return Err(anyhow!(
+            "refusing to serve on {} without authentication. Pass --api-key (or set \
+             CAMEO_API_KEY / serve_api_key in config), or bind to 127.0.0.1.",
+            args.host
+        ));
+    }
+
+    let opts = recommended_model_opts(&recommendation);
+    let model = model_meta(&recommendation.model, &opts);
+    let plan = make_plan(&topo, &assessments, &model, Task::Inference, &settings)
+        .map_err(|e| plan_error(cli, e))?;
+    let dry_path = cameo_models::resolve(&recommendation.model)
+        .unwrap_or_else(|_| recommendation.model.clone());
+    let dry_spec = build_llama_server(
+        &plan,
+        &model,
+        &dry_path,
+        SERVER_BINARY,
+        &args.host,
+        args.port,
+        api_key.as_deref(),
+    );
+    if cli.dry_run {
+        if cli.json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "recommendation": recommendation,
+                    "download": { "required": cameo_models::resolve(&model.name).is_err() },
+                    "plan": plan,
+                    "command": {
+                        "program": dry_spec.program,
+                        "args": dry_spec.args,
+                        "env": dry_spec.env,
+                        "shell": dry_spec.display(),
+                    },
+                    "will_start": !args.download_only,
+                }))?
+            );
+        } else {
+            emit_recommendation(cli, &recommendation);
+            println!("\nSetup preview (no download or launch):");
+            emit_plan(cli, &plan, Some(&dry_spec));
+        }
+        return Ok(());
+    }
+
+    if !args.download_only && !on_path(SERVER_BINARY) {
+        return Err(anyhow!(
+            "{SERVER_BINARY} is not on PATH; install the packaged Cameo runtime before downloading a model"
+        ));
+    }
+    if !cli.json {
+        emit_recommendation(cli, &recommendation);
+    }
+    let path = cameo_models::pull(&recommendation.model, &mut |line| {
+        eprintln!("cameo: {line}")
+    })?;
+    if args.download_only {
+        if cli.json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "recommendation": recommendation,
+                    "verified_model": path,
+                    "started": false,
+                }))?
+            );
+        }
+        return Ok(());
+    }
+
+    let spec = build_llama_server(
+        &plan,
+        &model,
+        &path.to_string_lossy(),
+        SERVER_BINARY,
+        &args.host,
+        args.port,
+        api_key.as_deref(),
+    );
+    if cli.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "recommendation": recommendation,
+                "verified_model": path,
+                "endpoint": format!("http://{}:{}", args.host, args.port),
+                "starting": true,
+            }))?
+        );
+    } else {
+        eprintln!(
+            "cameo: verified and starting {} on http://{}:{}",
+            model.name, args.host, args.port
+        );
+    }
+    run_or_dry(cli, &plan, &spec)
+}
 
 fn cmd_gpu_status(cli: &Cli) -> Result<()> {
     if !cli.json {

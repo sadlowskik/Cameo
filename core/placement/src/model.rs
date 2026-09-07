@@ -84,6 +84,14 @@ pub struct ModelMeta {
     pub n_layers: u32,
     /// Context length to plan the KV cache for.
     pub context_len: u32,
+    /// Model-native context from GGUF/Hugging Face metadata when known. The
+    /// serving allocation is clamped to 80% of this value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_context_len: Option<u32>,
+    /// Concurrent llama-server slots. `context_len` is per slot; placement
+    /// accounts for the full physical KV pool.
+    #[serde(default = "default_parallel_slots")]
+    pub parallel_slots: u16,
     /// Exact GGUF file bytes when a local model was resolved. This is a much
     /// better resident-weight estimate than parameter-count quantization math.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -96,6 +104,24 @@ pub struct ModelMeta {
     /// Bytes per K/V element (2 for fp16, 1 for q8 cache).
     #[serde(default = "default_kv_element_bytes")]
     pub kv_element_bytes: u8,
+    /// Exact llama.cpp KV cache format. When set this supersedes the legacy
+    /// whole-byte width above and permits honest q4 accounting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kv_cache_type: Option<KvCacheType>,
+    #[serde(default = "default_batch_size")]
+    pub batch_size: u32,
+    #[serde(default = "default_ubatch_size")]
+    pub ubatch_size: u32,
+    #[serde(default)]
+    pub flash_attention: bool,
+    #[serde(default)]
+    pub cache_reuse: u32,
+    #[serde(default)]
+    pub cache_ram_mib: u32,
+    #[serde(default)]
+    pub metrics: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slot_save_path: Option<String>,
     /// Measured/model-specific expert fraction when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expert_param_fraction: Option<f64>,
@@ -103,6 +129,56 @@ pub struct ModelMeta {
 
 fn default_kv_element_bytes() -> u8 {
     2
+}
+
+fn default_parallel_slots() -> u16 {
+    1
+}
+fn default_batch_size() -> u32 {
+    2048
+}
+fn default_ubatch_size() -> u32 {
+    512
+}
+
+/// llama.cpp KV cache storage formats. The value is passed directly to
+/// `--cache-type-k/v`; the bit width is also used by placement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum KvCacheType {
+    F16,
+    Bf16,
+    Q8_0,
+    Q4_0,
+}
+
+impl KvCacheType {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.to_ascii_lowercase().as_str() {
+            "f16" => Some(Self::F16),
+            "bf16" => Some(Self::Bf16),
+            "q8_0" => Some(Self::Q8_0),
+            "q4_0" => Some(Self::Q4_0),
+            _ => None,
+        }
+    }
+
+    pub fn as_llama(self) -> &'static str {
+        match self {
+            Self::F16 => "f16",
+            Self::Bf16 => "bf16",
+            Self::Q8_0 => "q8_0",
+            Self::Q4_0 => "q4_0",
+        }
+    }
+
+    fn bits(self) -> u64 {
+        match self {
+            Self::F16 | Self::Bf16 => 16,
+            Self::Q8_0 => 8,
+            Self::Q4_0 => 4,
+        }
+    }
 }
 
 impl ModelMeta {
@@ -115,10 +191,20 @@ impl ModelMeta {
             is_moe: false,
             n_layers: default_layers(params_b),
             context_len: 4096,
+            native_context_len: None,
+            parallel_slots: default_parallel_slots(),
             weights_bytes_override: None,
             kv_heads: None,
             head_dim: None,
             kv_element_bytes: default_kv_element_bytes(),
+            kv_cache_type: None,
+            batch_size: default_batch_size(),
+            ubatch_size: default_ubatch_size(),
+            flash_attention: false,
+            cache_reuse: 0,
+            cache_ram_mib: 0,
+            metrics: false,
+            slot_save_path: None,
             expert_param_fraction: None,
         }
     }
@@ -160,6 +246,25 @@ impl ModelMeta {
             return Err(Error::InvalidModel(format!(
                 "context length must be between 1 and {MAX_CONTEXT_LEN}, got {}",
                 self.context_len
+            )));
+        }
+        if self.parallel_slots == 0 {
+            return Err(Error::InvalidModel(
+                "parallel slot count must be at least 1".into(),
+            ));
+        }
+        if self
+            .native_context_len
+            .is_some_and(|n| n == 0 || n > MAX_CONTEXT_LEN)
+        {
+            return Err(Error::InvalidModel(format!(
+                "native context length must be between 1 and {MAX_CONTEXT_LEN}"
+            )));
+        }
+        if self.batch_size == 0 || self.ubatch_size == 0 || self.ubatch_size > self.batch_size {
+            return Err(Error::InvalidModel(format!(
+                "batch sizes require 1 <= ubatch ({}) <= batch ({})",
+                self.ubatch_size, self.batch_size
             )));
         }
         if self.n_layers == 0 || self.n_layers > MAX_LAYERS {
@@ -217,16 +322,33 @@ impl ModelMeta {
 
     /// Estimated KV-cache bytes for this model's context.
     pub fn kv_bytes(&self) -> u64 {
-        let per_layer_token = match (self.kv_heads, self.head_dim) {
-            (Some(heads), Some(dim)) => 2u64
+        let per_layer_token = match (self.kv_heads, self.head_dim, self.kv_cache_type) {
+            (Some(heads), Some(dim), Some(cache)) => {
+                2u64.saturating_mul(heads as u64)
+                    .saturating_mul(dim as u64)
+                    .saturating_mul(cache.bits())
+                    .saturating_add(7)
+                    / 8
+            }
+            (Some(heads), Some(dim), None) => 2u64
                 .saturating_mul(heads as u64)
                 .saturating_mul(dim as u64)
                 .saturating_mul(self.kv_element_bytes as u64),
+            (_, _, Some(cache)) => KV_BYTES_PER_LAYER_PER_TOKEN.saturating_mul(cache.bits()) / 16,
             _ => KV_BYTES_PER_LAYER_PER_TOKEN,
         };
         (self.n_layers as u64)
             .saturating_mul(self.context_len as u64)
+            .saturating_mul(self.parallel_slots as u64)
             .saturating_mul(per_layer_token)
+    }
+
+    /// Enforce the policy ceiling when native model metadata is available.
+    pub fn clamp_to_native_context(&mut self) {
+        if let Some(native) = self.native_context_len {
+            let safe = native.saturating_mul(80) / 100;
+            self.context_len = self.context_len.min(safe.max(1));
+        }
     }
 
     /// Total resident bytes if everything is on the GPU (weights + KV).
@@ -332,5 +454,29 @@ mod tests {
         assert!(ModelMeta::dense("llama-7b", 7.0, QuantLevel::Q4_K_M)
             .validate()
             .is_ok());
+    }
+
+    #[test]
+    fn kv_cache_accounts_for_format_and_parallel_slots() {
+        let mut m = ModelMeta::dense("qwen", 14.0, QuantLevel::Q4_K_M);
+        m.n_layers = 48;
+        m.context_len = 8_192;
+        m.kv_heads = Some(8);
+        m.head_dim = Some(128);
+        m.kv_cache_type = Some(KvCacheType::Q8_0);
+        let one = m.kv_bytes();
+        m.parallel_slots = 3;
+        assert_eq!(m.kv_bytes(), one * 3);
+        m.kv_cache_type = Some(KvCacheType::Q4_0);
+        assert_eq!(m.kv_bytes(), one * 3 / 2);
+    }
+
+    #[test]
+    fn native_context_is_capped_at_eighty_percent() {
+        let mut m = ModelMeta::dense("qwen", 14.0, QuantLevel::Q4_K_M);
+        m.native_context_len = Some(32_768);
+        m.context_len = 32_768;
+        m.clamp_to_native_context();
+        assert_eq!(m.context_len, 26_214);
     }
 }

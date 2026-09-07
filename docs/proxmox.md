@@ -18,22 +18,21 @@ has a real AMD GPU. The dashboard and `/v1` then live at **that guest’s IP**.
 
 ```bash
 # on the guest
-cameod --host 0.0.0.0 --port 9090 --console-key "$CAMEO_CONSOLE_KEY"
+cameod --host 127.0.0.1 --port 9090 --console-key "$CAMEO_CONSOLE_KEY"
 ```
 
-`cameod` refuses a non-loopback bind without a key. This is HTTP on your LAN
-(or Tailscale). There is no TLS in v1.
+The built-in listener is HTTP-only. Keep it on loopback and use an SSH/Tailscale
+tunnel, or terminate TLS at a reverse proxy before exposing it to the LAN.
 
-Open `http://<guest-ip>:9090/` for cards, VRAM, load/unload.
-Inference: `http://<guest-ip>:9090/v1/chat/completions` (serve key if
-configured, separate from the console key).
+After tunneling port 9090, open `http://127.0.0.1:9090/` for cards, VRAM, and
+load/unload. Inference uses `/v1/chat/completions` on the same protected origin.
 
 ## From the operator machine
 
 ```bash
 cameo fleet status --node 192.168.4.20:9090 --key "$CAMEO_CONSOLE_KEY"
 cameo fleet start qwen2.5-7b --node 192.168.4.20:9090 --key "$CAMEO_CONSOLE_KEY"
-daedalus task "…" --engine cameo --base-url http://192.168.4.20:9090/v1
+knossos task "…" --engine cameo --base-url http://192.168.4.20:9090/v1
 ```
 
 If `start` fails without a key, the command prints the dashboard URL. Load

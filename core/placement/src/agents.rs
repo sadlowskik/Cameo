@@ -554,10 +554,12 @@ mod tests {
                 ..
             } => {
                 assert!(authenticated);
-                assert!(serve
-                    .args
-                    .windows(2)
-                    .any(|w| w == ["--api-key", "fleet-key"]));
+                assert_eq!(
+                    serve.secret_env,
+                    vec![("LLAMA_API_KEY".into(), "fleet-key".into())]
+                );
+                assert!(!serve.args.iter().any(|arg| arg.contains("fleet-key")));
+                assert!(!serve.display().contains("fleet-key"));
                 // The wildcard is only ever reached with a key in hand.
                 if bind == "0.0.0.0" {
                     assert!(authenticated);

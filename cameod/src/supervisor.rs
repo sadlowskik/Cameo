@@ -37,6 +37,56 @@ const RESTART_BACKOFF: Duration = Duration::from_secs(2);
 const STABLE_UPTIME_RESET: Duration = Duration::from_secs(300);
 const HEALTH_PROBE_INTERVAL: Duration = Duration::from_millis(500);
 const HEALTH_PROBE_TIMEOUT: Duration = Duration::from_millis(250);
+const LEASE_TTL_SECS: u64 = 90;
+
+fn epoch_seconds() -> u64 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+trait ManagedProcess {
+    fn exited(&mut self) -> std::io::Result<bool>;
+    fn terminate(&mut self) -> std::io::Result<()>;
+}
+
+impl ManagedProcess for Child {
+    fn exited(&mut self) -> std::io::Result<bool> {
+        self.try_wait().map(|status| status.is_some())
+    }
+    fn terminate(&mut self) -> std::io::Result<()> {
+        self.kill()
+    }
+}
+
+fn confirm_termination(child: &mut impl ManagedProcess, timeout: Duration) -> Result<(), String> {
+    if child
+        .exited()
+        .map_err(|e| format!("cannot observe owned process: {e}"))?
+    {
+        return Ok(());
+    }
+    if let Err(error) = child.terminate() {
+        if child.exited().unwrap_or(false) {
+            return Ok(());
+        }
+        return Err(format!("cannot terminate owned process: {error}"));
+    }
+    let started = std::time::Instant::now();
+    loop {
+        if child
+            .exited()
+            .map_err(|e| format!("cannot confirm process exit: {e}"))?
+        {
+            return Ok(());
+        }
+        if started.elapsed() >= timeout {
+            return Err("owned process has not exited before the stop deadline".into());
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
 
 /// What to do with an endpoint whose child process is gone. Kept as a pure
 /// decision so the timing and counting are unit-tested without spawning.
@@ -139,6 +189,7 @@ fn admit(budget: u64, need: u64, residents: &mut [ResidentVram]) -> Admission {
 /// One supervised endpoint: what was asked for, the exact command, and — when it
 /// spawned — the live process. The public view is produced by [`Endpoint::view`].
 pub struct Endpoint {
+    restart_enabled: bool,
     /// Stable identifier, `"<model-slug>-<port>"`, used in the URL path.
     pub id: String,
     /// The model name/alias/path as submitted.
@@ -199,7 +250,7 @@ impl Endpoint {
                 Ok(None) => {}
                 Err(e) => {
                     self.error = Some(format!("wait failed: {e}"));
-                    self.child = None;
+                    self.ready = false;
                 }
             }
         }
@@ -231,6 +282,9 @@ impl Endpoint {
     /// endpoint that shows why — rather than flapping forever. A `stop()`ped
     /// endpoint is removed from the map, so only genuine crashes reach here.
     fn maybe_restart(&mut self) {
+        if !self.restart_enabled {
+            return;
+        }
         let since = self.last_exit_at.and_then(|t| t.elapsed().ok());
         match restart_decision(
             self.child.is_some(),
@@ -259,6 +313,20 @@ impl Endpoint {
             }
             Restart::Backoff | Restart::NotApplicable => {}
         }
+    }
+
+    fn stop_owned(&mut self) -> Result<(), String> {
+        self.error = Some("stop requested; automatic restart disabled".into());
+        self.ready = false;
+        if let Some(child) = self.child.as_mut() {
+            if let Err(error) = confirm_termination(child, Duration::from_secs(1)) {
+                self.error = Some(error.clone());
+                return Err(error);
+            }
+        }
+        self.child = None;
+        self.last_exit_at = None;
+        Ok(())
     }
 
     /// The lifecycle state, derived from what we know after a reap.
@@ -351,6 +419,8 @@ fn probe_health(host: &str, port: u16) -> Result<(), String> {
 /// Everything [`crate::app`] must hand the supervisor to start an endpoint: the
 /// planning result already reduced to display facts, plus the command to run.
 pub struct StartRequest {
+    /// Validated high-level API configuration, without commands or credentials.
+    pub intent: Value,
     pub model: String,
     pub host: String,
     pub port: u16,
@@ -372,6 +442,9 @@ pub struct StartRequest {
 /// Why a start was refused before any process was spawned.
 #[derive(Debug)]
 pub enum StartError {
+    ShuttingDown,
+    Termination(String),
+    Persistence(String),
     /// An endpoint with this id is already tracked and still running.
     PortInUse(String),
     /// The model is larger than the whole GPU — refused rather than OOM (F10).
@@ -387,37 +460,245 @@ pub enum StartError {
 /// Why an explicit session lease could not be created.
 #[derive(Debug)]
 pub enum LeaseError {
+    Persistence(String),
     /// No currently running endpoint serves the requested model.
     Unavailable(String),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct Lease {
     session_id: String,
     model: String,
     endpoint_id: String,
+    #[serde(skip)]
+    recovered: bool,
+    #[serde(default)]
+    expires_at: u64,
+    #[serde(skip)]
+    renewed_at: Option<std::time::Instant>,
+}
+
+impl Lease {
+    fn expired(&self, now: u64) -> bool {
+        self.expires_at <= now
+            || self
+                .renewed_at
+                .is_some_and(|at| at.elapsed().as_secs() >= LEASE_TTL_SECS)
+    }
 }
 
 /// The supervisor: a lock around the set of tracked endpoints.
 #[derive(Default)]
 pub struct Supervisor {
+    shutting_down: std::sync::atomic::AtomicBool,
     endpoints: Mutex<HashMap<String, Endpoint>>,
     /// Session-id to the endpoint it explicitly claims. Kept separately from
     /// endpoint state so an endpoint that stops can report `unavailable`
     /// rather than silently forgetting the session's claim.
     leases: Mutex<HashMap<String, Lease>>,
+    store: Mutex<Option<crate::endpoint_store::EndpointStore>>,
 }
 
 impl Supervisor {
+    pub fn begin_shutdown(&self) {
+        self.shutting_down
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        for endpoint in self.endpoints.lock().unwrap().values_mut() {
+            endpoint.restart_enabled = false;
+        }
+    }
+
+    /// Stop owned children without erasing desired endpoint state for the next boot.
+    pub fn shutdown_owned(&self) -> Result<(), String> {
+        self.begin_shutdown();
+        let mut map = self.endpoints.lock().unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(15);
+        let mut failed = 0;
+        for endpoint in map.values_mut() {
+            if std::time::Instant::now() >= deadline || endpoint.stop_owned().is_err() {
+                failed += 1;
+            }
+        }
+        if failed == 0 {
+            Ok(())
+        } else {
+            Err(format!("{failed} owned endpoints did not confirm shutdown"))
+        }
+    }
+    #[cfg(test)]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn open(path: &std::path::Path) -> Result<Self, String> {
+        let mut store = crate::endpoint_store::EndpointStore::open(path)?;
+        let mut leases = HashMap::new();
+        let now = epoch_seconds();
+        let mut migrated = false;
+        for (id, value) in &store.state.leases {
+            let mut lease: Lease =
+                serde_json::from_value(value.clone()).map_err(|_| "invalid persisted lease")?;
+            if lease.session_id != *id
+                || id.is_empty()
+                || lease.endpoint_id.is_empty()
+                || lease.model.is_empty()
+            {
+                return Err("invalid persisted lease identity".into());
+            }
+            lease.recovered = true;
+            let bounded = if lease.expires_at == 0 {
+                now.saturating_add(LEASE_TTL_SECS)
+            } else {
+                lease.expires_at.min(now.saturating_add(LEASE_TTL_SECS))
+            };
+            migrated |= lease.expires_at != bounded;
+            lease.expires_at = bounded;
+            lease.renewed_at = Some(std::time::Instant::now());
+            leases.insert(id.clone(), lease);
+        }
+        if migrated {
+            let mut next = store.state.clone();
+            for (id, lease) in &leases {
+                next.leases.insert(
+                    id.clone(),
+                    serde_json::to_value(lease).map_err(|e| e.to_string())?,
+                );
+            }
+            store.commit(next)?;
+        }
+        Ok(Self {
+            leases: Mutex::new(leases),
+            store: Mutex::new(Some(store)),
+            ..Self::default()
+        })
+    }
+
+    fn persist_leases(&self, leases: &HashMap<String, Lease>) -> Result<(), String> {
+        let mut storage = self.store.lock().unwrap();
+        if let Some(store) = storage.as_mut() {
+            let mut next = store.state.clone();
+            next.leases = leases
+                .iter()
+                .map(|(id, lease)| serde_json::to_value(lease).map(|value| (id.clone(), value)))
+                .collect::<Result<_, _>>()
+                .map_err(|e| e.to_string())?;
+            store.commit(next)?;
+        }
+        Ok(())
+    }
+
+    pub fn recovery_intents(&self) -> Vec<(String, Value)> {
+        self.store
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|store| {
+                store
+                    .state
+                    .endpoints
+                    .iter()
+                    .map(|(id, value)| (id.clone(), value.clone()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    pub fn recovery_sessions(&self) -> Vec<Value> {
+        self.store
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|store| store.state.sessions.values().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    pub fn persist_session(&self, session: &crate::sessions::Session) -> Result<(), String> {
+        let mut storage = self.store.lock().unwrap();
+        if let Some(store) = storage.as_mut() {
+            let mut next = store.state.clone();
+            // Recovery identity only; mission text, files, paths and reported proof stay out.
+            next.sessions.insert(session.id.clone(), json!({"id":session.id, "name":session.name,
+                "role":session.role, "mode":session.mode, "engine":session.engine, "model":session.model}));
+            store.commit(next)?;
+        }
+        Ok(())
+    }
+
+    pub fn remove_session(&self, id: &str) -> Result<(), String> {
+        let mut leases = self.leases.lock().unwrap();
+        let mut storage = self.store.lock().unwrap();
+        if let Some(store) = storage.as_mut() {
+            let mut next = store.state.clone();
+            next.sessions.remove(id);
+            next.leases.remove(id);
+            store.commit(next)?;
+        }
+        leases.remove(id);
+        Ok(())
+    }
+
+    pub fn has_history(&self) -> bool {
+        self.store
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|store| store.has_history())
+    }
+
+    fn commit_intent(&self, remove: &[String], add: Option<(&str, &Value)>) -> Result<(), String> {
+        let mut storage = self.store.lock().unwrap();
+        if let Some(store) = storage.as_mut() {
+            let mut next = store.state.clone();
+            for id in remove {
+                next.endpoints.remove(id);
+            }
+            if let Some((id, intent)) = add {
+                next.endpoints.insert(id.into(), intent.clone());
+            }
+            store.commit(next)?;
+        }
+        Ok(())
     }
 
     /// Reap, restart, and probe all endpoints. Called by a daemon maintenance
     /// thread so lifecycle progress does not depend on dashboard traffic.
     pub fn maintain(&self) {
-        for endpoint in self.endpoints.lock().unwrap().values_mut() {
+        if let Err(error) = self.expire_leases(epoch_seconds()) {
+            tracing::error!(%error, "cannot persist expired lease release");
+        }
+        let mut endpoints = self.endpoints.lock().unwrap();
+        for endpoint in endpoints.values_mut() {
             endpoint.refresh();
+        }
+        let mut storage = self.store.lock().unwrap();
+        if let Some(store) = storage.as_mut() {
+            let mut next = store.state.clone();
+            let mut changed = false;
+            for endpoint in endpoints.values() {
+                if let Some(intent) = next.endpoints.get_mut(&endpoint.id) {
+                    let observation = json!({"state": endpoint.state(), "restarts": endpoint.restarts, "ready": endpoint.is_ready()});
+                    if intent.get("_last_observed") != Some(&observation) {
+                        intent["_last_observed"] = observation;
+                        changed = true;
+                    }
+                    if endpoint.is_ready()
+                        && endpoint.started_at.elapsed().unwrap_or_default() >= STABLE_UPTIME_RESET
+                        && intent
+                            .get("_recovery_attempts")
+                            .and_then(Value::as_u64)
+                            .unwrap_or(0)
+                            > 0
+                    {
+                        intent["_recovery_attempts"] = json!(0);
+                        changed = true;
+                    }
+                }
+            }
+            if changed {
+                if let Err(error) = store.commit(next) {
+                    tracing::error!(%error, "cannot persist supervisor observation");
+                }
+            }
         }
     }
 
@@ -428,6 +709,10 @@ impl Supervisor {
         let id = endpoint_id(&req.model, req.port);
         let mut map = self.endpoints.lock().unwrap();
         let leases = self.leases.lock().unwrap();
+        let mut eviction_ids = Vec::new();
+        if self.shutting_down.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(StartError::ShuttingDown);
+        }
 
         // Reap any prior tenant of this id before deciding the port is taken: a
         // crashed endpoint should not block re-launching on the same port.
@@ -479,14 +764,7 @@ impl Supervisor {
                     if !req.allow_evict {
                         return Err(StartError::EvictionRequired(ids));
                     }
-                    for victim in ids {
-                        if let Some(mut e) = map.remove(&victim) {
-                            if let Some(mut child) = e.child.take() {
-                                let _ = child.kill();
-                                let _ = child.wait();
-                            }
-                        }
-                    }
+                    eviction_ids = ids;
                 }
                 Admission::Refuse => {
                     let protected_vram: u64 = map
@@ -518,12 +796,32 @@ impl Supervisor {
             }
         }
 
+        // Commit stops first; never persist a replacement start before capacity is confirmed released.
+        if !eviction_ids.is_empty() {
+            self.commit_intent(&eviction_ids, None)
+                .map_err(StartError::Persistence)?;
+        }
+        for victim in &eviction_ids {
+            if let Some(endpoint) = map.get_mut(victim) {
+                endpoint.error = Some("eviction requested; awaiting confirmed exit".into());
+                endpoint.ready = false;
+            }
+        }
+        for victim in eviction_ids {
+            if let Some(endpoint) = map.get_mut(&victim) {
+                endpoint.stop_owned().map_err(StartError::Termination)?;
+            }
+            map.remove(&victim);
+        }
+        self.commit_intent(&[], Some((&id, &req.intent)))
+            .map_err(StartError::Persistence)?;
         let (child, error) = match spawn(&req.command) {
             Ok(child) => (Some(child), None),
             Err(e) => (None, Some(e.to_string())),
         };
 
         let mut endpoint = Endpoint {
+            restart_enabled: true,
             id: id.clone(),
             model: req.model,
             host: req.host,
@@ -585,6 +883,17 @@ impl Supervisor {
 
     /// Safe, compact endpoint facts for the harness engine descriptor. Detailed
     /// command lines and ports stay on the operator-only server API.
+    pub fn context_tokens_for_model(&self, model: &str) -> Option<u32> {
+        self.engine_profiles(false)
+            .into_iter()
+            .find(|profile| profile["model"].as_str() == Some(model))
+            .and_then(|profile| {
+                profile["context_tokens"]
+                    .as_u64()
+                    .and_then(|n| u32::try_from(n).ok())
+            })
+    }
+
     pub fn engine_profiles(&self, include_vram: bool) -> Vec<Value> {
         let mut map = self.endpoints.lock().unwrap();
         let leases = self.leases.lock().unwrap();
@@ -632,7 +941,14 @@ impl Supervisor {
             session_id: session_id.to_string(),
             model: model.to_string(),
             endpoint_id,
+            recovered: false,
+            expires_at: epoch_seconds().saturating_add(LEASE_TTL_SECS),
+            renewed_at: Some(std::time::Instant::now()),
         };
+        let mut next = leases.clone();
+        next.insert(session_id.to_string(), lease.clone());
+        self.persist_leases(&next)
+            .map_err(LeaseError::Persistence)?;
         let view = lease_view(&lease, &mut map);
         leases.insert(session_id.to_string(), lease);
         Ok(view)
@@ -640,8 +956,52 @@ impl Supervisor {
 
     /// Drop one session's claim. The endpoint stays running; it simply becomes
     /// eligible for normal LRU admission again.
-    pub fn release(&self, session_id: &str) -> bool {
-        self.leases.lock().unwrap().remove(session_id).is_some()
+    pub fn release(&self, session_id: &str) -> Result<bool, String> {
+        let mut leases = self.leases.lock().unwrap();
+        if !leases.contains_key(session_id) {
+            return Ok(false);
+        }
+        let mut next = leases.clone();
+        next.remove(session_id);
+        self.persist_leases(&next)?;
+        *leases = next;
+        Ok(true)
+    }
+
+    /// Heartbeats extend active ownership, but cannot silently reclaim restored leases.
+    pub fn renew_lease(&self, session_id: &str) -> Result<(), String> {
+        let mut leases = self.leases.lock().unwrap();
+        let Some(lease) = leases.get(session_id) else {
+            return Ok(());
+        };
+        if lease.recovered {
+            return Ok(());
+        }
+        if lease.expired(epoch_seconds()) {
+            let mut next = leases.clone();
+            next.remove(session_id);
+            self.persist_leases(&next)?;
+            *leases = next;
+            return Ok(());
+        }
+        let mut next = leases.clone();
+        let lease = next.get_mut(session_id).unwrap();
+        lease.expires_at = epoch_seconds().saturating_add(LEASE_TTL_SECS);
+        lease.renewed_at = Some(std::time::Instant::now());
+        self.persist_leases(&next)?;
+        *leases = next;
+        Ok(())
+    }
+
+    fn expire_leases(&self, now: u64) -> Result<(), String> {
+        let mut leases = self.leases.lock().unwrap();
+        let mut next = leases.clone();
+        next.retain(|_, lease| !lease.expired(now));
+        if next.len() != leases.len() {
+            self.persist_leases(&next)?;
+            *leases = next;
+        }
+        Ok(())
     }
 
     /// Report an active lease or the explicit unavailable state when its
@@ -670,30 +1030,47 @@ impl Supervisor {
             })
             .collect();
         views.sort_by_key(|v| std::cmp::Reverse(v.0));
-        views.into_iter().map(|(_, v)| v).collect()
+        let mut result: Vec<Value> = views.into_iter().map(|(_, v)| v).collect();
+        for (id, intent) in self.recovery_intents() {
+            if !map.contains_key(&id) {
+                result.push(json!({"id": id, "model": intent["model"], "state": "recovery_required",
+                    "error": "Persisted endpoint could not be recovered; inspect configuration, model and hardware, then start explicitly.",
+                    "lease_count": 0}));
+            }
+        }
+        result
     }
 
     /// One endpoint's view by id, or `None` if unknown.
     pub fn get(&self, id: &str) -> Option<Value> {
         let mut map = self.endpoints.lock().unwrap();
-        map.get_mut(id).map(Endpoint::view)
+        map.get_mut(id).map(Endpoint::view).or_else(|| {
+            self.recovery_intents()
+                .into_iter()
+                .find(|(key, _)| key == id)
+                .map(|(_, intent)| {
+                    json!({
+                        "id": id, "model": intent["model"], "state": "recovery_required",
+                        "error": "Persisted endpoint requires operator recovery", "lease_count": 0
+                    })
+                })
+        })
     }
 
-    /// Stop and forget an endpoint. Returns `false` if the id is unknown. Killing
-    /// a child that already exited is harmless; we ignore that error and still
-    /// drop the record.
-    pub fn stop(&self, id: &str) -> bool {
+    /// Stop and forget an endpoint only after observing exit. Unknown ids return
+    /// false; failures retain the owned handle and disable automatic restart.
+    pub fn stop(&self, id: &str) -> Result<bool, String> {
         let mut map = self.endpoints.lock().unwrap();
-        match map.remove(id) {
-            Some(mut endpoint) => {
-                if let Some(mut child) = endpoint.child.take() {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                }
-                true
-            }
-            None => false,
+        let persisted = self.recovery_intents().iter().any(|(key, _)| key == id);
+        if !map.contains_key(id) && !persisted {
+            return Ok(false);
         }
+        self.commit_intent(&[id.to_owned()], None)?;
+        if let Some(endpoint) = map.get_mut(id) {
+            endpoint.stop_owned()?;
+        }
+        map.remove(id);
+        Ok(true)
     }
 
     /// The endpoint half of `/metrics`, in Prometheus text exposition format
@@ -769,22 +1146,29 @@ impl Supervisor {
 /// distinguish a clean release (404 after `DELETE`) from a claim whose backing
 /// model is no longer usable and decide whether to re-ensure it.
 fn lease_view(lease: &Lease, endpoints: &mut HashMap<String, Endpoint>) -> Value {
-    let state = match endpoints.get_mut(&lease.endpoint_id) {
-        Some(endpoint) => {
-            endpoint.refresh();
-            if endpoint.is_ready() {
-                "active"
-            } else {
-                "unavailable"
+    let state = if lease.expired(epoch_seconds()) {
+        "expired"
+    } else if lease.recovered {
+        "recovery_required"
+    } else {
+        match endpoints.get_mut(&lease.endpoint_id) {
+            Some(endpoint) => {
+                endpoint.refresh();
+                if endpoint.is_ready() {
+                    "active"
+                } else {
+                    "unavailable"
+                }
             }
+            None => "unavailable",
         }
-        None => "unavailable",
     };
     json!({
         "session_id": lease.session_id,
         "model": lease.model,
         "endpoint_id": lease.endpoint_id,
         "state": state,
+        "expires_at": lease.expires_at,
     })
 }
 
@@ -845,11 +1229,13 @@ mod tests {
             program: "llama-server".into(),
             args: vec!["-m".into(), "/m.gguf".into()],
             env: Vec::new(),
+            secret_env: Vec::new(),
         }
     }
 
     fn req(model: &str, port: u16) -> StartRequest {
         StartRequest {
+            intent: json!({"model": model, "port": port}),
             model: model.into(),
             host: "127.0.0.1".into(),
             port,
@@ -952,6 +1338,59 @@ mod tests {
     }
 
     #[test]
+    fn desired_state_survives_restart_without_secrets_or_phantom_readiness() {
+        let mut random = [0; 8];
+        getrandom::fill(&mut random).unwrap();
+        let dir =
+            std::env::temp_dir().join(format!("cameo-supervisor-{:x}", u64::from_le_bytes(random)));
+        let sup = Supervisor::open(&dir).unwrap();
+        let mut request = req("tinyllama", 8080);
+        request
+            .command
+            .secret_env
+            .push(("LLAMA_API_KEY".into(), "canary-never-on-disk".into()));
+        sup.start(request).unwrap();
+        drop(sup);
+        let recovered = Supervisor::open(&dir).unwrap();
+        assert_eq!(recovered.recovery_intents().len(), 1);
+        assert_eq!(recovered.list()[0]["state"], "recovery_required");
+        assert!(recovered.endpoint_for_model("tinyllama").is_none());
+        for item in std::fs::read_dir(&dir).unwrap() {
+            let path = item.unwrap().path();
+            if path.extension().is_some_and(|ext| ext == "json") {
+                let data = std::fs::read_to_string(path).unwrap();
+                assert!(!data.contains("canary-never-on-disk"));
+                assert!(!data.contains("secret_env"));
+            }
+        }
+        assert!(recovered.stop("tinyllama-8080").unwrap());
+        drop(recovered);
+        let stopped = Supervisor::open(&dir).unwrap();
+        assert!(stopped.has_history());
+        assert!(stopped.recovery_intents().is_empty());
+        drop(stopped);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn failed_persistence_does_not_start_an_endpoint() {
+        let mut random = [0; 8];
+        getrandom::fill(&mut random).unwrap();
+        let dir =
+            std::env::temp_dir().join(format!("cameo-state-fail-{:x}", u64::from_le_bytes(random)));
+        let sup = Supervisor::open(&dir).unwrap();
+        // A colliding generation represents a failed/ambiguous previous commit.
+        std::fs::write(dir.join("state-00000000000000000001.json"), b"{}").unwrap();
+        assert!(matches!(
+            sup.start(req("tinyllama", 8080)),
+            Err(StartError::Persistence(_))
+        ));
+        assert!(sup.list().is_empty());
+        drop(sup);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn leasing_a_missing_model_never_starts_it() {
         let sup = Supervisor::new();
         assert!(matches!(
@@ -959,7 +1398,7 @@ mod tests {
             Err(LeaseError::Unavailable(model)) if model == "not-running"
         ));
         assert!(sup.lease_status("session-a").is_none());
-        assert!(!sup.release("session-a"));
+        assert!(!sup.release("session-a").unwrap());
         assert!(
             sup.list().is_empty(),
             "leasing is not a hidden load operation"
@@ -970,9 +1409,9 @@ mod tests {
     fn stop_forgets_the_endpoint_and_reports_unknown_ids() {
         let sup = Supervisor::new();
         sup.start(req("tinyllama", 8080)).unwrap();
-        assert!(sup.stop("tinyllama-8080"));
+        assert!(sup.stop("tinyllama-8080").unwrap());
         assert!(sup.get("tinyllama-8080").is_none());
-        assert!(!sup.stop("tinyllama-8080"));
+        assert!(!sup.stop("tinyllama-8080").unwrap());
     }
 
     #[test]
@@ -1059,5 +1498,247 @@ mod tests {
             restart_decision(false, false, Some(Duration::from_secs(5)), MAX_RESTARTS),
             Restart::Exhausted
         );
+    }
+
+    #[test]
+    fn durable_lease_recovery_and_transactional_release() {
+        let mut random = [0u8; 8];
+        getrandom::fill(&mut random).unwrap();
+        let dir = std::env::temp_dir().join(format!("cameo-leases-{}", u64::from_le_bytes(random)));
+        let sup = Supervisor::open(&dir).unwrap();
+        let leases = HashMap::from([(
+            "session".into(),
+            Lease {
+                session_id: "session".into(),
+                model: "fixture".into(),
+                endpoint_id: "fixture-8080".into(),
+                recovered: false,
+                expires_at: epoch_seconds().saturating_add(LEASE_TTL_SECS),
+                renewed_at: Some(std::time::Instant::now()),
+            },
+        )]);
+        sup.persist_leases(&leases).unwrap();
+        drop(sup);
+        let recovered = Supervisor::open(&dir).unwrap();
+        assert_eq!(
+            recovered.lease_status("session").unwrap()["state"],
+            "recovery_required"
+        );
+        let expiry = recovered.lease_status("session").unwrap()["expires_at"]
+            .as_u64()
+            .unwrap();
+        recovered.renew_lease("session").unwrap();
+        assert_eq!(
+            recovered.lease_status("session").unwrap()["expires_at"],
+            expiry,
+            "heartbeat does not silently reclaim a recovered lease"
+        );
+        assert!(recovered.lease("session", "fixture").is_err());
+        let collision = dir.join("state-00000000000000000002.json");
+        std::fs::write(&collision, b"collision").unwrap();
+        assert!(recovered.release("session").is_err());
+        assert!(recovered.expire_leases(expiry).is_err());
+        assert!(
+            recovered.lease_status("session").is_some(),
+            "failed durable release retains ownership"
+        );
+        std::fs::remove_file(collision).unwrap();
+        assert!(recovered.release("session").unwrap());
+        drop(recovered);
+        assert!(Supervisor::open(&dir)
+            .unwrap()
+            .lease_status("session")
+            .is_none());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn orphan_expiry_survives_restart_and_clock_rollback_is_bounded() {
+        let mut random = [0u8; 8];
+        getrandom::fill(&mut random).unwrap();
+        let dir = std::env::temp_dir().join(format!("cameo-expiry-{}", u64::from_le_bytes(random)));
+        let sup = Supervisor::open(&dir).unwrap();
+        let leases = HashMap::from([(
+            "orphan".into(),
+            Lease {
+                session_id: "orphan".into(),
+                model: "fixture".into(),
+                endpoint_id: "fixture-8080".into(),
+                recovered: false,
+                expires_at: u64::MAX,
+                renewed_at: None,
+            },
+        )]);
+        sup.persist_leases(&leases).unwrap();
+        drop(sup);
+        let recovered = Supervisor::open(&dir).unwrap();
+        let expiry = recovered.lease_status("orphan").unwrap()["expires_at"]
+            .as_u64()
+            .unwrap();
+        assert!(expiry <= epoch_seconds() + LEASE_TTL_SECS);
+        drop(recovered);
+        let reopened = Supervisor::open(&dir).unwrap();
+        assert_eq!(
+            reopened.lease_status("orphan").unwrap()["expires_at"],
+            expiry,
+            "another restart cannot extend the recovery window"
+        );
+        reopened.expire_leases(expiry).unwrap();
+        assert!(reopened.lease_status("orphan").is_none());
+        drop(reopened);
+        assert!(Supervisor::open(&dir)
+            .unwrap()
+            .lease_status("orphan")
+            .is_none());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn heartbeat_cannot_resurrect_expired_ownership() {
+        let sup = Supervisor::new();
+        sup.leases.lock().unwrap().insert(
+            "late".into(),
+            Lease {
+                session_id: "late".into(),
+                model: "fixture".into(),
+                endpoint_id: "fixture-8080".into(),
+                recovered: false,
+                expires_at: epoch_seconds().saturating_sub(1),
+                renewed_at: None,
+            },
+        );
+        assert_eq!(sup.lease_status("late").unwrap()["state"], "expired");
+        sup.renew_lease("late").unwrap();
+        assert!(sup.lease_status("late").is_none());
+    }
+
+    #[test]
+    fn session_identity_recovers_without_mission_text_and_deletion_is_durable() {
+        let mut random = [0u8; 8];
+        getrandom::fill(&mut random).unwrap();
+        let dir =
+            std::env::temp_dir().join(format!("cameo-sessions-{}", u64::from_le_bytes(random)));
+        let sup = Supervisor::open(&dir).unwrap();
+        let session: crate::sessions::Session = serde_json::from_value(json!({"id":"owner", "name":"builder",
+            "model":"fixture", "task":"private-mission-canary", "workspace":"private-workspace-canary"})).unwrap();
+        sup.persist_session(&session).unwrap();
+        drop(sup);
+        let recovered = Supervisor::open(&dir).unwrap();
+        let records = recovered.recovery_sessions();
+        let serialized = serde_json::to_string(&records).unwrap();
+        assert!(!serialized.contains("canary"));
+        let board = crate::sessions::Board::recover(records).unwrap();
+        assert_eq!(board.get("owner").unwrap().name, "builder");
+        assert!(!board.contains("owner"));
+        recovered.remove_session("owner").unwrap();
+        drop(recovered);
+        assert!(Supervisor::open(&dir)
+            .unwrap()
+            .recovery_sessions()
+            .is_empty());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn termination_refuses_unobserved_exit_and_handles_exit_race() {
+        struct Fixture {
+            polls: usize,
+            exited_after: usize,
+            kill_fails: bool,
+        }
+        impl ManagedProcess for Fixture {
+            fn exited(&mut self) -> std::io::Result<bool> {
+                self.polls += 1;
+                Ok(self.polls >= self.exited_after)
+            }
+            fn terminate(&mut self) -> std::io::Result<()> {
+                if self.kill_fails {
+                    Err(std::io::Error::other("injected termination failure"))
+                } else {
+                    Ok(())
+                }
+            }
+        }
+        assert!(confirm_termination(
+            &mut Fixture {
+                polls: 0,
+                exited_after: usize::MAX,
+                kill_fails: true
+            },
+            Duration::ZERO
+        )
+        .is_err());
+        assert!(confirm_termination(
+            &mut Fixture {
+                polls: 0,
+                exited_after: usize::MAX,
+                kill_fails: false
+            },
+            Duration::ZERO
+        )
+        .is_err());
+        assert!(
+            confirm_termination(
+                &mut Fixture {
+                    polls: 0,
+                    exited_after: 2,
+                    kill_fails: true
+                },
+                Duration::ZERO
+            )
+            .is_ok(),
+            "exit racing with kill is observed as success"
+        );
+    }
+
+    #[test]
+    fn owned_process_exit_is_reaped() {
+        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        command
+            .args(["--exact", "supervisor::tests::owned_process_fixture"])
+            .env("CAMEO_OWNED_PROCESS_FIXTURE", "1")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(0x08000000);
+        }
+        let mut child = command.spawn().unwrap();
+        let result = confirm_termination(&mut child, Duration::from_secs(2));
+        if result.is_err() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        result.unwrap();
+        assert!(child.try_wait().unwrap().is_some());
+    }
+
+    #[test]
+    fn owned_process_fixture() {
+        if std::env::var("CAMEO_OWNED_PROCESS_FIXTURE").as_deref() == Ok("1") {
+            std::thread::sleep(Duration::from_secs(30));
+        }
+    }
+
+    #[test]
+    fn planned_shutdown_preserves_intent_and_prevents_new_starts() {
+        let mut random = [0u8; 8];
+        getrandom::fill(&mut random).unwrap();
+        let dir =
+            std::env::temp_dir().join(format!("cameo-shutdown-{}", u64::from_le_bytes(random)));
+        let sup = Supervisor::open(&dir).unwrap();
+        sup.start(req("fixture", 19090)).unwrap();
+        let intents = sup.recovery_intents();
+        sup.shutdown_owned().unwrap();
+        assert!(matches!(
+            sup.start(req("other", 19091)),
+            Err(StartError::ShuttingDown)
+        ));
+        assert_eq!(sup.recovery_intents(), intents);
+        drop(sup);
+        assert_eq!(Supervisor::open(&dir).unwrap().recovery_intents(), intents);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

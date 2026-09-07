@@ -17,9 +17,15 @@
 //! Everything here is pure and unit-tested; the daemon consults a [`KeyRing`] to
 //! gate each route.
 
+use std::collections::HashSet;
 use std::path::Path;
 
 use serde::Deserialize;
+
+const MIN_SECRET_BYTES: usize = 16;
+const MAX_SECRET_BYTES: usize = 4096;
+const MAX_KEYS_FILE_BYTES: u64 = 1024 * 1024;
+const MAX_KEY_LABEL_BYTES: usize = 128;
 
 /// What a credential is allowed to do. `Operator` is a superset of `Consumer` —
 /// an operator may also run inference.
@@ -72,6 +78,26 @@ pub struct KeyRing {
     keys: Vec<ApiKey>,
 }
 
+/// Validate configured bearer material without ever echoing it into an error.
+/// Sixteen bytes is a compatibility floor, not an entropy claim; generated
+/// production credentials should still be random and substantially longer.
+pub fn validate_secret(kind: &str, secret: &str) -> Result<(), String> {
+    if secret.len() < MIN_SECRET_BYTES {
+        return Err(format!(
+            "{kind} is too short; use at least {MIN_SECRET_BYTES} bytes of random secret material"
+        ));
+    }
+    if secret.len() > MAX_SECRET_BYTES {
+        return Err(format!("{kind} exceeds the {MAX_SECRET_BYTES}-byte limit"));
+    }
+    if secret.trim() != secret || secret.chars().any(char::is_control) {
+        return Err(format!(
+            "{kind} must not contain leading/trailing whitespace or control characters"
+        ));
+    }
+    Ok(())
+}
+
 impl KeyRing {
     pub fn new(keys: Vec<ApiKey>) -> Self {
         KeyRing { keys }
@@ -100,6 +126,16 @@ impl KeyRing {
     /// When false, the operator surface is open (loopback dev only).
     pub fn requires_operator(&self) -> bool {
         self.keys.iter().any(|k| k.role == Role::Operator)
+    }
+
+    /// The first configured operator credential. Node agents use this when they
+    /// enroll with a hub so keys loaded from `--keys-file` work the same as the
+    /// primary `--console-key`.
+    pub fn operator_key(&self) -> Option<&str> {
+        self.keys
+            .iter()
+            .find(|k| k.role == Role::Operator)
+            .map(|k| k.key.as_str())
     }
 
     /// Whether any consumer credential exists — so `/v1` must authenticate. When
@@ -132,19 +168,61 @@ struct KeyFileEntry {
 /// Parse a JSON keys file into role-tagged keys. Shape:
 /// `[{ "key": "…", "role": "operator|consumer", "label": "friend-bob" }]`.
 pub fn load_keys_file(path: &Path) -> Result<Vec<ApiKey>, String> {
+    let metadata = std::fs::symlink_metadata(path)
+        .map_err(|e| format!("inspecting {}: {e}", path.display()))?;
+    if metadata.file_type().is_symlink() {
+        return Err(format!(
+            "refusing symlinked keys file {}; use a regular owner-controlled file",
+            path.display()
+        ));
+    }
+    if !metadata.is_file() {
+        return Err(format!(
+            "keys path {} is not a regular file",
+            path.display()
+        ));
+    }
+    if metadata.len() > MAX_KEYS_FILE_BYTES {
+        return Err(format!(
+            "keys file {} exceeds the {}-byte limit",
+            path.display(),
+            MAX_KEYS_FILE_BYTES
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if metadata.permissions().mode() & 0o077 != 0 {
+            return Err(format!(
+                "keys file {} is readable or writable by group/others; run chmod 600",
+                path.display()
+            ));
+        }
+    }
     let raw =
         std::fs::read_to_string(path).map_err(|e| format!("reading {}: {e}", path.display()))?;
+    parse_keys(&raw, &path.display().to_string())
+}
+
+fn parse_keys(raw: &str, source: &str) -> Result<Vec<ApiKey>, String> {
     let entries: Vec<KeyFileEntry> =
-        serde_json::from_str(&raw).map_err(|e| format!("parsing {}: {e}", path.display()))?;
+        serde_json::from_str(raw).map_err(|e| format!("parsing {source}: {e}"))?;
     let mut out = Vec::with_capacity(entries.len());
+    let mut seen = HashSet::with_capacity(entries.len());
     for e in entries {
         let role = match e.role.to_ascii_lowercase().as_str() {
             "operator" | "admin" => Role::Operator,
             "consumer" | "user" | "inference" => Role::Consumer,
-            other => return Err(format!("unknown role '{other}' in {}", path.display())),
+            other => return Err(format!("unknown role '{other}' in {source}")),
         };
-        if e.key.trim().is_empty() {
-            return Err(format!("empty key in {}", path.display()));
+        validate_secret("API key", &e.key).map_err(|e| format!("{e} in {source}"))?;
+        if !seen.insert(e.key.clone()) {
+            return Err(format!("duplicate API key in {source}"));
+        }
+        if e.label.len() > MAX_KEY_LABEL_BYTES || e.label.chars().any(char::is_control) {
+            return Err(format!(
+                "key label in {source} must be at most {MAX_KEY_LABEL_BYTES} bytes with no control characters"
+            ));
         }
         out.push(ApiKey {
             key: e.key,
@@ -227,9 +305,55 @@ mod tests {
     }
 
     #[test]
+    fn operator_key_selects_an_operator_not_a_consumer() {
+        let r = KeyRing::new(vec![
+            ApiKey {
+                key: "friend".into(),
+                role: Role::Consumer,
+                label: "consumer-first".into(),
+            },
+            ApiKey {
+                key: "node-op".into(),
+                role: Role::Operator,
+                label: "keys-file-operator".into(),
+            },
+        ]);
+        assert_eq!(r.operator_key(), Some("node-op"));
+    }
+
+    #[test]
     fn ct_eq_matches_only_identical_strings() {
         assert!(KeyRing::ct_eq("abc", "abc"));
         assert!(!KeyRing::ct_eq("abc", "abd"));
         assert!(!KeyRing::ct_eq("abc", "abcd"));
+    }
+
+    #[test]
+    fn configured_secrets_have_safe_bounds_and_header_shape() {
+        assert!(validate_secret("key", "0123456789abcdef").is_ok());
+        assert!(validate_secret("key", "short").is_err());
+        assert!(validate_secret("key", " 0123456789abcdef").is_err());
+        assert!(validate_secret("key", "0123456789abcde\n").is_err());
+        assert!(validate_secret("key", &"x".repeat(MAX_SECRET_BYTES + 1)).is_err());
+    }
+
+    #[test]
+    fn key_documents_reject_duplicates_weak_keys_and_bad_labels() {
+        let duplicate = r#"[
+            {"key":"0123456789abcdef","role":"consumer"},
+            {"key":"0123456789abcdef","role":"operator"}
+        ]"#;
+        assert!(parse_keys(duplicate, "test")
+            .unwrap_err()
+            .contains("duplicate"));
+        assert!(parse_keys(r#"[{"key":"short","role":"operator"}]"#, "test").is_err());
+        assert!(parse_keys(
+            &format!(
+                r#"[{{"key":"0123456789abcdef","role":"operator","label":"{}"}}]"#,
+                "x".repeat(MAX_KEY_LABEL_BYTES + 1)
+            ),
+            "test"
+        )
+        .is_err());
     }
 }

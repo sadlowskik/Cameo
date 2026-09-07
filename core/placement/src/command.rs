@@ -12,14 +12,38 @@
 use crate::model::ModelMeta;
 use crate::plan::{GpuLayers, MultiGpu, PlacementPlan};
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use thiserror::Error;
 
 /// A fully-resolved command: program, arguments, and environment.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct CommandSpec {
     pub program: String,
     pub args: Vec<String>,
     pub env: Vec<(String, String)>,
+    /// Environment values that must reach the child but must never be serialized,
+    /// rendered into a shell command, or emitted through `Debug`.
+    #[serde(default, skip_serializing)]
+    pub secret_env: Vec<(String, String)>,
+}
+
+impl fmt::Debug for CommandSpec {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CommandSpec")
+            .field("program", &self.program)
+            .field("args", &self.args)
+            .field("env", &self.env)
+            .field(
+                "secret_env",
+                &self
+                    .secret_env
+                    .iter()
+                    .map(|(key, _)| (key, "<redacted>"))
+                    .collect::<Vec<_>>(),
+            )
+            .finish()
+    }
 }
 
 impl CommandSpec {
@@ -35,6 +59,9 @@ impl CommandSpec {
         let mut out = String::new();
         for (k, v) in &self.env {
             out.push_str(&format!("{k}={} ", shell_quote(v)));
+        }
+        for (key, _) in &self.secret_env {
+            out.push_str(&format!("{key}='<redacted>' "));
         }
         out.push_str(&shell_quote(&self.program));
         for a in &self.args {
@@ -83,6 +110,7 @@ pub fn build_llama_run(
         program: binary.to_string(),
         args,
         env: plan.env.clone(),
+        secret_env: Vec::new(),
     }
 }
 
@@ -137,18 +165,51 @@ pub fn build_llama_server(
     port: u16,
     api_key: Option<&str>,
 ) -> CommandSpec {
+    let total_context = model
+        .context_len
+        .saturating_mul(model.parallel_slots as u32);
     let mut args = vec![
         "-m".into(),
         model_path.to_string(),
         "-c".into(),
-        model.context_len.to_string(),
+        total_context.to_string(),
+        "-np".into(),
+        model.parallel_slots.to_string(),
+        "--cont-batching".into(),
+        "-b".into(),
+        model.batch_size.to_string(),
+        "-ub".into(),
+        model.ubatch_size.to_string(),
         "--host".into(),
         host.to_string(),
         "--port".into(),
         port.to_string(),
     ];
+    let mut secret_env = Vec::new();
     if let Some(key) = api_key {
-        args.extend(["--api-key".into(), key.to_string()]);
+        // llama.cpp officially supports LLAMA_API_KEY. Environment delivery
+        // avoids exposing the key through argv/process listings, while keeping
+        // it out of every serialized or rendered CommandSpec surface.
+        secret_env.push(("LLAMA_API_KEY".into(), key.to_string()));
+    }
+    if let Some(cache) = model.kv_cache_type {
+        args.extend(["-ctk".into(), cache.as_llama().into()]);
+        args.extend(["-ctv".into(), cache.as_llama().into()]);
+    }
+    if model.flash_attention {
+        args.extend(["--flash-attn".into(), "on".into()]);
+    }
+    if model.cache_reuse > 0 {
+        args.extend(["--cache-reuse".into(), model.cache_reuse.to_string()]);
+    }
+    if model.cache_ram_mib > 0 {
+        args.extend(["--cache-ram".into(), model.cache_ram_mib.to_string()]);
+    }
+    if model.metrics {
+        args.extend(["--metrics".into(), "--slots".into()]);
+    }
+    if let Some(path) = &model.slot_save_path {
+        args.extend(["--slot-save-path".into(), path.clone()]);
     }
     args.extend(placement_flags(plan));
 
@@ -156,6 +217,7 @@ pub fn build_llama_server(
         program: binary.to_string(),
         args,
         env: plan.env.clone(),
+        secret_env,
     }
 }
 
@@ -174,6 +236,7 @@ pub fn build_llama_bench(plan: &PlacementPlan, model_path: &str, binary: &str) -
         program: binary.to_string(),
         args,
         env: plan.env.clone(),
+        secret_env: Vec::new(),
     }
 }
 
@@ -201,6 +264,7 @@ pub fn build_training(plan: &PlacementPlan, script: &str, config: &str) -> Comma
         program: "torchrun".into(),
         args,
         env: plan.env.clone(),
+        secret_env: Vec::new(),
     }
 }
 
@@ -210,6 +274,7 @@ pub fn build_quantize(model_in: &str, model_out: &str, level: &str) -> CommandSp
         program: "llama-quantize".into(),
         args: vec![model_in.into(), model_out.into(), level.into()],
         env: Vec::new(),
+        secret_env: Vec::new(),
     }
 }
 
@@ -244,6 +309,9 @@ fn configured_command(spec: &CommandSpec) -> std::process::Command {
     cmd.args(&spec.args);
     for (k, v) in &spec.env {
         cmd.env(k, v);
+    }
+    for (key, value) in &spec.secret_env {
+        cmd.env(key, value);
     }
 
     // SAFETY: `pre_exec` runs in the forked child between fork and exec, where
@@ -432,7 +500,7 @@ mod tests {
     }
 
     #[test]
-    fn server_command_passes_an_api_key_when_given() {
+    fn server_command_passes_an_api_key_without_argv_or_display_leakage() {
         let m = ModelMeta::dense("llama-7b", 7.0, QuantLevel::Q4_K_M);
         let p = plan_for(vec![gpu("gfx1100", 16384)], vec![], &m, Task::Inference);
         let spec = build_llama_server(
@@ -444,7 +512,36 @@ mod tests {
             8080,
             Some("s3cret"),
         );
-        assert!(spec.args.windows(2).any(|w| w == ["--api-key", "s3cret"]));
+        assert!(!spec.args.iter().any(|arg| arg.contains("s3cret")));
+        assert_eq!(
+            spec.secret_env,
+            vec![("LLAMA_API_KEY".into(), "s3cret".into())]
+        );
+        assert!(!spec.display().contains("s3cret"));
+        assert!(!serde_json::to_string(&spec).unwrap().contains("s3cret"));
+        assert!(!format!("{spec:?}").contains("s3cret"));
+    }
+
+    #[test]
+    fn server_command_emits_memory_and_throughput_controls() {
+        let mut m = ModelMeta::dense("qwen", 14.0, QuantLevel::Q4_K_M);
+        m.context_len = 8_192;
+        m.parallel_slots = 3;
+        m.kv_cache_type = Some(crate::model::KvCacheType::Q8_0);
+        m.flash_attention = true;
+        m.cache_reuse = 256;
+        m.metrics = true;
+        m.slot_save_path = Some("/var/lib/cameo/slots".into());
+        let p = plan_for(vec![gpu("gfx1100", 24576)], vec![], &m, Task::Inference);
+        let spec = build_llama_server(&p, &m, "/m.gguf", "llama-server", "127.0.0.1", 8080, None);
+        assert!(spec.args.windows(2).any(|w| w == ["-c", "24576"]));
+        assert!(spec.args.windows(2).any(|w| w == ["-np", "3"]));
+        assert!(spec.args.windows(2).any(|w| w == ["-ctk", "q8_0"]));
+        assert!(spec.args.windows(2).any(|w| w == ["-ctv", "q8_0"]));
+        assert!(spec.args.windows(2).any(|w| w == ["--flash-attn", "on"]));
+        assert!(spec.args.windows(2).any(|w| w == ["--cache-reuse", "256"]));
+        assert!(spec.args.iter().any(|a| a == "--metrics"));
+        assert!(spec.args.iter().any(|a| a == "--slots"));
     }
 
     #[test]

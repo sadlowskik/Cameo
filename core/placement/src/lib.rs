@@ -10,6 +10,7 @@ pub mod agents;
 pub mod command;
 pub mod error;
 pub mod fleet;
+pub mod mesh;
 pub mod model;
 pub mod plan;
 pub mod router;
@@ -20,6 +21,10 @@ pub use agents::{
 pub use command::{execute, spawn, CommandSpec, ExecError};
 pub use error::Error;
 pub use fleet::{place_on_fleet, Cluster, FleetPlacement, FleetPlan, NetworkClass, NodeInfo};
-pub use model::{gib, ModelMeta, QuantLevel};
+pub use mesh::{
+    route_mesh, MeshCandidate, MeshHealth, MeshPreference, MeshPrivacy, MeshRequest,
+    MeshRouteChoice, TrustState,
+};
+pub use model::{gib, KvCacheType, ModelMeta, QuantLevel};
 pub use plan::{plan, GpuLayers, MemoryBudget, MultiGpu, Offload, PlacementPlan, Task};
 pub use router::{route, Candidate, NodeLoad, RouteChoice, RouteError, RouteRequest};

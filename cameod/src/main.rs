@@ -29,11 +29,18 @@ use crate::supervisor::Supervisor;
 mod agent;
 mod app;
 mod auth;
+mod curl;
 mod dashboard;
 mod dispatch;
+mod drain;
+mod endpoint_store;
 mod http;
 mod hub;
+mod openai;
+mod pairing;
 mod proxy;
+mod rate_limit;
+mod resolve;
 mod sessions;
 mod supervisor;
 
@@ -44,6 +51,8 @@ mod supervisor;
     about = "cameod — the Cameo control plane: a browser-administered console for AMD-GPU inference hosting."
 )]
 struct Args {
+    #[command(subcommand)]
+    maintenance: Option<Maintenance>,
     /// Address to bind the console to. Anything but loopback requires --console-key.
     /// Reads `CAMEO_CONSOLE_HOST` so the shipped systemd unit is configurable via
     /// `/etc/cameo/cameod.env` without editing the unit.
@@ -76,26 +85,39 @@ struct Args {
     #[arg(long, value_name = "FILE")]
     config: Option<PathBuf>,
 
-    /// Run as a fleet **hub**: serve the central dashboard at `/` and accept nodes
-    /// at `/hub/register`. Requires --farm-token. Reads `CAMEO_HUB`.
+    /// Durable daemon state directory. Paired mesh identities are stored here.
+    /// Defaults to /var/lib/cameo on Unix and the user's local app-data on Windows.
+    #[arg(long, value_name = "DIR", env = "CAMEO_STATE_DIR")]
+    state_dir: Option<PathBuf>,
+
+    /// Run as a Cameo Mesh hub: serve the central dashboard and accept paired
+    /// Cameo Link nodes. A farm token enables only the legacy join path.
     #[arg(long, env = "CAMEO_HUB")]
     hub: bool,
 
-    /// The shared farm secret. In hub mode, the token a node must present to
-    /// enroll; on a node with --hub-url, the token this node presents to the hub.
+    /// Legacy shared fleet secret. Prefer one-time pairing and per-node identity.
     #[arg(long, value_name = "TOKEN", env = "CAMEO_FARM_TOKEN")]
     farm_token: Option<String>,
 
-    /// Phone home to this hub on boot (node mode), e.g. `http://hub.lan:9090`.
-    /// Requires --farm-token. Reads `CAMEO_HUB_URL`.
+    /// One-time code created by `POST /hub/pairings` for device-bound enrollment.
+    /// Never written to disk. Reads `CAMEO_PAIRING_CODE`.
+    #[arg(long, value_name = "64-HEX", env = "CAMEO_PAIRING_CODE")]
+    pairing_code: Option<String>,
+
+    /// Owner-only JSON file where a paired node stores its issued credential.
+    /// Required with --pairing-code and reused on restart.
+    #[arg(long, value_name = "FILE", env = "CAMEO_MESH_CREDENTIAL_FILE")]
+    mesh_credential_file: Option<PathBuf>,
+
+    /// Run Cameo Link and phone home to this Mesh hub on boot. Requires a pairing
+    /// code, an existing mesh credential file, or an explicit legacy farm token.
     #[arg(long, value_name = "URL", env = "CAMEO_HUB_URL")]
     hub_url: Option<String>,
 
-    /// The `host:port` the hub should call back to reach this node's `/api`.
-    /// Defaults to this daemon's own host:port, which is wrong when bound to
-    /// `0.0.0.0` — set it to the node's LAN address in that case. Reads
-    /// `CAMEO_ADVERTISE_ADDR`.
-    #[arg(long, value_name = "HOSTPORT", env = "CAMEO_ADVERTISE_ADDR")]
+    /// The HTTPS base URL the hub should call to reach this node's `/api`.
+    /// Required with --hub-url; normally points at a TLS reverse proxy in front
+    /// of the node's loopback-only cameod. Reads `CAMEO_ADVERTISE_ADDR`.
+    #[arg(long, value_name = "HTTPS_URL", env = "CAMEO_ADVERTISE_ADDR")]
     advertise: Option<String>,
 
     /// Read `lspci -D -nn` from a file instead of the live system (dev/testing).
@@ -119,6 +141,31 @@ struct Args {
     gpu_mem_file: Option<PathBuf>,
 }
 
+#[derive(clap::Subcommand)]
+enum Maintenance {
+    /// Offline endpoint-state verification, backup and restore. Stop the daemon first.
+    State {
+        #[command(subcommand)]
+        action: StateAction,
+    },
+}
+
+#[derive(clap::Subcommand)]
+enum StateAction {
+    /// Verify the committed endpoint snapshot under an exclusive ownership lock.
+    Check { directory: PathBuf },
+    /// Export verified endpoint intent to a new file (not a model/identity backup).
+    Backup {
+        directory: PathBuf,
+        destination: PathBuf,
+    },
+    /// Verify a backup and restore endpoint intent into a new directory.
+    Restore {
+        source: PathBuf,
+        destination: PathBuf,
+    },
+}
+
 fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -135,6 +182,18 @@ fn main() {
 }
 
 fn run(args: Args) -> Result<()> {
+    if let Some(Maintenance::State { action }) = args.maintenance {
+        use endpoint_store::EndpointStore;
+        let report = match action {
+            StateAction::Check { directory } => EndpointStore::inspect(&directory),
+            StateAction::Backup { directory, destination } => EndpointStore::backup(&directory, &destination)
+                .map(|_| serde_json::json!({"status":"verified_backup", "scope":"endpoint intents, lease ownership and session identity only"})),
+            StateAction::Restore { source, destination } => EndpointStore::restore(&source, &destination)
+                .map(|_| serde_json::json!({"status":"verified_restore", "scope":"endpoint intents, lease ownership and session identity only; processes not started"})),
+        }.map_err(|e| anyhow!(e))?;
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
     let captures = Captures {
         lspci: read_opt(&args.lspci_file)?,
         rocminfo: read_opt(&args.rocminfo_file)?,
@@ -149,6 +208,16 @@ fn run(args: Args) -> Result<()> {
         None => Settings::default(),
     };
     let settings = cameo_config::resolve(Settings::default(), file_settings, Settings::default());
+
+    if let Some(secret) = args.console_key.as_deref() {
+        auth::validate_secret("console key", secret).map_err(|e| anyhow!(e))?;
+    }
+    if let Some(secret) = args.farm_token.as_deref() {
+        auth::validate_secret("farm token", secret).map_err(|e| anyhow!(e))?;
+    }
+    if let Some(secret) = settings.serve_api_key.as_deref() {
+        auth::validate_secret("serve API key", secret).map_err(|e| anyhow!(e))?;
+    }
 
     // Honour the config file's `model_dir` by exporting it as the env var the
     // models crate already treats as authoritative. An env var the operator set
@@ -192,6 +261,7 @@ fn run(args: Args) -> Result<()> {
     }
     let keyring = auth::KeyRing::new(keys);
     let operator_required = keyring.requires_operator();
+    let node_key = keyring.operator_key().map(str::to_owned);
 
     // A routable control surface with no operator credential is an open door to the
     // machine's GPUs; refuse it the same way `cameo serve` refuses a public endpoint.
@@ -212,23 +282,37 @@ fn run(args: Args) -> Result<()> {
         ));
     }
 
-    // Hub mode requires a farm token: an open registration endpoint would let any
-    // LAN peer enroll a node and drive the fleet. Fail closed at startup.
-    if args.hub && args.farm_token.is_none() {
-        return Err(anyhow!(
-            "--hub requires --farm-token (or CAMEO_FARM_TOKEN): nodes must authenticate to enroll."
-        ));
-    }
+    // A hub may be pairing-only. Without a farm token, legacy registration fails
+    // closed while operator-created one-time pairing codes remain available.
 
+    let farm = if args.hub {
+        let path = state_directory(args.state_dir.as_deref()).join("mesh-identities.json");
+        hub::Farm::open(&path).map_err(|error| {
+            anyhow!(
+                "opening durable mesh identity state {}: {error}",
+                path.display()
+            )
+        })?
+    } else {
+        hub::Farm::new()
+    };
+
+    let sup = Supervisor::open(&state_directory(args.state_dir.as_deref()).join("endpoints"))
+        .map_err(|error| anyhow!("opening durable endpoint state: {error}"))?;
+    let board = Board::recover(sup.recovery_sessions()).map_err(|error| anyhow!(error))?;
     let state = Arc::new(AppState {
-        sup: Supervisor::new(),
+        drain: drain::Drain::default(),
+        sup,
         captures,
         settings,
         keyring,
         posture,
         detect_cache: std::sync::Mutex::new(None),
-        board: Board::new(),
-        farm: hub::Farm::new(),
+        board,
+        farm,
+        admissions: dispatch::AdmissionBook::new(),
+        pairings: pairing::PairingStore::new(),
+        rate_limits: rate_limit::RateLimiter::new(),
         hub_enabled: args.hub,
         farm_token: args.farm_token.clone(),
         // /v1 is only open without a credential on a loopback bind, or when the
@@ -237,8 +321,15 @@ fn run(args: Args) -> Result<()> {
         open_inference: is_loopback(&args.host)
             || std::env::var_os("CAMEO_OPEN_INFERENCE").is_some(),
     });
+    let shutdown_requested = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let signal_flag = Arc::clone(&shutdown_requested);
+    ctrlc::set_handler(move || {
+        signal_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+    })
+    .map_err(|error| anyhow!("installing shutdown handler: {error}"))?;
     let maintenance = Arc::clone(&state);
     std::thread::spawn(move || loop {
+        maintenance.drain.poll();
         maintenance.sup.maintain();
         std::thread::sleep(std::time::Duration::from_millis(500));
     });
@@ -246,21 +337,56 @@ fn run(args: Args) -> Result<()> {
     // Node mode: if told where the hub is, phone home in the background. The agent
     // sends this box's own /api/node description and heartbeats on an interval.
     if let Some(hub_url) = args.hub_url.clone() {
-        let token = args.farm_token.clone().ok_or_else(|| {
+        require_https_hub_url(&hub_url)?;
+        let callback = args.advertise.clone().ok_or_else(|| {
             anyhow!(
-                "--hub-url requires --farm-token (or CAMEO_FARM_TOKEN) to authenticate to the hub."
+                "--hub-url requires --advertise https://node.example:PORT so hub callbacks do not expose the node operator key"
             )
         })?;
-        let callback = args
-            .advertise
-            .clone()
-            .unwrap_or_else(|| format!("{}:{}", args.host, args.port));
+        require_https_callback(&callback)?;
+        if let Some(code) = args.pairing_code.as_deref() {
+            if code.len() != 64 || !code.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                return Err(anyhow!(
+                    "--pairing-code must be exactly 64 hexadecimal characters"
+                ));
+            }
+            if args.mesh_credential_file.is_none() {
+                return Err(anyhow!(
+                    "--pairing-code requires --mesh-credential-file so the issued device identity survives restart"
+                ));
+            }
+            if args
+                .mesh_credential_file
+                .as_ref()
+                .is_some_and(|path| path.exists())
+            {
+                return Err(anyhow!(
+                    "--pairing-code refuses to overwrite an existing mesh credential; omit the code to reconnect or remove the file intentionally before re-pairing"
+                ));
+            }
+            if node_key.is_none() {
+                return Err(anyhow!(
+                    "paired nodes require an operator callback key (--console-key or operator keys-file entry)"
+                ));
+            }
+        }
+        let has_saved_credential = args
+            .mesh_credential_file
+            .as_ref()
+            .is_some_and(|path| path.exists());
+        if args.pairing_code.is_none() && !has_saved_credential && args.farm_token.is_none() {
+            return Err(anyhow!(
+                "--hub-url requires --pairing-code with --mesh-credential-file, an existing mesh credential file, or legacy --farm-token"
+            ));
+        }
         let cfg = agent::HubConfig {
             hub_url: hub_url.clone(),
-            farm_token: token,
+            farm_token: args.farm_token.clone(),
+            pairing_code: args.pairing_code.clone(),
+            credential_file: args.mesh_credential_file.clone(),
             node_name: app::node_name(),
             callback_address: callback,
-            node_key: args.console_key.clone(),
+            node_key,
         };
         let agent_state = Arc::clone(&state);
         agent::spawn(cfg, move || app::node_report(&agent_state));
@@ -269,10 +395,15 @@ fn run(args: Args) -> Result<()> {
 
     let listener = TcpListener::bind((args.host.as_str(), args.port))
         .map_err(|e| anyhow!("binding {}:{}: {e}", args.host, args.port))?;
+    app::recover_endpoints(&state);
 
     eprintln!(
         "cameod: {} on http://{}:{} [{}]{}",
-        if args.hub { "fleet hub" } else { "console" },
+        if args.hub {
+            "Cameo Mesh hub"
+        } else {
+            "console"
+        },
         args.host,
         args.port,
         match posture {
@@ -314,7 +445,41 @@ fn run(args: Args) -> Result<()> {
         }
     }
 
-    http::serve(listener, move |req| app::route(&state, req));
+    let serving = Arc::clone(&state);
+    let mut shutdown_started = None;
+    let mut shutdown_error = None;
+    http::serve(
+        listener,
+        move |req| app::route(&serving, req),
+        || {
+            if !shutdown_requested.load(std::sync::atomic::Ordering::SeqCst) {
+                return false;
+            }
+            let started = shutdown_started.get_or_insert_with(|| {
+                state
+                    .drain
+                    .begin_shutdown(std::time::Duration::from_secs(30));
+                state.sup.begin_shutdown();
+                tracing::info!("shutdown requested; draining gateway for up to 30 seconds");
+                std::time::Instant::now()
+            });
+            state.drain.poll();
+            let idle = state.drain.status()["active_requests"].as_u64() == Some(0);
+            if !idle && started.elapsed() < std::time::Duration::from_secs(35) {
+                return false;
+            }
+            if !idle {
+                tracing::warn!("shutdown cancellation grace expired with outstanding requests");
+            }
+            if let Err(error) = state.sup.shutdown_owned() {
+                shutdown_error = Some(error);
+            }
+            true
+        },
+    )?;
+    if let Some(error) = shutdown_error {
+        return Err(anyhow!(error));
+    }
     Ok(())
 }
 
@@ -343,6 +508,49 @@ fn is_loopback(host: &str) -> bool {
             .unwrap_or(false)
 }
 
+fn state_directory(configured: Option<&std::path::Path>) -> PathBuf {
+    if let Some(path) = configured {
+        return path.to_path_buf();
+    }
+    #[cfg(unix)]
+    {
+        PathBuf::from("/var/lib/cameo")
+    }
+    #[cfg(windows)]
+    {
+        std::env::var_os("LOCALAPPDATA")
+            .or_else(|| std::env::var_os("PROGRAMDATA"))
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("Cameo")
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        PathBuf::from(".cameo")
+    }
+}
+
+/// Mesh enrollment carries a node identity (or legacy farm token) and the
+/// node's distinct callback operator key.
+/// Refuse cleartext transport instead of letting either credential cross a LAN.
+fn require_https_hub_url(url: &str) -> Result<()> {
+    if url.starts_with("https://") {
+        return Ok(());
+    }
+    Err(anyhow!(
+        "refusing insecure hub URL '{url}': --hub-url carries privileged credentials and must use https://"
+    ))
+}
+
+fn require_https_callback(url: &str) -> Result<()> {
+    if url.starts_with("https://") {
+        return Ok(());
+    }
+    Err(anyhow!(
+        "refusing insecure callback URL '{url}': --advertise must use https://"
+    ))
+}
+
 /// Read an optional capture file into its contents, preserving path context.
 fn read_opt(path: &Option<PathBuf>) -> Result<Option<String>> {
     match path {
@@ -350,5 +558,19 @@ fn read_opt(path: &Option<PathBuf>) -> Result<Option<String>> {
             .map(Some)
             .map_err(|e| anyhow!("reading {}: {e}", p.display())),
         None => Ok(None),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hub_urls_must_use_https() {
+        assert!(require_https_hub_url("https://hub.example:9090").is_ok());
+        assert!(require_https_hub_url("http://hub.lan:9090").is_err());
+        assert!(require_https_hub_url("hub.lan:9090").is_err());
+        assert!(require_https_callback("https://node.example:9443").is_ok());
+        assert!(require_https_callback("10.0.0.2:9090").is_err());
     }
 }

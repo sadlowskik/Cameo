@@ -67,6 +67,8 @@ amd-ucode
 git
 curl
 python
+# Explicit dependency of signed offline bundle verification.
+openssl
 
 # Minimum usable live system. openssh is present but its daemon is NOT
 # enabled -- the client matters for a serving box, the listener is a

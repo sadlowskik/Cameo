@@ -1,8 +1,7 @@
 [Unit]
 Description=Cameo control-plane console (cameod)
 Documentation=https://github.com/sadlowskik/Cameo
-# Detection reads local tools (lspci/rocminfo/rocm-smi) and binds a socket. The
-# generated env below binds all interfaces with a key, so wait for the network.
+# Detection reads local tools (lspci/rocminfo/rocm-smi) and binds a socket.
 After=network.target cameo-console-init.service cameo-storage-init.service cameo-seed-models.service
 Wants=network.target cameo-storage-init.service cameo-seed-models.service
 
@@ -12,9 +11,8 @@ User=cameo
 Group=cameo
 # Two env layers, later wins for a duplicate key:
 #   1. /run/cameo/cameod.env — generated each boot by cameo-console-init: a random
-#      key + an all-interfaces bind, so the box is a reachable "home console".
-#   2. /etc/cameo/cameod.env — operator overrides (a fixed key, or
-#      CAMEO_CONSOLE_HOST=127.0.0.1 to force loopback-only). Ships all-commented.
+#      key + a loopback bind for SSH/VPN or TLS-proxy access.
+#   2. /etc/cameo/cameod.env — operator overrides (for example, a fixed key).
 # Both optional ('-'): with neither, cameod falls back to a safe loopback bind.
 EnvironmentFile=-/run/cameo/cameod.env
 EnvironmentFile=-/etc/cameo/cameod.env
@@ -35,6 +33,9 @@ ExecStart=/usr/local/bin/cameod
 # restarting is clean — no orphaned llama-server holding VRAM.
 Restart=on-failure
 RestartSec=2
+# Signal the daemon first so gateway requests drain before child termination.
+KillMode=mixed
+TimeoutStopSec=75
 
 # The daemon launches model servers and needs the GPU devices, network, and its
 # own state directory. Everything else is denied or made read-only.

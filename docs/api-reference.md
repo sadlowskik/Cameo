@@ -42,6 +42,7 @@ A keyless daemon (loopback dev) serves `/metrics` openly, like every other route
 | `GET /api/gpus` | Detected GPUs, tiers, links, host RAM, bottleneck. |
 | `GET /api/node` | This node's self-description — identity, topology, tiers, endpoints — for the fleet controller / k8s (F13). |
 | `GET /api/engines` | Harness discovery: `/v1` base, `auth_required`, served models, and a versioned capability block (F15). |
+| `GET /api/capabilities` | Canonical typed product-capability manifest, including maturity and availability. |
 | `GET /api/models` | Cached models, aliases, cache dir. |
 | `POST /api/models/gc` | Remove interrupted `.part` downloads (F12). |
 | `DELETE /api/models/{name}` | Remove a cached model (F12). |
@@ -59,6 +60,34 @@ A keyless daemon (loopback dev) serves `/metrics` openly, like every other route
 
 `POST /api/servers` / `POST /api/plan` body: `{ "model": "<name|path>", "host"?,
 "port"?, "params"?, "quant"?, "moe"?, "context"?, "backend"?: "auto|vulkan|rocm|cpu" }`.
+
+## Cameo Mesh (`/hub`, operator key unless noted)
+
+The hub and its request-level pool are **Cameo Mesh**. The outbound node agent is
+**Cameo Link**. Mesh routes a complete workload to one node; it does not pool
+VRAM or shard one inference across nodes.
+
+| Method / Path | Auth | Purpose |
+|---|---|---|
+| `POST /hub/pairings` | operator | Create a single-use, ten-minute pairing code. |
+| `POST /hub/pair` | pairing code in body | Redeem a code for one per-node credential. |
+| `POST /hub/register` | legacy farm token | Legacy shared-token enrollment only. |
+| `POST /hub/heartbeat` | paired node credential or legacy farm token | Refresh liveness and node capability data. |
+| `GET /hub/nodes` | operator | List nodes, trust transport, and online state. |
+| `DELETE /hub/nodes/{id}` | operator | Durably revoke and remove a paired node. |
+| `POST /hub/nodes/{id}/servers` | operator | Start a model through the node callback. |
+| `DELETE /hub/nodes/{id}/servers/{sid}` | operator | Stop a model through the node callback. |
+| `POST /hub/dispatch` | operator | Advise or atomically admit model work on one eligible node. |
+
+`POST /hub/dispatch` accepts the normal model fields plus `request_id`,
+`session_affinity`, `privacy` (`local_only|pool`), `preference`
+(`balanced|latency|throughput`), `deadline_ms`, `expected_output_tokens`,
+`priority`, `protocol_major`, and `allow_legacy_token`. With `execute: true`, a
+stable `request_id` makes retries idempotent; reuse with a different body is
+rejected. Active admissions reserve capacity immediately and expire after the
+bounded admission window if not reflected by heartbeats.
+
+See [Cameo Mesh](cameo-mesh.md) for secure pairing and deployment details.
 
 ## Inference gateway (`/v1`, serve key)
 
@@ -89,10 +118,16 @@ not grant a consumer credential permission to load VRAM.
 The descriptor's `engine_state` is `idle` when no model is resident and `ready`
 otherwise. `limits.max_request_bytes` is Cameo's hard HTTP body ceiling;
 `limits.max_completion_tokens: null` means Cameo does not impose a second
-generation cap beyond the selected endpoint and request. `tool_calls.native` is
-currently `false`: clients must use their agent-managed fallback rather than
-assuming a particular `llama-server` tool-call dialect. Cameo still forwards the
-complete OpenAI request body and streams SSE responses verbatim.
+generation cap beyond the selected endpoint and request. The remaining limit
+fields declare a 60-second, per-client fixed window: 600 inference requests, 300
+authenticated control requests, 300 public requests, 30 invalid-credential
+requests, and 10 pairing attempts. A `429` response includes `Retry-After: 60`.
+The counters are local to the daemon process and reset on restart. Cameo does not
+trust `X-Forwarded-For`; a reverse proxy therefore needs its own client-aware
+admission policy. `tool_calls.native` is currently `false`: clients must use
+their agent-managed fallback rather than assuming a particular `llama-server`
+tool-call dialect. Cameo still forwards the complete OpenAI request body and
+streams SSE responses verbatim.
 
 `model_profiles` is an additive list for currently running models. It carries
 the endpoint id, model, backend, requested `context_tokens`, and `lease_count`.
@@ -147,3 +182,5 @@ the warmed model running for reuse.
   serves today. Keep them in sync as the transport lands.
 - Auth is fail-closed: a non-loopback bind is refused without the relevant key,
   so the GPU is never published unauthenticated.
+- Managed model keys and Link credentials are excluded from process arguments
+  and serialized command/status surfaces.

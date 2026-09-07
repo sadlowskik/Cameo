@@ -8,6 +8,10 @@ Cargo.lock.bak
 *.gguf
 known-good-combo.json
 
+# Python
+__pycache__/
+*.py[cod]
+
 # Editor / OS
 .DS_Store
 Thumbs.db

@@ -1,0 +1,1 @@
+{"schema":"cameo-update/v1","release_id":"1.2.3","compatibility":{"id":"amd-v1"},"files":[{"source":"payload","target":"/usr/local/bin/cameo","sha256":"3933e3274b63dc01fd286d6d939a626867c83a4603fc4347e0f8b8856f1b98fd","mode":"0755"}]}

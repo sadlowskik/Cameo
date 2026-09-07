@@ -7,6 +7,9 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+permissions:
+  contents: read
+
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -19,9 +22,16 @@ jobs:
       - name: Format
         run: cargo fmt --all --check
       - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Test
-        run: cargo test --workspace
+        run: cargo test --workspace --locked
+      - name: Release build
+        run: cargo build --workspace --release --locked
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Capability documentation matches manifest
+        run: node scripts/render-capabilities.mjs --check
 
   knossos:
     name: Knossos submodule
@@ -47,6 +57,9 @@ jobs:
       - name: Test
         working-directory: daedalus/knossos-rs
         run: cargo test --all-targets --locked
+      - name: Release build
+        working-directory: daedalus/knossos-rs
+        run: cargo build --release --locked --bin knossos
 
   shellcheck:
     runs-on: ubuntu-latest
@@ -66,7 +79,17 @@ jobs:
             archiso/airootfs/usr/local/bin/cameo-storage-init \
             archiso/airootfs/usr/local/bin/cameo-persist-cache \
             archiso/airootfs/usr/local/bin/cameo-seed-models \
-            archiso/airootfs/usr/local/bin/cameo-update
+            archiso/airootfs/usr/local/bin/cameo-update \
+            archiso/airootfs/usr/local/lib/cameo/update-transaction
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Offline update validation and rollback simulator
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: |
+          command -v openssl
+          python -m unittest tests.test_update_bundle tests.test_update_ab_simulator -v
 
   # Build the Vulkan container image (F1) and smoke it: the binaries must run and
   # the serving dependencies must be present. Real GPU/serving is a Phase-1

@@ -348,7 +348,9 @@ umask 077
 cat > /mnt/etc/cameo/cameod.env <<EOF
 # Cameo console — persistent settings written by cameo-install.
 # This key is stable across reboots. cameo-hello prints it at login.
-CAMEO_CONSOLE_HOST=0.0.0.0
+# cameod's built-in listener is HTTP-only. Keep privileged credentials off the
+# LAN; administer through a local browser or an SSH/VPN tunnel.
+CAMEO_CONSOLE_HOST=127.0.0.1
 CAMEO_CONSOLE_KEY=$key
 CAMEO_CONSOLE_PORT=9090
 # CAMEO_AUTOSTART_MODEL=none

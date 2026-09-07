@@ -133,6 +133,23 @@ jobs:
           docker exec arch bash -euo pipefail -c \
             "sed -n '/\[options\]/,/^$/p' /usr/share/archiso/configs/releng/pacman.conf"
 
+      # Optional rotation: a multiline PEM secret overwrites the committed public
+      # key on the bind-mounted tree. Do not pass it through `docker -e` — newlines
+      # in -e are unreliable. The private key never enters this job.
+      - name: Optional update-root override
+        env:
+          CAMEO_UPDATE_ROOT_PEM: ${{ secrets.CAMEO_UPDATE_ROOT_PEM }}
+        run: |
+          if [ -z "${CAMEO_UPDATE_ROOT_PEM}" ]; then
+            echo "using committed archiso/airootfs/etc/cameo/update-root.pem"
+            exit 0
+          fi
+          mkdir -p archiso/airootfs/etc/cameo
+          printf '%s\n' "$CAMEO_UPDATE_ROOT_PEM" > archiso/airootfs/etc/cameo/update-root.pem
+          grep -q "BEGIN PUBLIC KEY" archiso/airootfs/etc/cameo/update-root.pem
+          grep -q "PRIVATE KEY" archiso/airootfs/etc/cameo/update-root.pem && exit 1
+          echo "installed CAMEO_UPDATE_ROOT_PEM over the committed trust root"
+
       # tee on the host, not in the container: this also captures docker exec's
       # own failures, which a container-side redirect would miss entirely.
       - name: Build ISO
@@ -145,9 +162,9 @@ jobs:
           for attempt in 1 2 3; do
             echo "=== build attempt $attempt ===" | tee -a build.log
             if docker exec -e CAMEO_EDITION="$EDITION" -e CAMEO_SKIP_CARGO=1 \
-                 -e CAMEO_CARGO_TARGET_DIR=/repo/build/cargo-target arch \
+                 -e CAMEO_CARGO_TARGET_DIR=/repo/build/cargo-target \
                  -e CAMEO_DAEDALUS_TARGET_DIR=/repo/build/daedalus-target \
-                 bash -euo pipefail -c "rm -rf /repo/build/tmp; bash ./scripts/build-iso.sh" 2>&1 | tee -a build.log; then
+                 arch bash -euo pipefail -c "rm -rf /repo/build/tmp; bash ./scripts/build-iso.sh" 2>&1 | tee -a build.log; then
               exit 0
             fi
             echo "attempt $attempt failed" | tee -a build.log
@@ -286,6 +303,17 @@ jobs:
               || { echo "FAIL: $u not enabled"; exit 1; }
           done
           echo "OK: cameod shipped and enabled"
+
+          echo "--- update trust root ---"
+          sudo test -f "$A/etc/cameo/update-root.pem" \
+            || { echo "FAIL: /etc/cameo/update-root.pem missing — cameo-update cannot verify bundles"; exit 1; }
+          sudo grep -q "BEGIN PUBLIC KEY" "$A/etc/cameo/update-root.pem" \
+            || { echo "FAIL: update-root.pem is not a public key"; exit 1; }
+          if sudo grep -q "PRIVATE KEY" "$A/etc/cameo/update-root.pem"; then
+            echo "FAIL: private update key was staged into the image"
+            exit 1
+          fi
+          echo "OK: signed-update trust root is on the image"
 
           echo "--- Daedalus agentic harness ---"
           sudo test -x "$A/usr/local/bin/daedalus" \
@@ -518,7 +546,7 @@ jobs:
   # lite-only by racing gh release create from each job.
   publish:
     needs: build
-    if: ${{ always() && !cancelled() && startsWith(github.ref, 'refs/tags/') }}
+    if: ${{ success() && startsWith(github.ref, 'refs/tags/') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -531,13 +559,14 @@ jobs:
       - name: Publish ISO to a GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CAMEO_UPDATE_PRIVATE_PEM: ${{ secrets.CAMEO_UPDATE_PRIVATE_PEM }}
         run: |
           set -euo pipefail
           shopt -s nullglob
           ls -lh dist
           isos=(dist/*.iso)
-          if [ ${#isos[@]} -eq 0 ]; then
-            echo "no ISO produced — skipping release"; exit 0
+          if [ ${#isos[@]} -ne 2 ]; then
+            echo "release requires both full and lite ISO artifacts" >&2; exit 1
           fi
           # GitHub Releases refuse a single asset ≥ 2 GiB. Upload files that
           # fit whole; split anything larger so a universal image still ships.
@@ -548,7 +577,8 @@ jobs:
           notes+=$'- **Universal** (`cameo-YYYY.MM.DD.*.iso`) — throw on any AMD box. Vulkan always; ROCm when the card can train.\n'
           notes+=$'- **Lite** (`cameo-lite-*.iso`) — Vulkan only, for a known low-end / Tier-3 box.\n'
           notes+=$'\nInstaller copies the live image. No internet, no pacstrap.\n'
-          notes+=$'Verify SHA256SUMS before flashing.\n'
+          notes+=$'Verify SHA256SUMS before flashing. If SHA256SUMS.sig is present, check it with the release public key:\n'
+          notes+=$'```\nopenssl pkeyutl -verify -pubin -inkey update-root.pem -rawin -in SHA256SUMS -sigfile SHA256SUMS.sig\n```\n'
           for iso in "${isos[@]}"; do
             name=$(basename "$iso")
             sha256sum "$iso" | awk -v n="$name" '{print $1"  "n}' >> dist/upload/SHA256SUMS
@@ -568,6 +598,21 @@ jobs:
             notes+=$'\n`'"$name"$'` is split. Assemble, then flash:\n'
             notes+=$'```\n# Linux/macOS\ncat '"$name"'.part* > '"$name"$'\n# Windows (cmd)\ncopy /b '"$win"' '"$name"$'\n```\n'
           done
+          if [ -n "${CAMEO_UPDATE_PRIVATE_PEM:-}" ]; then
+            umask 077
+            printf '%s\n' "$CAMEO_UPDATE_PRIVATE_PEM" > /tmp/cameo-update-private.pem
+            if grep -q "PRIVATE KEY" /tmp/cameo-update-private.pem; then
+              openssl pkeyutl -sign -inkey /tmp/cameo-update-private.pem -rawin \
+                -in dist/upload/SHA256SUMS -out dist/upload/SHA256SUMS.sig
+              echo "signed SHA256SUMS"
+            else
+              echo "CAMEO_UPDATE_PRIVATE_PEM is not a private key PEM" >&2
+              exit 1
+            fi
+            rm -f /tmp/cameo-update-private.pem
+          else
+            echo "CAMEO_UPDATE_PRIVATE_PEM secret is unset; SHA256SUMS is unsigned"
+          fi
           gh release create "${GITHUB_REF_NAME}" \
             --title "Cameo ${GITHUB_REF_NAME}" \
             --prerelease \

@@ -13,6 +13,7 @@
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
+use std::net::IpAddr;
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 use std::time::Duration;
@@ -55,6 +56,8 @@ pub struct Request {
     /// True when this request arrived on the host-only operator socket
     /// (`/run/cameo/cameo.sock`). Self-host posture treats that as operator.
     pub from_unix: bool,
+    /// Remote address for per-client admission. Unix-socket requests have no IP.
+    pub peer_ip: Option<IpAddr>,
 }
 
 impl Request {
@@ -83,6 +86,7 @@ pub type ResponseStream = Box<dyn FnOnce(&mut dyn Write) -> std::io::Result<()> 
 /// A response to write back. Construct via the helpers rather than by hand so the
 /// framing headers stay consistent.
 pub struct Response {
+    pub completion: Option<crate::drain::Permit>,
     pub status: u16,
     pub content_type: String,
     pub body: Vec<u8>,
@@ -96,6 +100,7 @@ pub struct Response {
 impl Response {
     pub fn new(status: u16, content_type: &str, body: Vec<u8>) -> Self {
         Self {
+            completion: None,
             status,
             content_type: content_type.to_string(),
             body,
@@ -113,6 +118,7 @@ impl Response {
         F: FnOnce(&mut dyn Write) -> std::io::Result<()> + Send + 'static,
     {
         Self {
+            completion: None,
             status: 200,
             content_type: String::new(),
             body: Vec::new(),
@@ -150,7 +156,7 @@ impl Response {
         )
     }
 
-    fn header(mut self, k: &str, v: &str) -> Self {
+    pub fn with_header(mut self, k: &str, v: &str) -> Self {
         self.extra_headers.push((k.to_string(), v.to_string()));
         self
     }
@@ -159,7 +165,11 @@ impl Response {
 /// Serve connections forever, dispatching each through `handler`. One thread per
 /// connection: a control plane sees a handful of concurrent clients, so a thread
 /// pool would be complexity without payoff.
-pub fn serve<F>(listener: TcpListener, handler: F)
+pub fn serve<F>(
+    listener: TcpListener,
+    handler: F,
+    mut stop: impl FnMut() -> bool,
+) -> std::io::Result<()>
 where
     F: Fn(&Request) -> Response + Send + Sync + 'static,
 {
@@ -167,8 +177,17 @@ where
 
     let handler = Arc::new(handler);
     let in_flight = Arc::new(AtomicUsize::new(0));
-    for stream in listener.incoming() {
-        let Ok(stream) = stream else { continue };
+    listener.set_nonblocking(true)?;
+    while !stop() {
+        let stream = match listener.accept() {
+            Ok((stream, _)) => stream,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(Duration::from_millis(20));
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
+        stream.set_nonblocking(false)?;
         // Over the cap, drop the connection on the floor: the accept loop stays
         // fast and no thread is spent on the excess. (The check-then-add is
         // benignly racy — the cap is a shed point, not an exact quota.)
@@ -184,6 +203,7 @@ where
             in_flight.fetch_sub(1, Ordering::Relaxed);
         });
     }
+    Ok(())
 }
 
 fn handle_connection<F>(stream: TcpStream, handler: &F) -> std::io::Result<()>
@@ -192,10 +212,14 @@ where
 {
     stream.set_read_timeout(Some(IO_TIMEOUT))?;
     stream.set_write_timeout(Some(IO_TIMEOUT))?;
+    let peer_ip = stream.peer_addr().ok().map(|address| address.ip());
     let mut reader = BufReader::new(stream);
 
     let response = match parse_request(&mut reader) {
-        Ok(req) => handler(&req),
+        Ok(mut req) => {
+            req.peer_ip = peer_ip;
+            handler(&req)
+        }
         Err(ParseError::TooLarge) => Response::error(413, "request body too large"),
         Err(ParseError::Malformed) => Response::error(400, "malformed request"),
         // A closed/empty connection is not worth a reply.
@@ -203,6 +227,16 @@ where
         Err(ParseError::Io(e)) => return Err(e),
     };
 
+    if response.completion.is_some() {
+        reader
+            .get_ref()
+            .set_write_timeout(Some(Duration::from_millis(250)))?;
+    }
+    let _registration = response
+        .completion
+        .as_ref()
+        .map(|permit| permit.register_client(reader.get_ref()))
+        .transpose()?;
     write_response(reader.get_mut(), response)
 }
 
@@ -232,13 +266,27 @@ fn parse_request<R: BufRead>(reader: &mut R) -> Result<Request, ParseError> {
     if head.read_line(&mut line)? == 0 {
         return Err(ParseError::Empty);
     }
+    if !line.ends_with("\r\n") {
+        return Err(if head.limit() == 0 {
+            ParseError::TooLarge
+        } else {
+            ParseError::Malformed
+        });
+    }
     let mut parts = line.split_whitespace();
     let method = parts.next().ok_or(ParseError::Malformed)?.to_string();
     let target = parts.next().ok_or(ParseError::Malformed)?.to_string();
-    // A version token must be present; we don't otherwise care which.
-    parts.next().ok_or(ParseError::Malformed)?;
+    let version = parts.next().ok_or(ParseError::Malformed)?;
+    if parts.next().is_some()
+        || !matches!(version, "HTTP/1.0" | "HTTP/1.1")
+        || !matches!(method.as_str(), "GET" | "POST" | "DELETE")
+        || !target.starts_with('/')
+        || target.contains('#')
+    {
+        return Err(ParseError::Malformed);
+    }
 
-    let (path, query) = split_target(&target);
+    let (path, query) = split_target(&target)?;
 
     let mut headers = HashMap::new();
     let mut head_complete = false;
@@ -247,13 +295,29 @@ fn parse_request<R: BufRead>(reader: &mut R) -> Result<Request, ParseError> {
         if head.read_line(&mut h)? == 0 {
             break;
         }
+        if !h.ends_with("\r\n") {
+            return Err(if head.limit() == 0 {
+                ParseError::TooLarge
+            } else {
+                ParseError::Malformed
+            });
+        }
         let trimmed = h.trim_end_matches(['\r', '\n']);
         if trimmed.is_empty() {
             head_complete = true;
             break;
         }
-        if let Some((k, v)) = trimmed.split_once(':') {
-            headers.insert(k.trim().to_ascii_lowercase(), v.trim().to_string());
+        let (k, v) = trimmed.split_once(':').ok_or(ParseError::Malformed)?;
+        let key = k.trim().to_ascii_lowercase();
+        let value = v.trim();
+        if key.is_empty()
+            || !key
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b))
+            || value.bytes().any(|b| b < 0x20 && b != b'\t')
+            || headers.insert(key, value.to_string()).is_some()
+        {
+            return Err(ParseError::Malformed);
         }
     }
     if !head_complete {
@@ -264,6 +328,14 @@ fn parse_request<R: BufRead>(reader: &mut R) -> Result<Request, ParseError> {
         } else {
             ParseError::Malformed
         });
+    }
+    if version == "HTTP/1.1" && !headers.contains_key("host") {
+        return Err(ParseError::Malformed);
+    }
+    if headers.contains_key("transfer-encoding") {
+        // This server only implements Content-Length. Accepting TE while ignoring it
+        // creates a different message boundary than a reverse proxy may see.
+        return Err(ParseError::Malformed);
     }
     // `head`'s borrow of the reader ends here; the body is read from the raw
     // reader under its own `MAX_REQUEST_BODY_BYTES` check below.
@@ -287,11 +359,12 @@ fn parse_request<R: BufRead>(reader: &mut R) -> Result<Request, ParseError> {
         headers,
         body,
         from_unix: false,
+        peer_ip: None,
     })
 }
 
 /// Split a request target into a decoded path and a decoded query map.
-fn split_target(target: &str) -> (String, HashMap<String, String>) {
+fn split_target(target: &str) -> Result<(String, HashMap<String, String>), ParseError> {
     let (path, query) = match target.split_once('?') {
         Some((p, q)) => (p, q),
         None => (target, ""),
@@ -299,13 +372,20 @@ fn split_target(target: &str) -> (String, HashMap<String, String>) {
     let mut map = HashMap::new();
     for pair in query.split('&').filter(|s| !s.is_empty()) {
         let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
-        map.insert(percent_decode(k), percent_decode(v));
+        map.insert(percent_decode(k, true)?, percent_decode(v, true)?);
     }
-    (percent_decode(path), map)
+    let path = percent_decode(path, false)?;
+    if path
+        .bytes()
+        .any(|byte| byte == 0 || byte < 0x20 || byte == 0x7f)
+    {
+        return Err(ParseError::Malformed);
+    }
+    Ok((path, map))
 }
 
 /// Minimal `application/x-www-form-urlencoded` decode: `%XX` and `+` → space.
-fn percent_decode(s: &str) -> String {
+fn percent_decode(s: &str, plus_as_space: bool) -> Result<String, ParseError> {
     let bytes = s.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
@@ -319,10 +399,10 @@ fn percent_decode(s: &str) -> String {
                     i += 3;
                     continue;
                 }
-                out.push(b'%');
-                i += 1;
+                return Err(ParseError::Malformed);
             }
-            b'+' => {
+            b'%' => return Err(ParseError::Malformed),
+            b'+' if plus_as_space => {
                 out.push(b' ');
                 i += 1;
             }
@@ -332,29 +412,97 @@ fn percent_decode(s: &str) -> String {
             }
         }
     }
-    String::from_utf8_lossy(&out).into_owned()
+    if out
+        .iter()
+        .any(|byte| *byte == 0 || *byte == b'\r' || *byte == b'\n' || *byte == 0x7f)
+    {
+        return Err(ParseError::Malformed);
+    }
+    String::from_utf8(out).map_err(|_| ParseError::Malformed)
 }
 
 fn write_response<W: Write>(w: &mut W, resp: Response) -> std::io::Result<()> {
+    let _completion = resp.completion;
+    let mut w = ControlledWriter {
+        inner: w,
+        permit: _completion.as_ref(),
+        progress: std::time::Instant::now(),
+    };
     // Streaming route: the closure owns framing and body entirely.
     if let Some(stream) = resp.stream {
-        return stream(w);
+        return stream(&mut w);
     }
     let reason = reason_phrase(resp.status);
     let mut head = format!(
-        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n",
+        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: DENY\r\nReferrer-Policy: no-referrer\r\n",
         resp.status,
         reason,
-        resp.content_type,
+        safe_header_value(&resp.content_type).unwrap_or("application/octet-stream"),
         resp.body.len()
     );
     for (k, v) in &resp.extra_headers {
-        head.push_str(&format!("{k}: {v}\r\n"));
+        if let (Some(k), Some(v)) = (safe_header_name(k), safe_header_value(v)) {
+            head.push_str(&format!("{k}: {v}\r\n"));
+        }
     }
     head.push_str("\r\n");
     w.write_all(head.as_bytes())?;
     w.write_all(&resp.body)?;
     w.flush()
+}
+
+struct ControlledWriter<'a, W> {
+    inner: &'a mut W,
+    permit: Option<&'a crate::drain::Permit>,
+    progress: std::time::Instant,
+}
+impl<W: Write> Write for ControlledWriter<'_, W> {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        loop {
+            if self.permit.is_some_and(|permit| permit.cancelled()) {
+                // Interrupted is retried by write_all, so cancellation must use a terminal kind.
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionAborted,
+                    "drain deadline exceeded",
+                ));
+            }
+            match self.inner.write(bytes) {
+                Ok(n) => {
+                    self.progress = std::time::Instant::now();
+                    return Ok(n);
+                }
+                Err(error)
+                    if self.permit.is_some()
+                        && matches!(
+                            error.kind(),
+                            std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+                        )
+                        && self.progress.elapsed() < IO_TIMEOUT =>
+                {
+                    continue
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+fn safe_header_name(value: &str) -> Option<&str> {
+    (!value.is_empty()
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b)))
+    .then_some(value)
+}
+
+fn safe_header_value(value: &str) -> Option<&str> {
+    (!value
+        .bytes()
+        .any(|b| b == b'\r' || b == b'\n' || (b < 0x20 && b != b'\t')))
+    .then_some(value)
 }
 
 fn reason_phrase(status: u16) -> &'static str {
@@ -370,8 +518,11 @@ fn reason_phrase(status: u16) -> &'static str {
         405 => "Method Not Allowed",
         409 => "Conflict",
         413 => "Payload Too Large",
+        429 => "Too Many Requests",
         500 => "Internal Server Error",
         501 => "Not Implemented",
+        502 => "Bad Gateway",
+        503 => "Service Unavailable",
         507 => "Insufficient Storage",
         _ => "OK",
     }
@@ -381,7 +532,7 @@ fn reason_phrase(status: u16) -> &'static str {
 impl Response {
     /// Mark a response as never-cache, used for API bodies.
     pub fn no_store(self) -> Self {
-        self.header("Cache-Control", "no-store")
+        self.with_header("Cache-Control", "no-store")
     }
 }
 
@@ -431,11 +582,125 @@ where
         Err(ParseError::Empty) => return Ok(()),
         Err(ParseError::Io(e)) => return Err(e),
     };
+    if response.completion.is_some() {
+        reader
+            .get_ref()
+            .set_write_timeout(Some(Duration::from_millis(250)))?;
+    }
+    let _registration = response
+        .completion
+        .as_ref()
+        .map(|permit| permit.register_unix_client(reader.get_ref()))
+        .transpose()?;
     write_response(reader.get_mut(), response)
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn serve_can_stop_without_waiting_for_an_incoming_connection() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        super::serve(listener, |_| super::Response::text(200, "unused"), || true).unwrap();
+    }
+
+    #[test]
+    fn stoppable_listener_serves_blocking_client_io() {
+        use std::io::{Read, Write};
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let stop = std::sync::Arc::new(AtomicBool::new(false));
+        let observed = stop.clone();
+        let server = std::thread::spawn(move || {
+            super::serve(
+                listener,
+                |_| super::Response::text(200, "shutdown-fixture"),
+                || observed.load(Ordering::SeqCst),
+            )
+            .unwrap();
+        });
+        let mut client = std::net::TcpStream::connect(address).unwrap();
+        client
+            .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+            .unwrap();
+        client
+            .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .unwrap();
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        stop.store(true, Ordering::SeqCst);
+        server.join().unwrap();
+        assert!(response.ends_with("shutdown-fixture"));
+    }
+    #[test]
+    fn drain_releases_response_when_downstream_stops_reading() {
+        use std::io::Write;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let drain = crate::drain::Drain::default();
+        let server_drain = drain.clone();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let result = super::handle_connection(stream, &|_| {
+                let started = started_tx.clone();
+                let mut response = super::Response::streaming(move |sink| {
+                    sink.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n")?;
+                    started.send(()).unwrap();
+                    let block = [b'x'; 64 * 1024];
+                    for _ in 0..1024 {
+                        sink.write_all(&block)?;
+                    }
+                    Ok(())
+                });
+                response.completion = server_drain.admit();
+                response
+            });
+            done_tx.send(result.is_err()).unwrap();
+        });
+        let mut client = std::net::TcpStream::connect(address).unwrap();
+        client
+            .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .unwrap();
+        started_rx
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap();
+        drain.begin(std::time::Duration::ZERO);
+        assert!(done_rx
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap());
+        assert_eq!(drain.status()["state"], "drained");
+        drop(client);
+        server.join().unwrap();
+    }
+    #[test]
+    fn drain_permit_lives_until_stream_finishes_and_releases_on_error() {
+        let drain = crate::drain::Drain::default();
+        let permit = drain.admit().unwrap();
+        let observed = drain.clone();
+        let mut response = super::Response::streaming(move |_| {
+            assert_eq!(observed.status()["active_requests"], 1);
+            Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "client disconnected",
+            ))
+        });
+        response.completion = Some(permit);
+        drain.begin(std::time::Duration::from_secs(60));
+        assert!(super::write_response(&mut Vec::new(), response).is_err());
+        assert_eq!(drain.status()["state"], "drained");
+    }
+
+    #[test]
+    fn dropped_response_releases_unstarted_work() {
+        let drain = crate::drain::Drain::default();
+        let mut response = super::Response::json(200, &serde_json::json!({}));
+        response.completion = drain.admit();
+        drain.begin(std::time::Duration::from_secs(60));
+        drop(response);
+        assert_eq!(drain.status()["active_requests"], 0);
+    }
     use super::*;
     use std::io::Cursor;
 
@@ -458,7 +723,7 @@ mod tests {
     fn parses_post_body_by_content_length() {
         let body = r#"{"model":"a"}"#;
         let raw = format!(
-            "POST /api/servers HTTP/1.1\r\nContent-Length: {}\r\n\r\n{}",
+            "POST /api/servers HTTP/1.1\r\nHost: x\r\nContent-Length: {}\r\n\r\n{}",
             body.len(),
             body
         );
@@ -469,7 +734,7 @@ mod tests {
 
     #[test]
     fn segments_ignore_empty() {
-        let req = parse("DELETE /api/servers/abc123/ HTTP/1.1\r\n\r\n").unwrap();
+        let req = parse("DELETE /api/servers/abc123/ HTTP/1.1\r\nHost: x\r\n\r\n").unwrap();
         assert_eq!(req.segments(), vec!["api", "servers", "abc123"]);
     }
 
@@ -495,7 +760,7 @@ mod tests {
     #[test]
     fn oversized_body_is_rejected() {
         let raw = format!(
-            "POST / HTTP/1.1\r\nContent-Length: {}\r\n\r\n",
+            "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: {}\r\n\r\n",
             MAX_REQUEST_BODY_BYTES + 1
         );
         assert!(matches!(parse(&raw), Err(ParseError::TooLarge)));
@@ -512,10 +777,43 @@ mod tests {
 
     #[test]
     fn percent_and_plus_decode() {
-        assert_eq!(percent_decode("a%2Fb+c"), "a/b c");
-        assert_eq!(percent_decode("plain"), "plain");
-        // A stray percent is left as-is rather than dropped.
-        assert_eq!(percent_decode("100%done"), "100%done");
+        assert_eq!(percent_decode("a%2Fb+c", true).unwrap(), "a/b c");
+        assert_eq!(percent_decode("a%2Fb+c", false).unwrap(), "a/b+c");
+        assert_eq!(percent_decode("plain", true).unwrap(), "plain");
+        assert!(matches!(
+            percent_decode("100%done", true),
+            Err(ParseError::Malformed)
+        ));
+    }
+
+    #[test]
+    fn rejects_ambiguous_or_malformed_framing() {
+        for raw in [
+            "POST /api HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\nContent-Length: 1\r\n\r\nX",
+            "POST /api HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n",
+            "GET / HTTP/1.1\r\nHost x\r\n\r\n",
+            "GET / HTTP/2\r\nHost: x\r\n\r\n",
+            "GET http://example.com/ HTTP/1.1\r\nHost: x\r\n\r\n",
+            "GET /bad%zz HTTP/1.1\r\nHost: x\r\n\r\n",
+            "GET /?key=bad%0dvalue HTTP/1.1\r\nHost: x\r\n\r\n",
+            "GET / HTTP/1.1\r\n\r\n",
+        ] {
+            assert!(
+                matches!(parse(raw), Err(ParseError::Malformed)),
+                "accepted {raw:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn response_headers_cannot_inject_lines() {
+        assert_eq!(
+            safe_header_value("application/json"),
+            Some("application/json")
+        );
+        assert_eq!(safe_header_value("ok\r\nX-Evil: yes"), None);
+        assert_eq!(safe_header_name("X-Test"), Some("X-Test"));
+        assert_eq!(safe_header_name("X-Test\r\n"), None);
     }
 
     #[test]

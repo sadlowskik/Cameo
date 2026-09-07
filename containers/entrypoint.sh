@@ -1,8 +1,9 @@
 #!/bin/sh
 # Cameo container entrypoint.
 #
-# Default (no args, or only flags): run cameod with a reachable but authenticated
-# console, mirroring the ISO's cameo-console-init. Any other argv is exec'd as-is,
+# Default (no args, or only flags): run cameod with a loopback-only console.
+# The built-in listener is HTTP-only, so a bearer key must not cross the LAN.
+# Any other argv is exec'd as-is,
 # so the image doubles as the CLI:
 #   podman run --rm cameo:vulkan cameo pull tinyllama
 set -eu
@@ -21,12 +22,12 @@ if [ "$#" -gt 0 ]; then
     esac
 fi
 
-# Make the console reachable from the host, but never unauthenticated: generate a
-# key when none was supplied and the bind is not loopback.
-if [ -z "${CAMEO_CONSOLE_KEY:-}" ] && [ "${CAMEO_CONSOLE_HOST:-0.0.0.0}" != "127.0.0.1" ]; then
+# A non-loopback bind is an explicit operator opt-in. Keep authentication on it,
+# while defaulting the image to loopback for SSH/VPN or reverse-proxy access.
+export CAMEO_CONSOLE_HOST=${CAMEO_CONSOLE_HOST:-127.0.0.1}
+if [ -z "${CAMEO_CONSOLE_KEY:-}" ] && [ "$CAMEO_CONSOLE_HOST" != "127.0.0.1" ]; then
     key=$(head -c 48 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | cut -c1-32)
     if [ -n "$key" ]; then
-        CAMEO_CONSOLE_HOST=${CAMEO_CONSOLE_HOST:-0.0.0.0}
         CAMEO_CONSOLE_KEY=$key
         export CAMEO_CONSOLE_HOST CAMEO_CONSOLE_KEY
         key_file="${CAMEO_MODELS_DIR:-/var/lib/cameo/models}/.console-key"

@@ -4,7 +4,7 @@ From plan §8. v1 is done when a user can do all of the following. Multi-node
 clustering, Kubernetes, and kernel-level MoE placement are explicitly **not**
 required for v1.
 
-- [ ] Boot the Cameo ISO on a machine with any AMD GPU.
+- [ ] Boot the Cameo ISO on every AMD GPU listed as release-qualified.
 - [ ] Get an accurate, plain-language readout of the GPU's support tier at install.
 - [ ] `cameo run <model>` serves inference over Vulkan (or ROCm on Tier 1/2) with
       no manual ROCm/Vulkan/driver wrangling.

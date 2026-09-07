@@ -1,4 +1,4 @@
-//! The hub registry: the "farm" a fleet of nodes phones home to.
+//! Cameo Mesh's hub-side node registry (internally retained as `Farm` for API compatibility).
 //!
 //! This is the HiveOS-shaped inversion of `cameo fleet` (the CLI's *pull* model,
 //! which polls a static list of node addresses). Here a node running the
@@ -17,6 +17,8 @@
 //! memory; a paid hosted tier is a future *mode*, not a limit on this one.
 
 use std::collections::BTreeMap;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -48,6 +50,8 @@ const MAX_NODE_ID_LEN: usize = 256;
 /// bounds per-row memory well under the 1 MiB HTTP body limit. An oversize blob is
 /// dropped — the row still enrolls, the dashboard just shows no GPU summary.
 const MAX_NODE_BLOB_BYTES: usize = 64 * 1024;
+const MAX_FARM_STATE_BYTES: u64 = 4 * 1024 * 1024;
+const FARM_STATE_VERSION: u32 = 1;
 
 /// What a node sends to `POST /hub/register`. A heartbeat reuses the same shape
 /// but may omit the (larger) `node` description.
@@ -59,9 +63,8 @@ pub struct Registration {
     pub node_id: String,
     #[serde(default)]
     pub name: String,
-    /// `host:port` the hub calls back to reach this node's authenticated `/api`.
-    /// This is the node's own console address, as the node believes the hub can
-    /// reach it (LAN/VPN today; a cloud relay later).
+    /// HTTPS base URL the hub calls to reach this node's authenticated `/api`.
+    /// Normally this is a TLS reverse proxy in front of loopback-only cameod.
     pub address: String,
     /// The credential the hub must present (`Authorization: Bearer …`) when it
     /// pushes work to this node's `/api`. `None` when the node runs keyless.
@@ -76,14 +79,36 @@ pub struct Registration {
 }
 
 /// One enrolled node plus the timing the roster is computed from.
+#[derive(Clone)]
 struct Enrolled {
     reg: Registration,
     last_seen: Instant,
+    enrollment: Enrollment,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum Enrollment {
+    LegacyToken,
+    Paired {
+        credential_digest: [u8; 32],
+        label: String,
+    },
+}
+
+impl Enrollment {
+    fn trust_name(&self) -> &'static str {
+        match self {
+            Self::LegacyToken => "legacy_token",
+            Self::Paired { .. } => "paired",
+        }
+    }
 }
 
 /// The farm: every node that has phoned home, keyed by `node_id`.
 pub struct Farm {
     inner: Mutex<BTreeMap<String, Enrolled>>,
+    state_path: Option<PathBuf>,
 }
 
 impl Default for Farm {
@@ -96,7 +121,51 @@ impl Farm {
     pub fn new() -> Self {
         Farm {
             inner: Mutex::new(BTreeMap::new()),
+            state_path: None,
         }
+    }
+
+    /// Open a durable paired-identity registry. Loaded identities begin offline
+    /// until their device credential produces a fresh heartbeat.
+    pub fn open(path: impl Into<PathBuf>) -> Result<Self, String> {
+        let path = path.into();
+        let persisted = load_state(&path)?;
+        if persisted.nodes.len() > MAX_NODES {
+            return Err(format!(
+                "farm state {} contains more than {MAX_NODES} nodes",
+                path.display()
+            ));
+        }
+        let now = Instant::now();
+        let stale = now.checked_sub(ONLINE_WINDOW).unwrap_or(now);
+        let mut map = BTreeMap::new();
+        for node in persisted.nodes {
+            if !matches!(node.enrollment, Enrollment::Paired { .. }) {
+                return Err("farm state may persist paired identities only".into());
+            }
+            let id = cap_id_len(pick_id(&node.reg));
+            if id != node.reg.node_id || map.contains_key(&id) {
+                return Err(format!(
+                    "farm state has an invalid or duplicate node id '{id}'"
+                ));
+            }
+            map.insert(
+                id,
+                Enrolled {
+                    reg: node.reg,
+                    last_seen: stale,
+                    enrollment: node.enrollment,
+                },
+            );
+        }
+        Ok(Self {
+            inner: Mutex::new(map),
+            state_path: Some(path),
+        })
+    }
+
+    pub fn contains(&self, node_id: &str) -> bool {
+        self.inner.lock().unwrap().contains_key(node_id)
     }
 
     /// Register or refresh a node, returning the `node_id` the hub assigned (which
@@ -113,6 +182,12 @@ impl Farm {
         let mut map = self.inner.lock().unwrap();
         prune(&mut map, now);
         if let Some(e) = map.get_mut(&id) {
+            // A shared farm token can never overwrite, downgrade, or refresh a
+            // paired identity. Paired nodes authenticate heartbeats with their
+            // own credential instead.
+            if matches!(e.enrollment, Enrollment::Paired { .. }) {
+                return id;
+            }
             // First-credential-wins: a re-registration refreshes liveness, name,
             // version, and the live description — but the callback address and key
             // are LOCKED to the first enrollment. Otherwise a farm-token holder
@@ -136,9 +211,68 @@ impl Farm {
             Enrolled {
                 reg,
                 last_seen: now,
+                enrollment: Enrollment::LegacyToken,
             },
         );
         id
+    }
+
+    /// Enroll a new device through a consumed one-time pairing code. The
+    /// credential digest is stored; the plaintext credential is returned once
+    /// by the pairing route and never enters the roster.
+    pub fn pair(
+        &self,
+        mut reg: Registration,
+        credential_digest: [u8; 32],
+        label: String,
+    ) -> Result<String, String> {
+        let id = cap_id_len(pick_id(&reg));
+        reg.node_id = id.clone();
+        if blob_too_big(&reg.node) {
+            reg.node = Value::Null;
+        }
+        let now = Instant::now();
+        let mut map = self.inner.lock().unwrap();
+        prune(&mut map, now);
+        if map.contains_key(&id) {
+            return Err(format!(
+                "node_id '{id}' is already enrolled; remove it before pairing a replacement"
+            ));
+        }
+        if map.len() >= MAX_NODES {
+            evict_oldest(&mut map);
+        }
+        map.insert(
+            id.clone(),
+            Enrolled {
+                reg,
+                last_seen: now,
+                enrollment: Enrollment::Paired {
+                    credential_digest,
+                    label,
+                },
+            },
+        );
+        if let Err(error) = self.persist_locked(&map) {
+            map.remove(&id);
+            return Err(error);
+        }
+        Ok(id)
+    }
+
+    /// Authenticate a paired node heartbeat. Missing/legacy nodes and wrong
+    /// credentials all return false without exposing which condition occurred.
+    pub fn authenticate_paired(&self, node_id: &str, credential: Option<&str>) -> bool {
+        let Some(credential) = credential else {
+            return false;
+        };
+        let map = self.inner.lock().unwrap();
+        match map.get(node_id).map(|entry| &entry.enrollment) {
+            Some(Enrollment::Paired {
+                credential_digest, ..
+            }) => crate::pairing::credential_matches(credential_digest, credential),
+            _ => false,
+        }
     }
 
     /// Refresh a known node's liveness, and its live description when the beat
@@ -166,8 +300,17 @@ impl Farm {
     }
 
     /// Forget a node (admin "remove from farm"). `true` if it was present.
-    pub fn remove(&self, node_id: &str) -> bool {
-        self.inner.lock().unwrap().remove(node_id).is_some()
+    pub fn remove(&self, node_id: &str) -> Result<bool, String> {
+        let mut map = self.inner.lock().unwrap();
+        let removed = map.remove(node_id);
+        if removed.is_none() {
+            return Ok(false);
+        }
+        if let Err(error) = self.persist_locked(&map) {
+            map.insert(node_id.to_string(), removed.unwrap());
+            return Err(error);
+        }
+        Ok(true)
     }
 
     /// Online nodes as `(node_id, stored /api/node description)` pairs — the raw
@@ -179,7 +322,16 @@ impl Farm {
         prune(&mut map, now);
         map.values()
             .filter(|e| now.duration_since(e.last_seen) < ONLINE_WINDOW)
-            .map(|e| (e.reg.node_id.clone(), e.reg.node.clone()))
+            .map(|e| {
+                let mut description = e.reg.node.clone();
+                if let Some(object) = description.as_object_mut() {
+                    object.insert(
+                        "_cameo_hub".into(),
+                        json!({ "trust": e.enrollment.trust_name() }),
+                    );
+                }
+                (e.reg.node_id.clone(), description)
+            })
             .collect()
     }
 
@@ -210,6 +362,11 @@ impl Farm {
                     "name": name,
                     "address": e.reg.address,
                     "cameo_version": e.reg.cameo_version,
+                    "trust": e.enrollment.trust_name(),
+                    "pairing_label": match &e.enrollment {
+                        Enrollment::Paired { label, .. } => Some(label.as_str()),
+                        Enrollment::LegacyToken => None,
+                    },
                     "online": age < ONLINE_WINDOW,
                     "age_secs": age.as_secs(),
                     "gpus": gpu_summary(&e.reg.node),
@@ -218,6 +375,194 @@ impl Farm {
                 })
             })
             .collect()
+    }
+
+    fn persist_locked(&self, map: &BTreeMap<String, Enrolled>) -> Result<(), String> {
+        let Some(path) = self.state_path.as_deref() else {
+            return Ok(());
+        };
+        let state = PersistedFarm {
+            version: FARM_STATE_VERSION,
+            nodes: map
+                .values()
+                .filter(|entry| matches!(entry.enrollment, Enrollment::Paired { .. }))
+                .map(|entry| {
+                    let mut reg = entry.reg.clone();
+                    // Hardware/session telemetry is refreshed by heartbeats and
+                    // must not make the secret-bearing identity file churn.
+                    reg.node = Value::Null;
+                    PersistedNode {
+                        reg,
+                        enrollment: entry.enrollment.clone(),
+                    }
+                })
+                .collect(),
+        };
+        persist_state(path, &state)
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct PersistedFarm {
+    version: u32,
+    nodes: Vec<PersistedNode>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct PersistedNode {
+    reg: Registration,
+    enrollment: Enrollment,
+}
+
+fn load_state(path: &Path) -> Result<PersistedFarm, String> {
+    #[cfg(windows)]
+    {
+        let backup = path.with_extension("backup");
+        if !path.exists() && backup.exists() {
+            std::fs::rename(&backup, path)
+                .map_err(|error| format!("recovering farm state {}: {error}", path.display()))?;
+        } else if path.exists() && backup.exists() {
+            return Err(format!(
+                "both farm state {} and recovery backup {} exist; inspect them before startup",
+                path.display(),
+                backup.display()
+            ));
+        }
+    }
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(PersistedFarm {
+                version: FARM_STATE_VERSION,
+                nodes: Vec::new(),
+            })
+        }
+        Err(error) => return Err(format!("inspecting farm state {}: {error}", path.display())),
+    };
+    if metadata.file_type().is_symlink()
+        || !metadata.is_file()
+        || metadata.len() > MAX_FARM_STATE_BYTES
+    {
+        return Err(format!(
+            "farm state {} must be a regular file no larger than {} bytes",
+            path.display(),
+            MAX_FARM_STATE_BYTES
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if metadata.permissions().mode() & 0o077 != 0 {
+            return Err(format!(
+                "farm state {} is accessible by group/others; run chmod 600",
+                path.display()
+            ));
+        }
+    }
+    let bytes = std::fs::read(path)
+        .map_err(|error| format!("reading farm state {}: {error}", path.display()))?;
+    let state: PersistedFarm = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("parsing farm state {}: {error}", path.display()))?;
+    if state.version != FARM_STATE_VERSION {
+        return Err(format!(
+            "unsupported farm state version {} in {}",
+            state.version,
+            path.display()
+        ));
+    }
+    Ok(state)
+}
+
+fn persist_state(path: &Path, state: &PersistedFarm) -> Result<(), String> {
+    let payload =
+        serde_json::to_vec(state).map_err(|error| format!("serializing farm state: {error}"))?;
+    if payload.len() as u64 > MAX_FARM_STATE_BYTES {
+        return Err("farm state exceeds its 4 MiB limit".into());
+    }
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    #[cfg(unix)]
+    let created_parent = !parent.exists();
+    std::fs::create_dir_all(parent).map_err(|error| {
+        format!(
+            "creating farm state directory {}: {error}",
+            parent.display()
+        )
+    })?;
+    #[cfg(unix)]
+    if created_parent {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))
+            .map_err(|error| format!("securing state directory {}: {error}", parent.display()))?;
+    }
+    let temp = parent.join(format!(".mesh-identities.tmp-{}", std::process::id()));
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options
+        .open(&temp)
+        .map_err(|error| format!("creating farm state temp {}: {error}", temp.display()))?;
+    if let Err(error) = file.write_all(&payload).and_then(|_| file.sync_all()) {
+        let _ = std::fs::remove_file(&temp);
+        return Err(format!(
+            "writing farm state temp {}: {error}",
+            temp.display()
+        ));
+    }
+    #[cfg(not(windows))]
+    {
+        std::fs::rename(&temp, path).map_err(|error| {
+            let _ = std::fs::remove_file(&temp);
+            format!("committing farm state {}: {error}", path.display())
+        })?;
+        #[cfg(unix)]
+        std::fs::File::open(parent)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|error| {
+                format!("syncing farm state directory {}: {error}", parent.display())
+            })?;
+        Ok(())
+    }
+    #[cfg(windows)]
+    {
+        let backup = path.with_extension("backup");
+        if backup.exists() {
+            let _ = std::fs::remove_file(&temp);
+            return Err(format!(
+                "farm state recovery backup {} already exists",
+                backup.display()
+            ));
+        }
+        let had_previous = path.exists();
+        if had_previous {
+            std::fs::rename(path, &backup).map_err(|error| {
+                let _ = std::fs::remove_file(&temp);
+                format!("staging previous farm state {}: {error}", path.display())
+            })?;
+        }
+        match std::fs::rename(&temp, path) {
+            Ok(()) => {
+                if had_previous {
+                    std::fs::remove_file(&backup).map_err(|error| {
+                        format!("removing committed farm state backup: {error}")
+                    })?;
+                }
+                Ok(())
+            }
+            Err(error) => {
+                let _ = std::fs::remove_file(&temp);
+                if had_previous {
+                    let _ = std::fs::rename(&backup, path);
+                }
+                Err(format!("committing farm state {}: {error}", path.display()))
+            }
+        }
     }
 }
 
@@ -239,7 +584,12 @@ fn pick_id(reg: &Registration) -> String {
 
 /// Drop nodes that have been silent past [`DROP_AFTER`].
 fn prune(map: &mut BTreeMap<String, Enrolled>, now: Instant) {
-    map.retain(|_, e| now.duration_since(e.last_seen) < DROP_AFTER);
+    // Paired identity survives ordinary sleep/network loss so its device token
+    // works after reconnect. Operators revoke it explicitly with DELETE.
+    map.retain(|_, e| {
+        matches!(e.enrollment, Enrollment::Paired { .. })
+            || now.duration_since(e.last_seen) < DROP_AFTER
+    });
 }
 
 /// Truncate a `node_id` to at most [`MAX_NODE_ID_LEN`] bytes on a char boundary.
@@ -409,8 +759,8 @@ mod tests {
     fn remove_reports_whether_it_deleted() {
         let farm = Farm::new();
         let id = farm.register(reg(json!({ "name": "box-a", "address": "10.0.0.2:9090" })));
-        assert!(farm.remove(&id));
-        assert!(!farm.remove(&id));
+        assert!(farm.remove(&id).unwrap());
+        assert!(!farm.remove(&id).unwrap());
         assert!(farm.list().is_empty());
     }
 
@@ -462,6 +812,7 @@ mod tests {
             Enrolled {
                 reg: reg(json!({ "address": "10.0.0.1:9090" })),
                 last_seen: Instant::now(),
+                enrollment: Enrollment::LegacyToken,
             },
         );
         std::thread::sleep(Duration::from_millis(5));
@@ -470,10 +821,74 @@ mod tests {
             Enrolled {
                 reg: reg(json!({ "address": "10.0.0.2:9090" })),
                 last_seen: Instant::now(),
+                enrollment: Enrollment::LegacyToken,
             },
         );
         evict_oldest(&mut map);
         assert!(!map.contains_key("old"), "the stalest node is evicted");
         assert!(map.contains_key("new"));
+    }
+
+    #[test]
+    fn paired_node_uses_a_device_credential_and_cannot_be_downgraded() {
+        let farm = Farm::new();
+        let token = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let id = farm
+            .pair(
+                reg(json!({
+                    "node_id": "paired-a", "name": "paired-a",
+                    "address": "https://10.0.0.2:9090", "key": "node-operator-key"
+                })),
+                crate::pairing::hash_secret(token),
+                "desk".into(),
+            )
+            .unwrap();
+        assert!(farm.authenticate_paired(&id, Some(token)));
+        assert!(!farm.authenticate_paired(&id, Some(&"f".repeat(64))));
+
+        // A holder of the old shared token can call register(), but cannot
+        // replace or downgrade the paired row.
+        farm.register(reg(json!({
+            "node_id": "paired-a", "address": "https://10.6.6.6:9090", "key": "attacker-key"
+        })));
+        assert_eq!(farm.list()[0]["trust"], "paired");
+        assert_eq!(farm.list()[0]["pairing_label"], "desk");
+        assert_eq!(farm.push_target(&id).unwrap().0, "https://10.0.0.2:9090");
+    }
+
+    #[test]
+    fn paired_identity_persists_offline_then_reconnects_and_revokes_durably() {
+        let suffix = crate::pairing::issue_device_credential().unwrap();
+        let dir = std::env::temp_dir().join(format!("cameo-farm-test-{}", &suffix[..16]));
+        let path = dir.join("mesh-identities.json");
+        let token = crate::pairing::issue_device_credential().unwrap();
+        {
+            let farm = Farm::open(&path).unwrap();
+            farm.pair(
+                reg(json!({
+                    "node_id": "durable-a", "name": "durable-a",
+                    "address": "https://10.0.0.4:9090", "key": "durable-node-key"
+                })),
+                crate::pairing::hash_secret(&token),
+                "durable test".into(),
+            )
+            .unwrap();
+        }
+        let persisted = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !persisted.contains(&token),
+            "plaintext device credential must never reach hub state"
+        );
+        {
+            let farm = Farm::open(&path).unwrap();
+            assert_eq!(farm.list()[0]["online"], false, "restart begins offline");
+            assert!(farm.authenticate_paired("durable-a", Some(&token)));
+            assert!(farm.heartbeat("durable-a", Some(node_desc())));
+            assert_eq!(farm.list()[0]["online"], true);
+            assert!(farm.remove("durable-a").unwrap());
+        }
+        assert!(Farm::open(&path).unwrap().list().is_empty());
+        std::fs::remove_file(&path).unwrap();
+        std::fs::remove_dir(&dir).unwrap();
     }
 }

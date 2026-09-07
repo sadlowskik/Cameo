@@ -12,6 +12,7 @@ name = "cameo"
 path = "src/main.rs"
 
 [dependencies]
+cameo-api.workspace = true
 cameo-gpu-detect.workspace = true
 cameo-config.workspace = true
 cameo-placement.workspace = true

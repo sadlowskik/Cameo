@@ -122,9 +122,9 @@ if [ -d "$RELENG/airootfs" ]; then
   mv "$MERGED" "$BUILD/airootfs"
   log "Merged airootfs: releng base, Cameo overlay"
 
-  # Record the pinned snapshot into the image (F5): cameo-update on an installed
-  # system reads /etc/cameo/snapshot to pin the same release, and cameo-install
-  # copies /etc/cameo to the target. Rolling builds leave no file (rolling update).
+  # Record the source snapshot for provenance; cameo-install copies this to the
+  # target. It is not an update authorization or rollback mechanism. The signed
+  # offline updater no longer falls back to rolling packages when this is absent.
   if [ -n "${CAMEO_ARCH_SNAPSHOT:-}" ]; then
     install -d "$BUILD/airootfs/etc/cameo"
     printf '%s\n' "$CAMEO_ARCH_SNAPSHOT" >"$BUILD/airootfs/etc/cameo/snapshot"
@@ -489,37 +489,59 @@ done
 # Both front ends ship: `cameo` (the CLI) and `cameod` (the control-plane daemon
 # that serves the browser console). One `cargo build` produces both.
 CARGO_TARGET="${CAMEO_CARGO_TARGET_DIR:-$WORK/cargo-target}"
-DAEDALUS_TARGET="${CAMEO_DAEDALUS_TARGET_DIR:-$WORK/daedalus-target}"
+KNOSSOS_TARGET="${CAMEO_KNOSSOS_TARGET_DIR:-${CAMEO_DAEDALUS_TARGET_DIR:-$WORK/knossos-target}}"
 if [ "${CAMEO_SKIP_CARGO:-}" = "1" ]; then
   log "CAMEO_SKIP_CARGO=1 — using prebuilt bins in $CARGO_TARGET/release"
 else
   log "Building the cameo CLI + cameod daemon (release)..."
-  mkdir -p "$CARGO_TARGET" "$DAEDALUS_TARGET"
+  mkdir -p "$CARGO_TARGET" "$KNOSSOS_TARGET"
   if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ] && command -v runuser >/dev/null 2>&1; then
     log "Dropping privileges to $SUDO_USER for the build"
-    chown -R "$SUDO_USER" "$CARGO_TARGET" "$DAEDALUS_TARGET"
+    chown -R "$SUDO_USER" "$CARGO_TARGET" "$KNOSSOS_TARGET"
     runuser -u "$SUDO_USER" -- env CARGO_TARGET_DIR="$CARGO_TARGET" \
       cargo build --release --locked -p cameo-cli -p cameo-daemon --manifest-path "$REPO/Cargo.toml"
-    runuser -u "$SUDO_USER" -- env CARGO_TARGET_DIR="$DAEDALUS_TARGET" \
-      cargo build --release --locked --bin daedalus --manifest-path "$REPO/daedalus/knossos-rs/Cargo.toml"
+    runuser -u "$SUDO_USER" -- env CARGO_TARGET_DIR="$KNOSSOS_TARGET" \
+      cargo build --release --locked --bin knossos --manifest-path "$REPO/daedalus/knossos-rs/Cargo.toml"
   else
     log "No SUDO_USER — compiling as root. Build scripts and proc-macros will run"
     log "with full privileges; prefer 'sudo $0' from a normal account."
     CARGO_TARGET_DIR="$CARGO_TARGET" \
       cargo build --release --locked -p cameo-cli -p cameo-daemon --manifest-path "$REPO/Cargo.toml"
-    CARGO_TARGET_DIR="$DAEDALUS_TARGET" \
-      cargo build --release --locked --bin daedalus --manifest-path "$REPO/daedalus/knossos-rs/Cargo.toml"
+    CARGO_TARGET_DIR="$KNOSSOS_TARGET" \
+      cargo build --release --locked --bin knossos --manifest-path "$REPO/daedalus/knossos-rs/Cargo.toml"
   fi
 fi
 if [ ! -x "$CARGO_TARGET/release/cameo" ] || [ ! -x "$CARGO_TARGET/release/cameod" ]; then
   die "missing $CARGO_TARGET/release/cameo or cameod (build them, or unset CAMEO_SKIP_CARGO)"
 fi
-if [ ! -x "$DAEDALUS_TARGET/release/daedalus" ]; then
-  die "missing $DAEDALUS_TARGET/release/daedalus (build it, or unset CAMEO_SKIP_CARGO)"
+if [ ! -x "$KNOSSOS_TARGET/release/knossos" ]; then
+  die "missing $KNOSSOS_TARGET/release/knossos (build it, or unset CAMEO_SKIP_CARGO)"
 fi
 install -Dm755 "$CARGO_TARGET/release/cameo" "$BUILD/airootfs/usr/local/bin/cameo"
 install -Dm755 "$CARGO_TARGET/release/cameod" "$BUILD/airootfs/usr/local/bin/cameod"
-install -Dm755 "$DAEDALUS_TARGET/release/daedalus" "$BUILD/airootfs/usr/local/bin/daedalus"
+install -Dm644 "$REPO/contracts/cameo-capabilities-v1.json" "$BUILD/airootfs/etc/cameo/capabilities.json"
+install -Dm755 "$KNOSSOS_TARGET/release/knossos" "$BUILD/airootfs/usr/local/bin/knossos"
+
+# Trust root for `cameo-update verify`. The private half never enters the image.
+# CAMEO_UPDATE_ROOT_PEM may be a PEM blob or a file path (GitHub Actions secret
+# override). Otherwise the committed archiso public key is used.
+update_root="$BUILD/airootfs/etc/cameo/update-root.pem"
+if [ -n "${CAMEO_UPDATE_ROOT_PEM:-}" ]; then
+  if [ -f "$CAMEO_UPDATE_ROOT_PEM" ]; then
+    install -Dm644 "$CAMEO_UPDATE_ROOT_PEM" "$update_root"
+  else
+    printf '%s\n' "$CAMEO_UPDATE_ROOT_PEM" >"$update_root"
+    chmod 644 "$update_root"
+  fi
+  log "Installed update trust root from CAMEO_UPDATE_ROOT_PEM"
+fi
+if [ ! -f "$update_root" ]; then
+  die "missing $update_root — commit archiso/airootfs/etc/cameo/update-root.pem or set CAMEO_UPDATE_ROOT_PEM"
+fi
+grep -q "BEGIN PUBLIC KEY" "$update_root" \
+  || die "update trust root is not a PUBLIC KEY PEM (refusing to ship a private key or empty file)"
+grep -q "PRIVATE KEY" "$update_root" \
+  && die "update trust root contains a PRIVATE KEY; only the public half belongs on the ISO"
 
 # 3. Lite edition: drop the heavy ROCm / PyTorch packages (Vulkan-only, much smaller).
 #

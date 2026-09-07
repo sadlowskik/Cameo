@@ -1,0 +1,76 @@
+#!/usr/bin/env python3
+"""Fail-closed validation and preflight for a Cameo update bundle."""
+import hashlib
+import json
+import posixpath
+import shutil
+import sys
+from pathlib import Path
+
+MAX_MANIFEST = 1024 * 1024
+ALLOWED = ("/usr/local/bin/", "/usr/local/lib/cameo/", "/etc/cameo/", "/usr/share/cameo/")
+
+def die(message): raise SystemExit(f"cameo-update: {message}")
+
+def load(path):
+    if path.is_symlink() or not path.is_file() or path.stat().st_size > MAX_MANIFEST: die("manifest missing, linked, or too large")
+    try: data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc: die(f"invalid manifest: {exc}")
+    if not isinstance(data, dict) or data.get("schema") != "cameo-update/v1": die("unsupported manifest schema")
+    if not isinstance(data.get("release_id"), str) or not data["release_id"]: die("missing release_id")
+    if not isinstance(data.get("compatibility"), dict) or not isinstance(data["compatibility"].get("id"), str): die("missing compatibility id")
+    if not isinstance(data.get("files"), list) or not data["files"]: die("manifest has no files")
+    return data
+
+def entries(bundle, manifest):
+    seen = set()
+    for item in manifest["files"]:
+        if not isinstance(item, dict): die("invalid file entry")
+        source, target, digest = item.get("source"), item.get("target"), item.get("sha256")
+        if not all(isinstance(v, str) and v for v in (source, target, digest)): die("incomplete file entry")
+        if Path(source).is_absolute() or ".." in Path(source).parts: die("unsafe bundle source")
+        normalized = posixpath.normpath(target)
+        if not normalized.startswith(ALLOWED) or normalized in seen: die("unsafe or duplicate install target")
+        seen.add(normalized)
+        lexical = bundle / source
+        cursor = lexical
+        while cursor != bundle:
+            if cursor.is_symlink(): die(f"linked component path: {source}")
+            cursor = cursor.parent
+        path = lexical.resolve()
+        try: path.relative_to(bundle.resolve())
+        except ValueError: die("component escapes bundle")
+        if not path.is_file(): die(f"missing or unsafe component: {source}")
+        hasher = hashlib.sha256()
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""): hasher.update(chunk)
+        if len(digest) != 64 or hasher.hexdigest() != digest.lower(): die(f"digest mismatch: {source}")
+        try: mode = int(item.get("mode", "0644"), 8)
+        except (TypeError, ValueError): die("invalid component mode")
+        if mode & ~0o755: die("component mode grants unsafe permissions")
+        yield path, Path(normalized), mode
+
+def verify(bundle, manifest_path=None):
+    manifest = load(manifest_path or bundle / "manifest.json")
+    list(entries(bundle, manifest))
+    return manifest
+
+def main():
+    if len(sys.argv) < 3: die("internal verifier usage")
+    command = sys.argv[1]
+    if command in ("verify", "preflight"):
+        bundle = Path(sys.argv[2]).resolve()
+        manifest_path = Path(sys.argv[4]) if len(sys.argv) == 5 else None
+        manifest = verify(bundle, manifest_path)
+        if command == "verify": return
+        required = sum(p.stat().st_size for p, _, _ in entries(bundle, manifest)) * 2 + 64 * 1024 * 1024
+        root = Path(sys.argv[3])
+        compatibility_file = root / "etc/cameo/compatibility-id"
+        try: installed = compatibility_file.read_text(encoding="ascii").strip()
+        except (OSError, UnicodeError) as exc: die(f"installed compatibility identity unavailable: {exc}")
+        if installed != manifest["compatibility"]["id"]: die("bundle is incompatible with this installation")
+        if shutil.disk_usage(root).free < required: die(f"insufficient free space; need {required} bytes")
+        return
+    die("unknown verifier command")
+
+if __name__ == "__main__": main()

@@ -16,7 +16,7 @@ use cameo_gpu_detect::{
     classify_topology, detect_topology_or_cpu, Captures, OverrideDb, TierAssessment, Topology,
 };
 use cameo_placement::command::build_llama_server;
-use cameo_placement::{plan as make_plan, ModelMeta, QuantLevel, Task};
+use cameo_placement::{plan as make_plan, KvCacheType, ModelMeta, QuantLevel, Task};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -45,6 +45,7 @@ fn server_binary(backend: Backend) -> String {
 
 /// Shared daemon state, handed to every request handler.
 pub struct AppState {
+    pub drain: crate::drain::Drain,
     pub sup: Supervisor,
     /// Captured tool outputs for detection replay on a non-Linux host; empty
     /// means live detection (Linux). Cloned per detection so a request never
@@ -70,6 +71,14 @@ pub struct AppState {
     /// The fleet roster, when this daemon runs as a hub. Nodes phone home to
     /// `/hub/register`; empty and inert on a plain node.
     pub farm: Farm,
+    /// Atomic short-lived mesh admissions. This closes the hub-side TOCTOU gap
+    /// between choosing a node and that node completing its local admission.
+    pub admissions: crate::dispatch::AdmissionBook,
+    /// Pending single-use device pairing codes. Codes are stored only as
+    /// digests and expire after ten minutes.
+    pub pairings: crate::pairing::PairingStore,
+    /// Per-client request admission for brute-force and overload resistance.
+    pub rate_limits: crate::rate_limit::RateLimiter,
     /// True when this daemon is a hub: `/hub/*` enrollment is on and
     /// `GET /healthz` reports `hub: true`. `/` is always the one fleet map.
     pub hub_enabled: bool,
@@ -93,9 +102,11 @@ const DETECT_CACHE_TTL: Duration = Duration::from_secs(5);
 /// The submitted description of a model to plan or serve. Sizing fields carry the
 /// same defaults as the CLI's `ModelOpts`, so an omitted field means the same
 /// thing in both front ends.
-#[derive(Deserialize)]
+#[derive(Deserialize, serde::Serialize)]
 struct ModelRequest {
     model: String,
+    #[serde(default)]
+    model_sha256: Option<String>,
     #[serde(default = "default_host")]
     host: String,
     #[serde(default = "default_port")]
@@ -108,6 +119,32 @@ struct ModelRequest {
     moe: bool,
     #[serde(default = "default_context")]
     context: u32,
+    /// Model-native ceiling from GGUF/HF metadata. The allocation is clamped
+    /// to 80% before placement and launch.
+    #[serde(default)]
+    native_context: Option<u32>,
+    #[serde(default = "default_slots")]
+    slots: u16,
+    #[serde(default = "default_kv_cache")]
+    kv_cache: String,
+    #[serde(default)]
+    kv_heads: Option<u32>,
+    #[serde(default)]
+    head_dim: Option<u32>,
+    #[serde(default = "default_batch")]
+    batch: u32,
+    #[serde(default = "default_ubatch")]
+    ubatch: u32,
+    #[serde(default = "default_true")]
+    flash_attention: bool,
+    #[serde(default = "default_cache_reuse")]
+    cache_reuse: u32,
+    #[serde(default)]
+    cache_ram_mib: u32,
+    #[serde(default = "default_true")]
+    metrics: bool,
+    #[serde(default)]
+    slot_save_path: Option<String>,
     #[serde(default)]
     layers: u32,
     /// `"vulkan"`, `"rocm"`, or `"auto"`; anything else (or absent) is auto.
@@ -144,7 +181,25 @@ fn default_quant() -> String {
     "Q4_K_M".into()
 }
 fn default_context() -> u32 {
-    4096
+    0
+}
+fn default_slots() -> u16 {
+    1
+}
+fn default_kv_cache() -> String {
+    "q8_0".into()
+}
+fn default_batch() -> u32 {
+    2048
+}
+fn default_ubatch() -> u32 {
+    512
+}
+fn default_cache_reuse() -> u32 {
+    256
+}
+fn default_true() -> bool {
+    true
 }
 
 impl ModelRequest {
@@ -159,9 +214,31 @@ impl ModelRequest {
         } else {
             ModelMeta::dense(&self.model, params, quant)
         };
-        m.context_len = self.context;
+        let discovered = cameo_models::inference_meta_for(&self.model);
+        m.native_context_len = self.native_context.or(discovered.map(|x| x.native_context));
+        m.context_len = if self.context == 0 {
+            m.native_context_len
+                .map(|n| n.saturating_mul(80) / 100)
+                .unwrap_or(4096)
+        } else {
+            self.context
+        };
+        m.parallel_slots = self.slots;
+        m.kv_cache_type = KvCacheType::parse(&self.kv_cache);
+        m.kv_heads = self.kv_heads.or(discovered.map(|x| x.kv_heads));
+        m.head_dim = self.head_dim.or(discovered.map(|x| x.head_dim));
+        m.batch_size = self.batch;
+        m.ubatch_size = self.ubatch;
+        m.flash_attention = self.flash_attention;
+        m.cache_reuse = self.cache_reuse;
+        m.cache_ram_mib = self.cache_ram_mib;
+        m.metrics = self.metrics;
+        m.slot_save_path = self.slot_save_path.clone();
+        m.clamp_to_native_context();
         if self.layers > 0 {
             m.n_layers = self.layers;
+        } else if let Some(meta) = discovered {
+            m.n_layers = meta.layers;
         }
         m
     }
@@ -180,11 +257,14 @@ impl ModelRequest {
 /// Top-level dispatch. Returns a [`Response`] for every request; there is no
 /// error path that escapes, so the HTTP layer only ever writes bytes.
 pub fn route(state: &Arc<AppState>, req: &Request) -> Response {
+    let segs = req.segments();
+    if let Some(denied) = check_request_rate(state, req, &segs) {
+        return denied;
+    }
     // A stale board entry is useful diagnostic history, but it must never keep
     // an endpoint non-evictable. This runs at request time, avoiding a
     // background thread and its shutdown/lifetime failure modes.
     release_stale_session_leases(state);
-    let segs = req.segments();
 
     // Unauthenticated, side-effect-free routes: the dashboard shell (so it can
     // prompt for a key) and the liveness/readiness probes (so k8s and the fleet
@@ -198,6 +278,9 @@ pub fn route(state: &Arc<AppState>, req: &Request) -> Response {
                 return Response::json(200, &json!({ "status": "ok", "hub": state.hub_enabled }))
             }
             ["readyz"] => {
+                if state.drain.draining() {
+                    return Response::json(503, &json!({"ready":false, "reason":"draining"}));
+                }
                 // Ready = the node can actually detect hardware and plan work.
                 // Served from the short-lived cache: k8s probes on a cadence,
                 // and readiness does not need a fresh subprocess sweep each time.
@@ -250,14 +333,17 @@ pub fn route(state: &Arc<AppState>, req: &Request) -> Response {
     }
 
     // Everything under /api is gated by the console key, when one is configured.
-    // GET /api/engines is the harness discovery surface: a consumer (serve) key
-    // is enough to see which models are resident; loading still needs operator.
+    // GET /api/engines and /api/capabilities are harness discovery surfaces: a
+    // consumer (serve) key can inspect claims; loading still needs operator.
     if segs.first() == Some(&"api") {
-        if req.method == "GET" && segs.get(1) == Some(&"engines") && segs.len() == 2 {
+        if req.method == "GET"
+            && matches!(segs.get(1), Some(&"engines" | &"capabilities"))
+            && segs.len() == 2
+        {
             if let Some(denied) = check_engines_auth(state, req) {
                 return denied;
             }
-            return api_engines(state, req).no_store();
+            return route_api(state, req, &segs[1..]).no_store();
         }
         if let Some(denied) = check_auth(state, req) {
             return denied;
@@ -266,6 +352,54 @@ pub fn route(state: &Arc<AppState>, req: &Request) -> Response {
     }
 
     Response::error(404, "not found")
+}
+
+fn check_request_rate(state: &Arc<AppState>, req: &Request, segs: &[&str]) -> Option<Response> {
+    if req.from_unix {
+        return None;
+    }
+    let client = req
+        .peer_ip
+        .map(|ip| ip.to_string())
+        .unwrap_or_else(|| "unknown".into());
+    let authenticated = state.keyring.role_of(bearer(req)).is_some();
+    let pairing = segs == ["hub", "pair"];
+    let protected =
+        segs.first() == Some(&"api") || segs.first() == Some(&"hub") || segs.first() == Some(&"v1");
+    let intentionally_open =
+        (segs.first() == Some(&"v1") && state.open_inference && !state.keyring.requires_consumer())
+            || (segs.first() == Some(&"api") && !state.keyring.requires_operator());
+    let (class, limit) = if pairing {
+        ("pair", crate::rate_limit::PAIRING_REQUESTS_PER_WINDOW)
+    } else if protected && !authenticated && !intentionally_open {
+        ("auth", crate::rate_limit::INVALID_AUTH_REQUESTS_PER_WINDOW)
+    } else if segs.first() == Some(&"v1") {
+        (
+            "inference",
+            crate::rate_limit::INFERENCE_REQUESTS_PER_WINDOW,
+        )
+    } else if protected {
+        ("control", crate::rate_limit::CONTROL_REQUESTS_PER_WINDOW)
+    } else {
+        ("public", crate::rate_limit::PUBLIC_REQUESTS_PER_WINDOW)
+    };
+    let key = format!("{client}:{class}");
+    if state.rate_limits.allow(
+        &key,
+        limit,
+        Duration::from_secs(crate::rate_limit::WINDOW_SECONDS),
+    ) {
+        None
+    } else {
+        Some(
+            Response::error(429, "request rate limit exceeded")
+                .with_header(
+                    "Retry-After",
+                    &crate::rate_limit::WINDOW_SECONDS.to_string(),
+                )
+                .no_store(),
+        )
+    }
 }
 
 /// Compare a presented credential against the configured one in constant time.
@@ -311,7 +445,7 @@ fn check_serve_auth(state: &Arc<AppState>, req: &Request) -> Option<Response> {
 }
 
 /// The `/v1` OpenAI gateway (F8). `GET /v1/models` lists the served models; any
-/// `POST /v1/*` (chat/completions, completions, embeddings) is routed by the
+/// The three declared POST routes (chat/completions, completions, embeddings) are routed by the
 /// body's `model` field to the endpoint serving it and proxied.
 fn route_v1(state: &Arc<AppState>, req: &Request, rest: &[&str]) -> Response {
     match (req.method.as_str(), rest) {
@@ -324,25 +458,46 @@ fn route_v1(state: &Arc<AppState>, req: &Request, rest: &[&str]) -> Response {
                 .collect();
             Response::json(200, &json!({ "object": "list", "data": data })).no_store()
         }
-        ("POST", _) => gateway_proxy(state, req),
+        ("POST", ["chat", "completions"] | ["completions"] | ["embeddings"]) => {
+            let Some(permit) = state.drain.admit() else {
+                return Response::json(503, &json!({"error":{"message":"node is draining", "type":"server_error", "code":"node_draining"}})).with_header("Retry-After", "5");
+            };
+            let mut response = gateway_proxy(state, req, rest, permit.generation());
+            response.completion = Some(permit);
+            response
+        }
         _ => Response::error(404, "unknown /v1 route"),
     }
 }
 
 /// Route one gateway request: find the endpoint serving the body's `model`, mark
 /// it used (for LRU residency), and proxy the call to its `llama-server`.
-fn gateway_proxy(state: &Arc<AppState>, req: &Request) -> Response {
+fn gateway_proxy(state: &Arc<AppState>, req: &Request, rest: &[&str], generation: u64) -> Response {
     let parsed = serde_json::from_slice::<Value>(&req.body).ok();
+    let Some(parsed) = parsed else {
+        return Response::error(400, "request body must be JSON with a \"model\" field");
+    };
+    if let Some(route) = crate::openai::route_from_path(rest) {
+        if let Some(response) = crate::openai::reject_unsupported(route, &parsed) {
+            return response;
+        }
+    }
     let model = parsed
-        .as_ref()
-        .and_then(|v| v.get("model").and_then(Value::as_str).map(str::to_string));
+        .get("model")
+        .and_then(Value::as_str)
+        .map(str::to_string);
     let Some(model) = model else {
         return Response::error(400, "request body must be JSON with a \"model\" field");
     };
+    if let Some(response) =
+        crate::openai::reject_token_ceiling(&parsed, state.sup.context_tokens_for_model(&model))
+    {
+        return response;
+    }
     // OpenAI's `stream: true` asks for an SSE token stream; anything else buffers.
     let wants_stream = parsed
-        .as_ref()
-        .and_then(|v| v.get("stream").and_then(Value::as_bool))
+        .get("stream")
+        .and_then(Value::as_bool)
         .unwrap_or(false);
 
     let Some((host, port, id)) = state.sup.endpoint_for_model(&model) else {
@@ -366,6 +521,7 @@ fn gateway_proxy(state: &Arc<AppState>, req: &Request) -> Response {
         let method = req.method.clone();
         let path = req.path.clone();
         let body = req.body.clone();
+        let drain = state.drain.clone();
         return Response::streaming(move |w| {
             let upstream = crate::proxy::ProxyRequest {
                 host: &host,
@@ -376,7 +532,7 @@ fn gateway_proxy(state: &Arc<AppState>, req: &Request) -> Response {
                 body: &body,
                 backend_key: key.as_deref(),
             };
-            crate::proxy::forward_streaming(&upstream, w)
+            crate::proxy::forward_streaming_controlled(&upstream, w, Some((&drain, generation)))
         });
     }
 
@@ -389,9 +545,16 @@ fn gateway_proxy(state: &Arc<AppState>, req: &Request) -> Response {
         body: &req.body,
         backend_key: key.as_deref(),
     };
-    match crate::proxy::forward(&upstream) {
+    match crate::proxy::forward_controlled(&upstream, Some((&state.drain, generation))) {
         Ok(b) => Response::new(b.status, &b.content_type, b.body),
-        Err(e) => Response::error(502, format!("upstream {host}:{port} unreachable: {e}")),
+        Err(_) if state.drain.cancelled(generation) => Response::json(503, &json!({"error":{"message":"drain deadline exceeded", "code":"node_draining", "type":"server_error"}})).with_header("Retry-After", "5"),
+        Err(_) => Response::json(
+            502,
+            &serde_json::json!({
+                "error": { "message": "upstream unavailable or invalid response",
+                    "type": "server_error", "code": "upstream_unavailable" }
+            }),
+        ),
     }
 }
 
@@ -433,10 +596,44 @@ fn check_auth(state: &Arc<AppState>, req: &Request) -> Option<Response> {
 }
 
 fn route_api(state: &Arc<AppState>, req: &Request, rest: &[&str]) -> Response {
+    if state.drain.shutting_down() && req.method != "GET" {
+        return Response::error(503, "daemon is shutting down");
+    }
+    if rest == ["drain"] {
+        return match req.method.as_str() {
+            "GET" => Response::json(200, &state.drain.status()),
+            "DELETE" => Response::json(200, &state.drain.resume()),
+            "POST" => {
+                let body: Value = match serde_json::from_slice(&req.body) {
+                    Ok(body) => body,
+                    Err(_) => return Response::error(400, "drain requires a JSON object"),
+                };
+                if !body.is_object() {
+                    return Response::error(400, "drain requires a JSON object");
+                }
+                let seconds = match body.get("deadline_seconds") {
+                    None => 60,
+                    Some(value) => match value.as_u64() {
+                        Some(n @ 1..=3600) => n,
+                        _ => {
+                            return Response::error(
+                                400,
+                                "deadline_seconds must be an integer from 1 to 3600",
+                            )
+                        }
+                    },
+                };
+                Response::json(202, &state.drain.begin(Duration::from_secs(seconds)))
+            }
+            _ => Response::error(405, "unsupported drain method"),
+        };
+    }
+
     match (req.method.as_str(), rest) {
         ("GET", ["gpus"]) => api_gpus(state),
         ("GET", ["node"]) => api_node(state),
         ("GET", ["engines"]) => api_engines(state, req),
+        ("GET", ["capabilities"]) => api_capabilities(),
         ("GET", ["models"]) => api_models(),
         // Model-cache management (F12) surfaced for the console (F18).
         ("POST", ["models", "gc"]) => match cameo_models::gc_partials() {
@@ -458,8 +655,11 @@ fn route_api(state: &Arc<AppState>, req: &Request, rest: &[&str]) -> Response {
             api_get_session(state, id)
         }
         ("DELETE", ["sessions", id]) | ("DELETE", ["knossos", "sessions", id]) => {
+            if let Err(error) = state.sup.remove_session(id) {
+                tracing::error!(%error, "cannot persist lease release");
+                return Response::error(503, "lease storage unavailable; retry release");
+            }
             if state.board.remove(id) {
-                state.sup.release(id);
                 Response::json(200, &json!({ "removed": id }))
             } else {
                 Response::error(404, "no such session")
@@ -472,13 +672,14 @@ fn route_api(state: &Arc<AppState>, req: &Request, rest: &[&str]) -> Response {
             Some(lease) => Response::json(200, &lease),
             None => Response::error(404, "no lease for this session"),
         },
-        ("DELETE", ["sessions", id, "lease"]) => {
-            if state.sup.release(id) {
-                Response::json(200, &json!({ "released": id }))
-            } else {
-                Response::error(404, "no lease for this session")
+        ("DELETE", ["sessions", id, "lease"]) => match state.sup.release(id) {
+            Ok(true) => Response::json(200, &json!({ "released": id })),
+            Ok(false) => Response::error(404, "no lease for this session"),
+            Err(error) => {
+                tracing::error!(%error, "cannot persist lease release");
+                Response::error(503, "lease storage unavailable; retry release")
             }
-        }
+        },
         ("POST", ["knossos", "sessions", id, "vram"]) => api_ensure_session_vram(state, req, id),
         ("GET", ["knossos", "sessions", id, "vram"]) => api_session_vram(state, id),
         ("DELETE", ["knossos", "sessions", id, "vram"]) => api_release_session_vram(state, id),
@@ -488,13 +689,11 @@ fn route_api(state: &Arc<AppState>, req: &Request, rest: &[&str]) -> Response {
             Some(v) => Response::json(200, &v),
             None => Response::error(404, "no such endpoint"),
         },
-        ("DELETE", ["servers", id]) => {
-            if state.sup.stop(id) {
-                Response::json(200, &json!({ "stopped": id }))
-            } else {
-                Response::error(404, "no such endpoint")
-            }
-        }
+        ("DELETE", ["servers", id]) => match state.sup.stop(id) {
+            Ok(true) => Response::json(200, &json!({ "stopped": id })),
+            Ok(false) => Response::error(404, "no such endpoint"),
+            Err(_) => Response::error(503, "cannot persist endpoint stop; no process was stopped"),
+        },
         _ => Response::error(404, "unknown API route"),
     }
 }
@@ -526,6 +725,88 @@ fn check_farm_auth(state: &Arc<AppState>, req: &Request) -> Option<Response> {
 /// `/api`), since they read the fleet and drive nodes.
 fn route_hub(state: &Arc<AppState>, req: &Request, rest: &[&str]) -> Response {
     match (req.method.as_str(), rest) {
+        // Operator creates a short-lived one-time code, then transfers it to the
+        // physical device out of band.
+        ("POST", ["pairings"]) => {
+            if let Some(denied) = check_auth(state, req) {
+                return denied;
+            }
+            let label = serde_json::from_slice::<Value>(&req.body)
+                .ok()
+                .and_then(|value| {
+                    value
+                        .get("label")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned)
+                });
+            let Some(label) = label else {
+                return Response::error(400, "pairing request needs a string label");
+            };
+            match state.pairings.begin(&label) {
+                Ok(offer) => Response::json(201, &json!(offer)),
+                Err(e) => Response::error(429, e),
+            }
+        }
+        // A device redeems the one-time code. Validation precedes consumption so
+        // a malformed callback cannot burn a legitimate operator-created code.
+        ("POST", ["pair"]) => {
+            #[derive(Deserialize)]
+            struct PairRequest {
+                code: String,
+                registration: Registration,
+            }
+            let body: PairRequest = match serde_json::from_slice(&req.body) {
+                Ok(body) => body,
+                Err(e) => return Response::error(400, format!("invalid pairing body: {e}")),
+            };
+            if !push_address_ok(&body.registration.address) {
+                return Response::error(400, "pairing requires an allowed HTTPS callback URL");
+            }
+            let Some(callback_key) = body.registration.key.as_deref() else {
+                return Response::error(400, "paired node requires an operator callback key");
+            };
+            if let Err(e) = crate::auth::validate_secret("node callback key", callback_key) {
+                return Response::error(400, e);
+            }
+            let requested_id = if body.registration.node_id.trim().is_empty() {
+                body.registration.name.trim()
+            } else {
+                body.registration.node_id.trim()
+            };
+            if requested_id.is_empty() || requested_id.len() > 256 {
+                return Response::error(400, "pairing requires a node id or name up to 256 bytes");
+            }
+            if state.farm.contains(requested_id) {
+                return Response::error(
+                    409,
+                    "node id is already enrolled; remove it before replacement",
+                );
+            }
+            let credential = match crate::pairing::issue_device_credential() {
+                Ok(credential) => credential,
+                Err(e) => return Response::error(503, e),
+            };
+            let label = match state.pairings.consume(&body.code) {
+                Ok(label) => label,
+                Err(e) => return Response::error(401, e),
+            };
+            match state.farm.pair(
+                body.registration,
+                crate::pairing::hash_secret(&credential),
+                label,
+            ) {
+                Ok(node_id) => Response::json(
+                    201,
+                    &json!({
+                        "node_id": node_id,
+                        "device_credential": credential,
+                        "credential_displayed_once": true,
+                        "trust": "paired",
+                    }),
+                ),
+                Err(e) => Response::error(409, e),
+            }
+        }
         // A node phones home. Farm-token gated.
         ("POST", ["register"]) => {
             if let Some(denied) = check_farm_auth(state, req) {
@@ -542,15 +823,17 @@ fn route_hub(state: &Arc<AppState>, req: &Request, rest: &[&str]) -> Response {
         // A node's liveness beat. Farm-token gated. `known:false` tells the agent
         // to re-register (the hub had dropped it for silence).
         ("POST", ["heartbeat"]) => {
-            if let Some(denied) = check_farm_auth(state, req) {
-                return denied;
-            }
             let Ok(v) = serde_json::from_slice::<Value>(&req.body) else {
                 return Response::error(400, "heartbeat body must be JSON");
             };
             let Some(node_id) = v.get("node_id").and_then(Value::as_str) else {
                 return Response::error(400, "heartbeat needs a node_id");
             };
+            if !state.farm.authenticate_paired(node_id, bearer(req)) {
+                if let Some(denied) = check_farm_auth(state, req) {
+                    return denied;
+                }
+            }
             let node = v.get("node").cloned();
             let known = state.farm.heartbeat(node_id, node);
             Response::json(200, &json!({ "known": known }))
@@ -567,10 +850,12 @@ fn route_hub(state: &Arc<AppState>, req: &Request, rest: &[&str]) -> Response {
             if let Some(denied) = check_auth(state, req) {
                 return denied;
             }
-            if state.farm.remove(id) {
-                Response::json(200, &json!({ "removed": id }))
-            } else {
-                Response::error(404, "no such node")
+            match state.farm.remove(id) {
+                Ok(true) => Response::json(200, &json!({ "removed": id })),
+                Ok(false) => Response::error(404, "no such node"),
+                Err(error) => {
+                    Response::error(500, format!("could not persist revocation: {error}"))
+                }
             }
         }
         // Admin: push "serve this model" down to a node's own /api/servers — the
@@ -621,23 +906,13 @@ fn node_call(
     if !push_address_ok(&address) {
         return Err((
             400,
-            format!("refusing to push to node '{node_id}': address {address} is link-local (possible SSRF to a metadata service)"),
+            format!("refusing to push to node '{node_id}': callback {address} is not an allowed HTTPS node URL"),
         ));
     }
-    let url = format!("http://{address}{path}");
-    let mut cmd = std::process::Command::new("curl");
-    // --max-time is kept under the inbound IO_TIMEOUT (30s) so a maximally-slow
-    // node cannot consume the entire write budget of the client waiting on us.
-    cmd.args(["-s", "--fail", "--max-time", "20", "-X", method]);
-    if let Some(k) = &key {
-        cmd.arg("-H").arg(format!("Authorization: Bearer {k}"));
-    }
-    if let Some(b) = body {
-        cmd.args(["-H", "Content-Type: application/json", "-d"])
-            .arg(String::from_utf8_lossy(b).as_ref());
-    }
-    cmd.arg(&url);
-    match cmd.output() {
+    let url = format!("{}{path}", address.trim_end_matches('/'));
+    // Keep the outbound timeout under the inbound IO_TIMEOUT (30s), and keep
+    // credentials/body off the process command line (see `curl::json_request`).
+    match crate::curl::json_request(&url, method, key.as_deref(), body, 20) {
         Ok(out) if out.status.success() => Ok(out.stdout),
         Ok(out) => Err((
             502,
@@ -672,22 +947,65 @@ fn api_dispatch(state: &Arc<AppState>, req: &Request) -> Response {
         Ok(b) => b,
         Err(e) => return Response::error(400, format!("invalid dispatch body: {e}")),
     };
+    if let Err(e) = body.validate() {
+        return Response::error(400, e);
+    }
 
     let roster = state.farm.online_descriptions();
-    let decision = match crate::dispatch::decide(&roster, &body) {
+    let admission = match state.admissions.admit(&roster, &body) {
         Ok(d) => d,
         // Nothing eligible is a 409 (the fleet can't currently take the work),
         // distinct from a 400 (a malformed request).
-        Err(e) => return Response::error(409, e.to_string()),
+        Err(e) => return Response::error(e.status(), e.to_string()),
     };
+    let decision = &admission.dispatch;
 
     let choice = &decision.choice;
+    let transport_security = match choice.trust {
+        cameo_placement::TrustState::Paired => "paired_identity_https_callback_bearer",
+        cameo_placement::TrustState::LegacyToken => "legacy_farm_token_https_callback_bearer",
+        cameo_placement::TrustState::Untrusted => "untrusted",
+    };
     let base = json!({
         "node_id": decision.node_id,
         "node": choice.node_name,
         "warm": choice.warm,
+        "affinity": choice.affinity,
+        "predicted_completion_ms": choice.predicted_completion_ms,
+        "trust": choice.trust,
+        "health": choice.health,
+        "protocol_major": choice.protocol_major,
+        "transport_security": transport_security,
+        "admission": admission.lease,
+        "idempotent_replay": admission.replayed,
         "reason": choice.reason,
     });
+
+    if admission.replayed {
+        let admission_state = admission.lease.as_ref().map(|lease| lease.state);
+        return match admission_state {
+            Some(crate::dispatch::AdmissionState::Committed) => {
+                let mut v = base;
+                v["executed"] = json!(true);
+                if let Some((address, _)) = state.farm.push_target(&decision.node_id) {
+                    v["endpoint"] = json!(format!("{}/v1", address.trim_end_matches('/')));
+                }
+                v["note"] = json!("idempotent replay of committed dispatch");
+                Response::json(200, &v)
+            }
+            Some(crate::dispatch::AdmissionState::Reserved) => {
+                let mut v = base;
+                v["executed"] = json!(false);
+                v["note"] = json!("matching dispatch is already in progress");
+                Response::json(202, &v)
+            }
+            Some(crate::dispatch::AdmissionState::Failed) => Response::error(
+                409,
+                "matching request_id already failed; use a new request_id to retry",
+            ),
+            None => Response::error(409, "invalid replayed admission state"),
+        };
+    }
 
     if !body.execute {
         let mut v = base;
@@ -702,10 +1020,14 @@ fn api_dispatch(state: &Arc<AppState>, req: &Request) -> Response {
         .push_target(&decision.node_id)
         .map(|(a, _)| a)
         .unwrap_or_default();
-    let endpoint = format!("http://{address}/v1");
+    let endpoint = format!("{}/v1", address.trim_end_matches('/'));
 
     if choice.warm {
+        if let Some(lease) = admission.lease.as_ref() {
+            state.admissions.finish(&lease.id, true);
+        }
         let mut v = base;
+        v["admission"]["state"] = json!("committed");
         v["executed"] = json!(true);
         v["endpoint"] = json!(endpoint);
         v["note"] = json!("already serving; reused the resident endpoint");
@@ -726,20 +1048,29 @@ fn api_dispatch(state: &Arc<AppState>, req: &Request) -> Response {
         Some(serve_body.as_bytes()),
     ) {
         Ok(out) => {
+            if let Some(lease) = admission.lease.as_ref() {
+                state.admissions.finish(&lease.id, true);
+            }
             let served: Value = serde_json::from_slice(&out).unwrap_or(json!({}));
             let mut v = base;
+            v["admission"]["state"] = json!("committed");
             v["executed"] = json!(true);
             v["endpoint"] = json!(endpoint);
             v["serve"] = served;
             Response::json(200, &v)
         }
-        Err((status, msg)) => Response::error(
-            status,
-            format!(
-                "routed to '{}' but the serve failed: {msg}",
-                decision.node_id
-            ),
-        ),
+        Err((status, msg)) => {
+            if let Some(lease) = admission.lease.as_ref() {
+                state.admissions.finish(&lease.id, false);
+            }
+            Response::error(
+                status,
+                format!(
+                    "routed to '{}' but the serve failed: {msg}",
+                    decision.node_id
+                ),
+            )
+        }
     }
 }
 
@@ -931,6 +1262,13 @@ fn api_engines(state: &Arc<AppState>, req: &Request) -> Response {
     )
 }
 
+/// The single versioned product capability document. It intentionally includes
+/// planned and unsupported features so clients can distinguish absence from an
+/// old server or a transient failure.
+fn api_capabilities() -> Response {
+    Response::json(200, &json!(cameo_api::capability_manifest()))
+}
+
 /// The stable, non-secret description a harness needs to use a Cameo node.
 ///
 /// Keep the original fields flat: early harnesses consume `models` as a string
@@ -955,6 +1293,7 @@ fn engine_descriptor(
         "posture": posture,
         "local_harness": local_harness,
         "contract_version": "cameo-engine/v1",
+        "product_capabilities": cameo_api::capability_manifest(),
         "capabilities": {
             "chat_completions": true,
             "completions": true,
@@ -977,6 +1316,12 @@ fn engine_descriptor(
         "limits": {
             "max_request_bytes": crate::http::MAX_REQUEST_BODY_BYTES,
             "max_completion_tokens": null,
+            "rate_window_seconds": crate::rate_limit::WINDOW_SECONDS,
+            "public_requests_per_window": crate::rate_limit::PUBLIC_REQUESTS_PER_WINDOW,
+            "invalid_auth_requests_per_window": crate::rate_limit::INVALID_AUTH_REQUESTS_PER_WINDOW,
+            "inference_requests_per_window": crate::rate_limit::INFERENCE_REQUESTS_PER_WINDOW,
+            "control_requests_per_window": crate::rate_limit::CONTROL_REQUESTS_PER_WINDOW,
+            "pairing_requests_per_window": crate::rate_limit::PAIRING_REQUESTS_PER_WINDOW,
         },
         "session_api_path": "/api/sessions",
         "knossos_session_api_path": "/api/knossos/sessions",
@@ -1030,7 +1375,14 @@ fn parse_body(req: &Request) -> Result<ModelRequest, Response> {
 fn plan_for(
     state: &Arc<AppState>,
     body: &ModelRequest,
-) -> Result<(cameo_placement::PlacementPlan, cameo_placement::CommandSpec), Response> {
+) -> Result<
+    (
+        cameo_placement::PlacementPlan,
+        cameo_placement::CommandSpec,
+        ModelMeta,
+    ),
+    Response,
+> {
     let (topo, assessments) = detect(state)?;
 
     // Fold the request's backend choice over the daemon's settings, matching the
@@ -1041,9 +1393,27 @@ fn plan_for(
     }
 
     let model_path = cameo_models::resolve(&body.model).unwrap_or_else(|_| body.model.clone());
-    let model = body
+    let mut model = body
         .meta()
         .with_file_size(std::path::Path::new(&model_path));
+    if let Ok(Some(meta)) = cameo_models::inspect_gguf(std::path::Path::new(&model_path)) {
+        if body.native_context.is_none() {
+            model.native_context_len = Some(meta.native_context);
+        }
+        if body.context == 0 {
+            model.context_len = meta.native_context.saturating_mul(80) / 100;
+        }
+        if body.layers == 0 {
+            model.n_layers = meta.layers;
+        }
+        if body.kv_heads.is_none() {
+            model.kv_heads = Some(meta.kv_heads);
+        }
+        if body.head_dim.is_none() {
+            model.head_dim = Some(meta.head_dim);
+        }
+        model.clamp_to_native_context();
+    }
     let plan = make_plan(&topo, &assessments, &model, Task::Inference, &settings)
         .map_err(plan_error_response)?;
 
@@ -1058,7 +1428,7 @@ fn plan_for(
         body.port,
         api_key.as_deref(),
     );
-    Ok((plan, spec))
+    Ok((plan, spec, model))
 }
 
 fn api_plan(state: &Arc<AppState>, req: &Request) -> Response {
@@ -1067,7 +1437,7 @@ fn api_plan(state: &Arc<AppState>, req: &Request) -> Response {
         Err(resp) => return resp,
     };
     match plan_for(state, &body) {
-        Ok((plan, spec)) => Response::json(
+        Ok((plan, spec, _)) => Response::json(
             200,
             &json!({
                 "plan": plan,
@@ -1081,7 +1451,23 @@ fn api_plan(state: &Arc<AppState>, req: &Request) -> Response {
 fn api_upsert_session(state: &Arc<AppState>, req: &Request) -> Response {
     match serde_json::from_slice::<Session>(&req.body) {
         Ok(s) => {
-            let saved = state.board.upsert(s);
+            let saved = match state
+                .board
+                .upsert_durable(s, |session| state.sup.persist_session(session))
+            {
+                Ok(saved) => saved,
+                Err(error) => {
+                    tracing::error!(%error, "cannot persist session identity");
+                    return Response::error(503, "session storage unavailable; retry heartbeat");
+                }
+            };
+            if let Err(error) = state.sup.renew_lease(&saved.id) {
+                tracing::error!(%error, "cannot persist lease heartbeat");
+                return Response::error(
+                    503,
+                    "lease heartbeat storage unavailable; retry heartbeat",
+                );
+            }
             Response::json(200, &serde_json::to_value(saved).unwrap_or(json!({})))
         }
         Err(e) => Response::error(400, format!("invalid session: {e}")),
@@ -1113,6 +1499,10 @@ fn api_lease_session(state: &Arc<AppState>, req: &Request, session_id: &str) -> 
     };
     match state.sup.lease(session_id, &body.model) {
         Ok(lease) => Response::json(201, &lease),
+        Err(LeaseError::Persistence(error)) => {
+            tracing::error!(%error, "cannot persist lease");
+            Response::error(503, "lease storage unavailable; retry claim")
+        }
         Err(LeaseError::Unavailable(model)) => Response::error(
             409,
             format!("model '{model}' is unavailable; start it before claiming a lease"),
@@ -1137,7 +1527,12 @@ fn api_ensure_session_vram(state: &Arc<AppState>, req: &Request, session_id: &st
 
     // Reuse is safer and faster than provisioning: neither VRAM arbitration nor
     // a second model process is involved.
-    if let Ok(lease) = state.sup.lease(session_id, &model) {
+    let existing_claim = state.sup.lease(session_id, &model);
+    if let Err(LeaseError::Persistence(error)) = &existing_claim {
+        tracing::error!(%error, "cannot persist lease");
+        return Response::error(503, "lease storage unavailable; retry claim");
+    }
+    if let Ok(lease) = existing_claim {
         let endpoint_id = lease["endpoint_id"]
             .as_str()
             .unwrap_or_default()
@@ -1218,6 +1613,10 @@ fn api_ensure_session_vram(state: &Arc<AppState>, req: &Request, session_id: &st
                 &json!({ "session": session, "endpoint": endpoint, "lease": lease, "reused": false }),
             )
         }
+        Err(LeaseError::Persistence(error)) => {
+            tracing::error!(%error, "cannot persist lease");
+            Response::error(503, "lease storage unavailable; retry claim")
+        }
         Err(LeaseError::Unavailable(_)) => {
             state.board.record_vram(
                 session_id,
@@ -1252,7 +1651,10 @@ fn api_release_session_vram(state: &Arc<AppState>, session_id: &str) -> Response
     if state.board.get(session_id).is_none() {
         return Response::error(404, "no such session");
     }
-    state.sup.release(session_id);
+    if let Err(error) = state.sup.release(session_id) {
+        tracing::error!(%error, "cannot persist lease release");
+        return Response::error(503, "lease storage unavailable; retry release");
+    }
     let session = state.board.record_vram(
         session_id,
         VramCapability {
@@ -1269,7 +1671,46 @@ fn api_release_session_vram(state: &Arc<AppState>, session_id: &str) -> Response
 
 fn release_stale_session_leases(state: &Arc<AppState>) {
     for session_id in state.board.stale_ids() {
-        state.sup.release(&session_id);
+        if let Err(error) = state.sup.release(&session_id) {
+            tracing::error!(%error, "cannot release stale session lease");
+        }
+    }
+}
+
+/// Replan persisted requests against current hardware, files and credentials.
+/// Never replay saved command lines, live lease readiness or PIDs, and never evict on recovery.
+pub fn recover_endpoints(state: &Arc<AppState>) {
+    for (id, intent) in state.sup.recovery_intents() {
+        let attempts = intent
+            .get("_recovery_attempts")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        if attempts >= 5 {
+            tracing::warn!(%id, "recovery retry budget exhausted; explicit operator start required");
+            continue;
+        }
+        let body: ModelRequest = match serde_json::from_value(intent) {
+            Ok(body) => body,
+            Err(_) => {
+                tracing::error!(%id, "invalid persisted endpoint configuration");
+                continue;
+            }
+        };
+        let host = match body.host.as_str() {
+            "0.0.0.0" => "127.0.0.1",
+            "::" => "::1",
+            other => other,
+        };
+        // An occupied address is ambiguous: never adopt/kill an unknown process
+        // or announce it as healthy based only on its port.
+        if std::net::TcpListener::bind((host, body.port)).is_err() {
+            tracing::warn!(%id, "recovery refused: endpoint address is occupied or unavailable");
+            continue;
+        }
+        let response = start_server_inner(state, body, false, attempts + 1);
+        if response.status >= 300 {
+            tracing::warn!(%id, status = response.status, "endpoint recovery requires operator action");
+        }
     }
 }
 
@@ -1286,6 +1727,10 @@ fn api_start_server(state: &Arc<AppState>, req: &Request) -> Response {
 /// `CAMEO_AUTOSTART_MODEL` selects the alias (`none` / `0` / empty disables).
 /// Default is `qwen2.5-0.5b`. No-ops when the GGUF is not on disk.
 pub fn maybe_autostart(state: &Arc<AppState>) {
+    // An operator's durable stop must not be undone by starter defaults.
+    if state.sup.has_history() {
+        return;
+    }
     let model = match std::env::var("CAMEO_AUTOSTART_MODEL") {
         Ok(s) if s.is_empty() || s == "none" || s == "0" => return,
         Ok(s) => s,
@@ -1297,12 +1742,25 @@ pub fn maybe_autostart(state: &Arc<AppState>) {
     }
     let body = ModelRequest {
         model: model.clone(),
+        model_sha256: None,
         host: default_host(),
         port: default_port(),
         params: cameo_models::params_b_for(&model),
         quant: default_quant(),
         moe: false,
         context: default_context(),
+        native_context: None,
+        slots: default_slots(),
+        kv_cache: default_kv_cache(),
+        kv_heads: None,
+        head_dim: None,
+        batch: default_batch(),
+        ubatch: default_ubatch(),
+        flash_attention: default_true(),
+        cache_reuse: default_cache_reuse(),
+        cache_ram_mib: 0,
+        metrics: default_true(),
+        slot_save_path: None,
         layers: 0,
         backend: None,
     };
@@ -1319,6 +1777,15 @@ fn start_server_with_eviction(
     body: ModelRequest,
     allow_evict: bool,
 ) -> Response {
+    start_server_inner(state, body, allow_evict, 0)
+}
+
+fn start_server_inner(
+    state: &Arc<AppState>,
+    mut body: ModelRequest,
+    allow_evict: bool,
+    recovery_attempts: u64,
+) -> Response {
     // Same safety rule as `cameo serve`: an unauthenticated endpoint bound to a
     // routable address publishes the GPU, so that combination is refused.
     if !is_loopback(&body.host) && state.settings.serve_api_key.is_none() {
@@ -1333,11 +1800,35 @@ fn start_server_with_eviction(
     }
 
     // A real spawn needs the model on disk; name the fix if it is absent.
-    if let Err(e) = cameo_models::resolve(&body.model) {
-        return Response::error(400, e.to_string());
+    let model_path = match cameo_models::resolve(&body.model) {
+        Ok(path) => path,
+        Err(error) => return Response::error(400, error.to_string()),
+    };
+    let digest = match cameo_models::file_sha256(std::path::Path::new(&model_path)) {
+        Ok(digest) => digest,
+        Err(_) => {
+            return Response::error(
+                400,
+                "model integrity check failed; verify the model file before starting",
+            )
+        }
+    };
+    let curated = cameo_models::aliases()
+        .into_iter()
+        .find(|alias| alias.name == body.model);
+    if body
+        .model_sha256
+        .as_ref()
+        .is_some_and(|expected| !expected.eq_ignore_ascii_case(&digest))
+        || curated
+            .as_ref()
+            .is_some_and(|alias| !alias.sha256.eq_ignore_ascii_case(&digest))
+    {
+        return Response::error(409, "model digest differs from the pinned artifact; restore the verified model before starting");
     }
+    body.model_sha256 = Some(digest);
 
-    let (plan, spec) = match plan_for(state, &body) {
+    let (plan, spec, model_meta) = match plan_for(state, &body) {
         Ok(pair) => pair,
         Err(resp) => return resp,
     };
@@ -1357,27 +1848,45 @@ fn start_server_with_eviction(
         let measured = resolved
             .as_deref()
             .map(std::path::Path::new)
-            .map(|path| body.meta().with_file_size(path).total_bytes())
-            .unwrap_or_else(|| body.meta().total_bytes());
+            .map(|path| model_meta.clone().with_file_size(path).total_bytes())
+            .unwrap_or_else(|| model_meta.total_bytes());
         measured.min(vram_budget)
     } else {
         0
     };
 
+    let mut intent = serde_json::to_value(&body).expect("validated model request serializes");
+    intent["_recovery_attempts"] = json!(recovery_attempts);
     let start = StartRequest {
+        intent,
         model: body.model.clone(),
         host: body.host.clone(),
         port: body.port,
         backend: format!("{:?}", plan.backend),
         fits_vram: plan.fits_in_vram,
         notes: plan.notes.clone(),
-        context_tokens: body.context,
+        context_tokens: model_meta.context_len,
         command: spec,
         vram_need,
         vram_budget,
         allow_evict,
     };
     match state.sup.start(start) {
+        Err(StartError::ShuttingDown) => Response::error(503, "daemon is shutting down"),
+        Err(StartError::Termination(error)) => {
+            tracing::error!(%error, "endpoint eviction could not confirm exit");
+            Response::error(
+                503,
+                "previous endpoint has not confirmed exit; inspect servers before retrying",
+            )
+        }
+        Err(StartError::Persistence(error)) => {
+            tracing::error!(%error, "endpoint intent persistence failed");
+            Response::error(
+                503,
+                "cannot persist endpoint intent; no processes were changed",
+            )
+        }
         Ok(view) => Response::json(201, &view),
         Err(StartError::PortInUse(id)) => {
             Response::error(409, format!("endpoint {id} is already running"))
@@ -1407,7 +1916,7 @@ fn is_loopback(host: &str) -> bool {
             .unwrap_or(false)
 }
 
-/// The host part of a `host:port` (or `[v6]:port`) address.
+/// The host part of a `host:port` (or `[v6]:port`) authority.
 fn host_of(address: &str) -> &str {
     if let Some(rest) = address.strip_prefix('[') {
         return rest.split(']').next().unwrap_or(address);
@@ -1418,6 +1927,21 @@ fn host_of(address: &str) -> &str {
     }
 }
 
+/// Extract the authority from the HTTPS callback base URL. Callback URLs may
+/// have a single trailing slash but no credentials, path, query, or fragment.
+fn callback_authority(address: &str) -> Option<&str> {
+    let authority = address.strip_prefix("https://")?.trim_end_matches('/');
+    if authority.is_empty()
+        || authority.contains('/')
+        || authority.contains('@')
+        || authority.contains('?')
+        || authority.contains('#')
+    {
+        return None;
+    }
+    Some(authority)
+}
+
 /// Whether the hub may dial a node's self-declared callback address. Nodes live on
 /// the operator's LAN/VPN (or loopback when co-located), so those are fine; a
 /// literal link-local address is refused because that range hosts the cloud
@@ -1425,7 +1949,10 @@ fn host_of(address: &str) -> &str {
 /// must not be able to point the hub at instance credentials. Hostnames are left
 /// to the operator's DNS, so this blocks the specific literal-IP SSRF, not LAN use.
 fn push_address_ok(address: &str) -> bool {
-    match host_of(address).parse::<std::net::IpAddr>() {
+    let Some(authority) = callback_authority(address) else {
+        return false;
+    };
+    match host_of(authority).parse::<std::net::IpAddr>() {
         Ok(std::net::IpAddr::V4(ip)) => !(ip.is_link_local() || ip.is_unspecified()),
         Ok(std::net::IpAddr::V6(ip)) => {
             !(ip.is_unspecified() || (ip.segments()[0] & 0xffc0) == 0xfe80)
@@ -1457,6 +1984,7 @@ mod tests {
 
     fn contract_state() -> Arc<AppState> {
         Arc::new(AppState {
+            drain: crate::drain::Drain::default(),
             sup: Supervisor::new(),
             captures: Captures::default(),
             settings: Settings::default(),
@@ -1476,7 +2004,10 @@ mod tests {
             detect_cache: Mutex::new(None),
             board: Board::new(),
             farm: Farm::new(),
-            hub_enabled: false,
+            admissions: crate::dispatch::AdmissionBook::new(),
+            pairings: crate::pairing::PairingStore::new(),
+            rate_limits: crate::rate_limit::RateLimiter::new(),
+            hub_enabled: true,
             farm_token: None,
             open_inference: false,
         })
@@ -1494,11 +2025,103 @@ mod tests {
             headers,
             body: serde_json::to_vec(&body).unwrap(),
             from_unix: false,
+            peer_ip: Some("127.0.0.1".parse().unwrap()),
         }
     }
 
     fn response_json(response: Response) -> Value {
         serde_json::from_slice(&response.body).expect("JSON response")
+    }
+
+    #[test]
+    fn drain_is_operator_controlled_and_keeps_health_available() {
+        let state = contract_state();
+        assert_eq!(
+            route(
+                &state,
+                &contract_request("POST", "/api/drain", Some("consumer-key"), json!({}))
+            )
+            .status,
+            401
+        );
+        assert!(!state.drain.draining());
+        assert_eq!(
+            route(
+                &state,
+                &contract_request(
+                    "POST",
+                    "/api/drain",
+                    Some("operator-key"),
+                    json!({"deadline_seconds":0})
+                )
+            )
+            .status,
+            400
+        );
+        assert_eq!(
+            route(
+                &state,
+                &contract_request("POST", "/api/drain", Some("operator-key"), json!({}))
+            )
+            .status,
+            202
+        );
+        let inference = route(
+            &state,
+            &contract_request(
+                "POST",
+                "/v1/chat/completions",
+                Some("consumer-key"),
+                json!({"model":"fixture"}),
+            ),
+        );
+        assert_eq!(inference.status, 503);
+        assert_eq!(response_json(inference)["error"]["code"], "node_draining");
+        assert_eq!(
+            route(
+                &state,
+                &contract_request("GET", "/healthz", None, json!({}))
+            )
+            .status,
+            200
+        );
+        assert_eq!(
+            route(&state, &contract_request("GET", "/readyz", None, json!({}))).status,
+            503
+        );
+        assert_eq!(
+            route(
+                &state,
+                &contract_request("DELETE", "/api/drain", Some("operator-key"), json!({}))
+            )
+            .status,
+            200
+        );
+        assert!(!state.drain.draining());
+    }
+
+    #[test]
+    fn changed_pinned_model_is_rejected_before_placement_or_spawn() {
+        let state = contract_state();
+        let path =
+            std::env::temp_dir().join(format!("cameo-pinned-model-{}.gguf", std::process::id()));
+        std::fs::write(&path, b"changed model bytes").unwrap();
+        let response = route(
+            &state,
+            &contract_request(
+                "POST",
+                "/api/servers",
+                Some("operator-key"),
+                json!({ "model": path.to_string_lossy(), "model_sha256": "00".repeat(32) }),
+            ),
+        );
+        std::fs::remove_file(path).unwrap();
+        assert_eq!(response.status, 409);
+        assert!(response_json(response)["error"]
+            .as_str()
+            .unwrap()
+            .contains("digest"));
+        assert!(state.sup.list().is_empty());
     }
 
     #[test]
@@ -1512,16 +2135,19 @@ mod tests {
     #[test]
     fn push_address_rejects_link_local_allows_lan_and_hosts() {
         // Link-local / metadata → refused.
-        assert!(!push_address_ok("169.254.169.254:80"));
-        assert!(!push_address_ok("169.254.0.1:9090"));
-        assert!(!push_address_ok("[fe80::1]:9090"));
-        assert!(!push_address_ok("0.0.0.0:9090"));
+        assert!(!push_address_ok("https://169.254.169.254:80"));
+        assert!(!push_address_ok("https://169.254.0.1:9090"));
+        assert!(!push_address_ok("https://[fe80::1]:9090"));
+        assert!(!push_address_ok("https://0.0.0.0:9090"));
+        assert!(!push_address_ok("http://10.0.0.2:9090"));
+        assert!(!push_address_ok("https://user@box.local:9090"));
+        assert!(!push_address_ok("https://box.local:9090/admin"));
         // LAN, loopback (co-located self-host), public, and hostnames → allowed.
-        assert!(push_address_ok("10.0.0.2:9090"));
-        assert!(push_address_ok("192.168.1.5:9090"));
-        assert!(push_address_ok("127.0.0.1:9090"));
-        assert!(push_address_ok("box.local:9090"));
-        assert!(push_address_ok("[2001:db8::1]:9090"));
+        assert!(push_address_ok("https://10.0.0.2:9090"));
+        assert!(push_address_ok("https://192.168.1.5:9090"));
+        assert!(push_address_ok("https://127.0.0.1:9090"));
+        assert!(push_address_ok("https://box.local:9090"));
+        assert!(push_address_ok("https://[2001:db8::1]:9090/"));
     }
 
     #[test]
@@ -1541,10 +2167,24 @@ mod tests {
         assert_eq!(descriptor["openai_base_path"], "/v1");
         assert_eq!(descriptor["models"], json!(["qwen2.5-coder-7b"]));
         assert_eq!(descriptor["contract_version"], "cameo-engine/v1");
+        assert_eq!(
+            descriptor["product_capabilities"]["contract_version"],
+            "cameo-capabilities/v1"
+        );
+        assert_eq!(
+            descriptor["product_capabilities"]["mesh"]["mutual_tls"]["available"],
+            false
+        );
         assert_eq!(descriptor["engine_state"], "ready");
         assert_eq!(descriptor["capabilities"]["streaming"], true);
         assert_eq!(descriptor["capabilities"]["tool_calls"]["native"], false);
         assert_eq!(descriptor["limits"]["max_request_bytes"], 1024 * 1024);
+        assert_eq!(descriptor["limits"]["rate_window_seconds"], 60);
+        assert_eq!(descriptor["limits"]["pairing_requests_per_window"], 10);
+        assert_eq!(descriptor["limits"]["invalid_auth_requests_per_window"], 30);
+        assert_eq!(descriptor["limits"]["inference_requests_per_window"], 600);
+        assert_eq!(descriptor["limits"]["control_requests_per_window"], 300);
+        assert_eq!(descriptor["limits"]["public_requests_per_window"], 300);
         assert_eq!(descriptor["model_profiles"][0]["context_tokens"], 32768);
         assert_eq!(descriptor["session_api_path"], "/api/sessions");
         assert_eq!(descriptor["operator_api_path"], "/api/servers");
@@ -1575,6 +2215,18 @@ mod tests {
             .iter()
             .all(|profile| profile.get("vram_bytes").is_none()));
 
+        let capabilities = route(
+            &state,
+            &contract_request("GET", "/api/capabilities", Some("consumer-key"), json!({})),
+        );
+        assert_eq!(capabilities.status, 200);
+        let capabilities = response_json(capabilities);
+        assert_eq!(capabilities["contract_version"], "cameo-capabilities/v1");
+        assert_eq!(
+            capabilities["mesh"]["enrollment_transport"],
+            "paired_bearer_or_legacy_farm_token"
+        );
+
         let inference = route(
             &state,
             &contract_request(
@@ -1585,6 +2237,20 @@ mod tests {
             ),
         );
         assert_eq!(inference.status, 404, "consumer auth reaches model routing");
+
+        let undeclared = route(
+            &state,
+            &contract_request(
+                "POST",
+                "/v1/internal/admin",
+                Some("consumer-key"),
+                json!({ "model": "not-running" }),
+            ),
+        );
+        assert_eq!(
+            undeclared.status, 404,
+            "the gateway never forwards undeclared backend paths"
+        );
 
         let denied = route(
             &state,
@@ -1605,6 +2271,136 @@ mod tests {
             knossos_vram.status, 401,
             "consumer cannot reserve or alter VRAM through Knossos"
         );
+    }
+
+    #[test]
+    fn gateway_rejects_unadvertised_openai_features_before_routing() {
+        let state = contract_state();
+        let tools = route(
+            &state,
+            &contract_request(
+                "POST",
+                "/v1/chat/completions",
+                Some("consumer-key"),
+                json!({
+                    "model": "not-running",
+                    "messages": [{"role":"user","content":"hi"}],
+                    "tools": [{"type":"function","function":{"name":"x"}}]
+                }),
+            ),
+        );
+        assert_eq!(
+            tools.status, 400,
+            "unsupported features fail before 404 routing"
+        );
+        assert_eq!(
+            response_json(tools)["error"]["code"],
+            "unsupported_parameter"
+        );
+        let logprobs = route(
+            &state,
+            &contract_request(
+                "POST",
+                "/v1/chat/completions",
+                Some("consumer-key"),
+                json!({"model":"not-running","logprobs":true}),
+            ),
+        );
+        assert_eq!(logprobs.status, 400);
+        let ordinary = route(
+            &state,
+            &contract_request(
+                "POST",
+                "/v1/chat/completions",
+                Some("consumer-key"),
+                json!({"model":"not-running","messages":[]}),
+            ),
+        );
+        assert_eq!(
+            ordinary.status, 404,
+            "supported bodies still reach model routing"
+        );
+    }
+
+    #[test]
+    fn repeated_invalid_credentials_are_rate_limited_per_client() {
+        let state = contract_state();
+        let request = contract_request("GET", "/api/node", Some("wrong-key"), json!({}));
+        for _ in 0..30 {
+            assert_eq!(route(&state, &request).status, 401);
+        }
+        let limited = route(&state, &request);
+        assert_eq!(limited.status, 429);
+        assert!(limited
+            .extra_headers
+            .iter()
+            .any(|(name, value)| name == "Retry-After" && value == "60"));
+    }
+
+    #[test]
+    fn operator_pairing_code_enrolls_one_device_and_issues_one_credential() {
+        let state = contract_state();
+        let offer = route(
+            &state,
+            &contract_request(
+                "POST",
+                "/hub/pairings",
+                Some("operator-key"),
+                json!({ "label": "office laptop" }),
+            ),
+        );
+        assert_eq!(offer.status, 201);
+        let code = response_json(offer)["code"].as_str().unwrap().to_string();
+
+        let registration = json!({
+            "node_id": "laptop-a",
+            "name": "laptop-a",
+            "address": "https://10.0.0.2:9090",
+            "key": "node-operator-key",
+            "node": null
+        });
+        let paired = route(
+            &state,
+            &contract_request(
+                "POST",
+                "/hub/pair",
+                None,
+                json!({ "code": code, "registration": registration }),
+            ),
+        );
+        assert_eq!(paired.status, 201);
+        let paired = response_json(paired);
+        let credential = paired["device_credential"].as_str().unwrap();
+        assert_eq!(credential.len(), 64);
+        assert_eq!(paired["trust"], "paired");
+
+        let heartbeat = route(
+            &state,
+            &contract_request(
+                "POST",
+                "/hub/heartbeat",
+                Some(credential),
+                json!({ "node_id": "laptop-a", "node": null }),
+            ),
+        );
+        assert_eq!(heartbeat.status, 200);
+
+        let replay = route(
+            &state,
+            &contract_request(
+                "POST",
+                "/hub/pair",
+                None,
+                json!({
+                    "code": code,
+                    "registration": {
+                        "node_id": "laptop-b", "name": "laptop-b",
+                        "address": "https://10.0.0.3:9090", "key": "another-node-key"
+                    }
+                }),
+            ),
+        );
+        assert_eq!(replay.status, 401, "pairing codes are single use");
     }
 
     #[test]

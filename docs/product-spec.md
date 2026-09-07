@@ -11,7 +11,7 @@ One appliance, three layers. The **deck** is a fourth thing that only *looks*: i
 1. **Default brain = whatever is hooked up.** Prefer the model already resident on a Cameo node (Ollama / `llama-server` behind `/v1`). GUI on that node can load/unload a GGUF. Cloud models are first-class; save/pin them. No hidden default 27B.
 2. **Kernel-level = privileged Cameo socket only.** Knossos the *host* talks to `/run/cameo/cameo.sock` on the local box. The model never gets syscalls, `/dev/kfd`, or `insmod`. No `cameo.ko` in v1.
 3. **Deck v1 = tree + local git + GitHub remotes**, plus **compute** from Cameo plugins.
-4. **Inference is a fleet.** Any machine that can run `cameod` is a node (bare metal, Proxmox VM, LXC with GPU passthrough). Each node has a dashboard at **that machine’s IP**. Multi-node GPUs are in-scope; multi-login humans can wait.
+4. **Inference can become a Cameo Mesh.** A machine that can run `cameod` may join as a Cameo Link node (bare metal, Proxmox VM, or LXC with GPU passthrough). Each node keeps its own dashboard. Mesh routes whole requests; cross-node model sharding is not implemented.
 5. **The deck is a commander, not a plugin host.** v1 hardcodes two layers (Cameo HTTP compute, Knossos sessions). No plugin ABI until a third brain exists. **LAN control is `cameod` HTTP only.** The host-only socket `/run/cameo/cameo.sock` is the co-located operator seam (self-host posture); it is not a second network API.
 
 ---
@@ -30,7 +30,7 @@ Existing code this sits on:
 - `cameod` already binds `:9090`, serves a console at `/`, `GET /api/node`, `GET /api/engines`, `GET /api/gpus`, `/metrics`, load/unload via `/api/servers`.
 - `cameo fleet` already polls a static node list and rebuilds `Cluster`.
 - Knossos already has an OpenAI-compat client that can point at `http://<node>:9090/v1`.
-- Gap: git-on-the-map is later. `moe-harness` plans userspace expert offload (placement calls it). The dashboard is one fleet map (this node + hub roster). `resolve_agents` reuses one serve per (node, GGUF).
+- Gap: git-on-the-map is later. `moe-harness` plans userspace expert offload (placement calls it). The dashboard is one Mesh map (this node + hub roster). `resolve_agents` reuses one serve per (node, GGUF).
 
 ---
 
@@ -47,7 +47,7 @@ One Knossos process. Modes, not apps.
 
 Promote ask → preview → write with a click. Never silently demote.
 
-Engine is independent of mode. Ask can be the resident model on this node. Write can be a saved Gemini pin, or a model on another Cameo node in the fleet.
+Engine is independent of mode. Ask can be the resident model on this node. Write can be a saved cloud pin, or a model on another Cameo Link node in the Mesh.
 
 ---
 
@@ -61,12 +61,12 @@ Install `cameod` on:
 
 Each node:
 
-- Binds the console to **`0.0.0.0:9090`** with `CAMEO_CONSOLE_KEY` (already refused without a key).
-- Dashboard: `http://<that-machine-ip>:9090/` — cards, VRAM, loaded models, start/stop serve. This is **local to the node**, not a cloud control plane.
+- Binds the HTTP console to **`127.0.0.1:9090`** with `CAMEO_CONSOLE_KEY`.
+- Dashboard: reach `http://127.0.0.1:9090/` through SSH/VPN, or expose it behind a TLS reverse proxy. This is **local to the node**, not a cloud control plane.
 - Advertises itself: `GET /api/node` (topology, tiers, live endpoints), `GET /api/engines` (what a harness may call), `/metrics`.
-- Serves inference: `http://<that-machine-ip>:9090/v1/chat/completions`.
+- Serves inference through the same tunnel or TLS endpoint at `/v1/chat/completions`.
 
-The fleet is a **list of those IPs** (today: `cameo fleet --node a:9090 --node b:9090`). Later: Proxmox API or mDNS to discover guests tagged `cameo`. No central scheduler in v1 — the same `place_on_fleet` brain picks a node; you start the serve on that node.
+A static inventory remains available as a **list of node IPs** (`cameo fleet --node a:9090 --node b:9090`). Cameo Mesh adds preview hub-side request scheduling over paired Cameo Link nodes. Proxmox API or mDNS discovery remains future work.
 
 Proxmox is a place Cameo *runs*, not a product Cameo becomes. We do not reimplement the Proxmox UI.
 

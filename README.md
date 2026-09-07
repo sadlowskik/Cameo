@@ -2,11 +2,11 @@
 
 # Cameo
 
-**Any AMD card. Serves LLMs.**
+**Your AMD card. Serves LLMs.**
 
-An Arch-based OS that turns any AMD GPU into an OpenAI-compatible endpoint.
+An Arch-based OS that turns supported AMD GPUs into OpenAI-compatible endpoints.
 Download it, plug it in, set an account, play — no internet after that. Network
-is for extra models, fleets, and opening the console from outside the house.
+is for extra models, Cameo Mesh, and opening the console from outside the house.
 
 [![License](https://img.shields.io/badge/license-Apache--2.0-FF7A1A)](LICENSE)
 [![Status](https://img.shields.io/badge/status-beta%20(pre--v1)-FFD08A)](#status)
@@ -21,6 +21,11 @@ Cameo meets your hardware where it is. **Vulkan is the universal baseline** — 
 runs on *any* AMD card. **ROCm is an optional accelerator** that only ever makes the
 supported cards faster; nothing requires it. Cameo detects the card, classifies what
 it can do, and serves.
+
+Hardware coverage is a product goal, not a certification claim: actual support
+depends on the card, driver, Vulkan implementation, model, and memory available.
+Use `cameo gpu-status` and the hardware validation runbook before treating a
+particular machine as release-qualified.
 
 - **Runs on the card you already have.** A gfx803 RX 580 from 2017 serves inference
   over Vulkan. A 7900 XTX or MI210 trains and serves over ROCm. Same tool.
@@ -47,13 +52,13 @@ After that the machine does not need the internet. Full walkthrough:
 
 Flash an `.iso` from [Cameo v0.5.0](https://github.com/sadlowskik/Cameo/releases/tag/v0.5.0)
 (not the Source code zip). **Universal** includes Vulkan and ROCm; **lite** is the
-smaller Vulkan-only image. Both editions also include the Rust-native Daedalus
+smaller Vulkan-only image. Both editions also include the Rust-native Knossos
 agentic harness. Standalone Linux, Windows, and Apple silicon builds are published
 from the [Knossos Harness releases](https://github.com/sadlowskik/Knossos-Harness/releases/tag/v0.1.0).
 Rufus **DD Image mode**, Etcher, or `dd`. **Disable Secure Boot** if the stick is
 ignored. Boot **Install Cameo to disk**. Log in, open `http://cameo.local:9090`,
 press **Start qwen2.5-0.5b and chat**. No Wi-Fi for that. Network is later: extra
-models, or attaching this box as a fleet node (`iwctl` on that node only). See
+models, or attaching this box to Cameo Mesh (`iwctl` on that node only). See
 [quickstart](docs/quickstart.md).
 
 Building the ISO yourself still needs an Arch host:
@@ -66,7 +71,8 @@ sudo dd if=archiso/out/cameo-*.iso of=/dev/sdX bs=4M status=progress oflag=sync
 
 ### When you want a network
 
-`cameo pull` for extra models. `cameo fleet` to front several boxes. The same
+`cameo pull` gets extra models. Cameo Link pairs boxes into Cameo Mesh; the
+legacy `cameo fleet` command remains available for static node lists. The same
 `:9090` console, forwarded, if you want it from outside the house.
 
 ### Container (developers)
@@ -87,6 +93,8 @@ installed the ISO, ran the container, or built from source.
 
 ```bash
 cameo gpu-status                 # detected GPU(s), topology, tier, chosen backend
+cameo recommend --workload agent # choose a checksum-pinned model for this hardware
+cameo setup --workload agent     # preflight, verify, configure, serve on loopback
 cameo serve qwen2.5-0.5b         # starter model, already on the image (no network)
 cameo pull tinyllama             # optional — fetch a model when you have a network
 cameo run   tinyllama            # one-shot inference
@@ -94,7 +102,7 @@ cameo plan  qwen2.5-32b          # show the placement plan without running it
 cameo train mistral-7b           # needs torchrun (not on the ISO/container)
 cameo quantize model.gguf Q4_K_M # quantize to a target level
 cameo model ls                   # list the local model cache
-cameo fleet place qwen2.5-32b    # front several cameod nodes as one fleet
+cameo fleet place qwen2.5-32b    # preview placement across a static node list
 cameo install-plan               # packages this card would use (does not install)
 ```
 
@@ -130,11 +138,14 @@ Cameo never silently fails on unsupported hardware. It classifies the card and s
 
 Check yours with `cameo gpu-status`.
 
-## One card → a cluster
+## One card → Cameo Mesh
 
-The same two commands run on 1, 4, or 9 cards. A single old Radeon, a multi-GPU box, or
-a small cluster: `cameo` detects, pulls, and serves; the placement brain picks a node,
-and `cameo fleet` fronts several `cameod` nodes as one surface.
+Cameo Mesh fronts several `cameod` machines as one request-level pool. Cameo Link
+phones home from each node, paired with a single-use code and a per-node identity;
+the scheduler places each complete request on one healthy, trusted node. It does
+not pool VRAM or shard one inference across LAN machines. See the
+[Cameo Mesh guide](docs/cameo-mesh.md) for pairing, strict dispatch, durability,
+and the current mTLS limitation.
 
 ## Building from source
 
@@ -170,6 +181,11 @@ docs/                 architecture, tiers, API, definition-of-done
 
 ## Documentation
 
+- [Production roadmap audit](docs/production-audit.md) — implemented work, fixes, and remaining release blockers.
+- [Generated capabilities](docs/capabilities.md) — shared manifest; also available with `cameo capabilities`.
+
+- [Cameo Mesh](docs/cameo-mesh.md) - pair nodes and dispatch whole requests securely.
+
 - [Quickstart](docs/quickstart.md) — download, plug in, account, play offline.
 - [HTTP API reference](docs/api-reference.md) — the `cameod` control-plane surface.
 - [Harness integration](docs/harness-integration.md) — point Knossos at Cameo.
@@ -184,7 +200,9 @@ override precedence, the placement engine, the model cache, the CLI, the `cameod
 console and its versioned API, the container, and the ISO profile. Vulkan and ROCm
 execution is validated on a cloud AMD instance through the automated
 [Phase 1 runbook](scripts/phase1/RUNBOOK.md). MoE expert offloading (Phase 3) and
-multi-node networking / Kubernetes (v2) are in progress. See
+certificate-bound mesh identity, distributed model sharding, and Kubernetes are
+still in progress. Request-level Cameo Mesh scheduling and pairing are preview.
+See
 [`CAMEO_PROJECT_PLAN.md`](CAMEO_PROJECT_PLAN.md) for the full plan.
 
 ## License

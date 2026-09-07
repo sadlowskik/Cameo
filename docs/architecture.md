@@ -219,11 +219,15 @@ gate is skipped only when no key of that class exists (loopback dev).
 | `/v1/models`, `/v1/*` | GET/POST | consumer+ | OpenAI-compatible gateway, routed by body `model` to a supervised endpoint (`app.rs:256`) |
 | `/api/gpus` `/api/node` `/api/models` | GET | operator | detection report, self-description, model catalog |
 | `/api/engines` | GET | consumer+ | harness engine descriptor (resident models); load still needs operator |
+| `/api/capabilities` | GET | consumer+ | canonical typed product capability manifest |
 | `/api/plan` | POST | operator | placement preview |
 | `/api/servers` (+`{id}`) | GET/POST/DELETE | operator | endpoint lifecycle |
 | `/api/sessions` (+`{id}`) | GET/POST/DELETE | operator | Knossos session board |
 | `/api/models/gc`, `/api/models/{name}` | POST/DELETE | operator | model-cache management |
-| `/hub/register` `/hub/heartbeat` | POST | farm token | node enrollment / liveness (hub mode only) |
+| `/hub/pairings` | POST | operator | create one ten-minute, single-use pairing code |
+| `/hub/pair` | POST | pairing code | redeem for a per-node credential |
+| `/hub/register` | POST | legacy farm token | explicit migration-only enrollment |
+| `/hub/heartbeat` | POST | paired credential or legacy farm token | authenticated liveness and capability refresh |
 | `/hub/nodes` (+`{id}`) | GET/DELETE | operator | fleet roster / forget a node |
 | `/hub/nodes/{id}/servers` (+`{sid}`) | POST/DELETE | operator | push serve/stop down to a node's own `/api` |
 | `/hub/dispatch` | POST | operator | route a task across the fleet, advise or serve |
@@ -248,9 +252,8 @@ The daemon separates **who may use a model** from **who may manipulate the GPU**
 - `Posture` (`auth.rs:43`): `SelfHost` (default) vs `MultiTenant`. `allows_local_harness`
   (`auth.rs:64`) is `true` only for `SelfHost` — the posture that would grant a
   co-located harness keyless operator power over the privileged local socket.
-  **Note:** as of this pass that privileged local socket is *not present in this tree* —
-  `Posture` is consulted (surfaced in `/api/engines`, enforced at startup) but the
-  keyless-local-operator grant it describes is not yet wired to a route. See Drift.
+  In self-host posture the daemon binds an owner-only Unix socket for a co-located
+  harness. Multi-tenant posture does not bind it; LAN HTTP remains keyed.
 - `load_keys_file` (`auth.rs:134`): parses `[{key, role, label}]` JSON; roles
   `operator|admin` and `consumer|user|inference`; rejects empty keys and unknown roles.
 
@@ -261,7 +264,8 @@ checks then run before binding:
 
 - non-loopback bind with no operator key → refuse (`main.rs:198`);
 - `multi-tenant` posture with no operator key → refuse (`main.rs:208`);
-- `--hub` with no `--farm-token` → refuse (`main.rs:217`).
+- `--hub` may omit `--farm-token` for pairing-only operation; legacy registration
+  then fails closed while operator-created pairing remains available.
 
 `/api/engines` (`app.rs:773`) publishes the *non-secret* posture view a harness needs:
 `openai_base_path`, `auth_required` (= `requires_consumer`), served models, and
@@ -269,14 +273,23 @@ checks then run before binding:
 
 ## Fleet hub — HiveOS-style phone-home (`cameod/src/hub.rs`, `agent.rs`)
 
+The current product names are **Cameo Mesh** for the request-level pool and
+**Cameo Link** for the outbound node agent. A hub may run pairing-only without a
+farm token. Paired identities are stored in bounded, versioned, owner-only state;
+only digests of device credentials are retained. Restored nodes begin offline,
+and deleting a paired row persists revocation before acknowledging it. The farm
+token path below is retained only for explicitly allowed legacy nodes.
+
 This **inverts** the CLI's `cameo fleet` model. `cameo fleet` *pulls*: a controller
 polls a static list of node addresses (`GET /api/node`). The hub *is pushed to*: each
 node dials out and registers itself, so the hub never needs inbound access to a node to
 learn it exists. The self-description on the wire is the same `/api/node` body either way;
 only the initiator flips (`hub.rs:1`).
 
-**Hub side — the `Farm` registry (`hub.rs:68`).** In-memory `Mutex<BTreeMap<String, Enrolled>>`,
-same shape as the session `Board`. Staleness is computed on read, not on a timer:
+**Hub side — the `Farm` registry.** Runtime state uses a synchronized ordered map.
+Paired identity records are also written atomically to the configured state
+directory; transient hardware, endpoint, and session telemetry is not persisted.
+Staleness is computed on read, not on a timer:
 
 - `ONLINE_WINDOW = 45s` (`hub.rs:27`): a node phoned home within this counts online.
 - `DROP_AFTER = 15min` (`hub.rs:33`): a node silent past this is pruned entirely; between
@@ -294,48 +307,37 @@ callback `(address, key)` for a push; `online_descriptions` (`hub.rs:133`) yield
 `list` (`hub.rs:153`) is the dashboard view (online flag, age, GPU summary lifted from the
 stored description). Both read paths `prune` first.
 
-**Node side — the agent (`agent.rs`).** When `--hub-url` is set (`main.rs:238`), `agent::spawn`
-(`agent.rs:150`) runs `run` (`agent.rs:106`) on a background thread. It `POST`s a
-`registration_body` to `/hub/register`, then heartbeats every `HEARTBEAT_SECS = 15`
-(`agent.rs:37`, comfortably under the 45s window). It **re-registers** on either a
-`known:false` heartbeat response or any transport failure (`agent.rs:132`). All network I/O
-shells out to `curl` (`agent.rs:68`) — matching the CLI's external-tool stance; body builders
-are pure and unit-tested. The `describe` closure is `app::node_report` (`app.rs:707`), called
-fresh on every beat so the hub sees live endpoints; on a non-Linux dev host it yields `None`
-and the node still enrolls, just without a hardware description.
+**Node side — Cameo Link (`agent.rs`).** When `--hub-url` is set, the agent either
+loads its per-node credential, redeems a supplied one-time pairing code, or enters
+the explicitly configured legacy farm-token path. It heartbeats every 15 seconds.
+A paired node does not silently fall back to the legacy identity if its credential
+is rejected. Network calls use `curl`, but all credentials and JSON are supplied
+over standard input so they do not appear in process listings. The live node
+description is rebuilt on every beat.
 
-**Hub routes (`route_hub`, `app.rs:420`).** `register`/`heartbeat` are farm-token gated
-(`check_farm_auth`, `app.rs:399` — fails closed with 403 if no farm token is configured).
-The roster/admin routes (`nodes` list+delete, `nodes/{id}/servers` push, `dispatch`) are
-operator gated. A push (`push_to_node` → `node_call`, `app.rs:500`) calls the target node's
-own authenticated `/api` over `curl`, using the callback address and key it registered with —
-the hub is just an HTTP client here, exactly like `cameo fleet`.
+**Hub routes.** Pairing-code creation and all roster, callback, revocation, and
+dispatch operations require an operator. Code redemption proves the one-time
+offer; heartbeat accepts the corresponding node credential. Legacy register and
+heartbeat require the optional farm token. Callback URLs are HTTPS-only and are
+called with the node operator key supplied during validated enrollment.
 
 ## Key path: harness delegation (`POST /hub/dispatch`)
 
-The end-to-end "delegate this task to a box" trace — the seam a harness (Knossos) drives.
+The current request adds `request_id`, affinity, privacy, preference, deadline,
+expected output, priority, legacy-trust opt-in, and protocol-major controls.
+Trust, health, owner reclaim, protocol, privacy, card, fit, and deadline are hard
+gates. Active admissions reserve capacity atomically; identical retries reuse
+the admission and conflicting request bodies are rejected. The scheduler then
+ranks eligible nodes by affinity, model warmth, predicted completion, load, and
+stable node ID. `local_only` cannot be satisfied by a hub dispatch. Mesh routes a
+whole request to one node and does not pool VRAM or shard an execution.
 
-1. A harness `POST`s a `DispatchBody` (`dispatch.rs:20`: `model`, `params`, `quant`, `moe`,
-   `task`, `min_tier`, `execute`, `port`) to `/hub/dispatch`. Operator gated (`app.rs:487`).
-2. `api_dispatch` (`app.rs:551`) pulls the online roster via `farm.online_descriptions()`
-   and calls `dispatch::decide` (`dispatch.rs:140`).
-3. `decide` reconstructs each node with `parse_node` (`dispatch.rs:89`): it deserializes
-   `topology` + `gpus` (tier assessments) back into a `NodeInfo`, and reads live load from
-   the `endpoints` array (`load_from_endpoints`, `dispatch.rs:112`: only `state == "running"`
-   endpoints count; their `model` names → `serving`, their `vram_bytes` → `used_vram_bytes`).
-   A description lacking topology/assessments (a dev node that enrolled without detection) is
-   **skipped, not fatal** (`dispatch.rs:89`).
-4. It calls `route` (the placement router above) and returns the winning `node_id` +
-   `RouteChoice`.
-5. Back in `api_dispatch`: `execute:false` → advise only (`executed:false`, node, reason).
-   `execute:true` + warm → reuse the resident endpoint, return its `/v1` URL. `execute:true`
-   + cold → `node_call` pushes `POST /api/servers` to the chosen node and returns its `/v1`
-   endpoint. `NoneEligible` maps to **409** (fleet can't take the work), a malformed body to
-   400 (`app.rs:562`).
-
-Note the address in the returned `endpoint` URL is the node's registered *callback* address
-(`app.rs:581`); `parse_node` deliberately leaves `NodeInfo.address` empty because routing
-keys pushes by `node_id`, not by the routing-time address (`dispatch.rs:102`).
+The harness submits a bounded request to the operator-gated route. Cameo rebuilds
+eligible candidates from authenticated, online node descriptions and active
+admissions. `execute: false` returns advice only. `execute: true` atomically
+reserves the winner, reuses a warm endpoint or pushes one cold start, and returns
+the chosen callback's `/v1` URL. A stable request ID makes retries idempotent;
+malformed requests return 400 and a healthy-but-ineligible pool returns 409.
 
 ## Executors vs. stubs
 `backend-vulkan`, `backend-rocm`, `quant-tools` are **thin executors** — they name
@@ -352,12 +354,12 @@ channel, and compiles **both** front ends (the `cameo` CLI and the `cameod` daem
 as the invoking user rather than as root, staging both binaries into the image.
 Three Cameo units are enabled: `cameo-firstboot.service` (the tier report, which
 now also prints the console URL + key), `cameo-console-init.service` (generates a
-random key and an all-interfaces bind into `/run/cameo/cameod.env` each boot,
+random key and a loopback bind into `/run/cameo/cameod.env` each boot,
 ordered before the daemon), and `cameod.service` (the control plane). The layered
-`EnvironmentFile`s mean the box is a key-protected **home console** out of the box
-— open it from your own machine's browser — while `/etc/cameo/cameod.env` lets an
-operator override (force loopback, pin a fixed key). So a booted Cameo box *is* the
-console — not a dev-box binary you run by hand.
+`EnvironmentFile`s keep the HTTP listener local by default; use an SSH/VPN tunnel
+or TLS reverse proxy from another machine. `/etc/cameo/cameod.env` still lets an
+operator pin a fixed key or explicitly change the bind. So a booted Cameo box
+*is* the console — not a dev-box binary you run by hand.
 
 ## Drift (code vs. prior docs/comments)
 

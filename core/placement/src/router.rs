@@ -31,7 +31,7 @@ pub struct NodeLoad {
 }
 
 impl NodeLoad {
-    fn serves(&self, model: &str) -> bool {
+    pub(crate) fn serves(&self, model: &str) -> bool {
         self.serving.iter().any(|m| m == model)
     }
 }
@@ -87,13 +87,13 @@ impl std::fmt::Display for RouteError {
 impl std::error::Error for RouteError {}
 
 /// Free VRAM on a candidate after its current load, and whether VRAM is known.
-fn free_vram(c: &Candidate) -> (u64, bool) {
+pub(crate) fn free_vram(c: &Candidate) -> (u64, bool) {
     let (usable, known) = c.node.usable_vram();
     (usable.saturating_sub(c.load.used_vram_bytes), known)
 }
 
 /// Whether a candidate satisfies the card (tier) constraint for the task.
-fn card_ok(c: &Candidate, req: &RouteRequest) -> bool {
+pub(crate) fn card_ok(c: &Candidate, req: &RouteRequest) -> bool {
     if matches!(req.task, Task::Training) && !c.node.training_capable() {
         return false;
     }

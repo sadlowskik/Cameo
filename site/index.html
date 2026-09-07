@@ -2,14 +2,14 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Cameo — LLM serving OS for any AMD GPU</title>
+<title>Cameo — local LLM serving for AMD GPUs</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="Flash Cameo onto a USB, boot the AMD box, chat. No internet after that. Network is only for extra models and joining a fleet of nodes.">
+<meta name="description" content="Flash Cameo onto a USB, boot the AMD box, chat. No internet after that. Network is only for extra models and joining Cameo Mesh.">
 <meta name="theme-color" content="#1A1812">
 <meta name="color-scheme" content="dark">
 <link rel="canonical" href="https://cameoconstruct.xyz/">
-<meta property="og:title" content="Cameo — LLM serving OS for any AMD GPU">
-<meta property="og:description" content="Flash Cameo onto a USB, boot the AMD box, chat. No internet after that. Network is only for extra models and joining a fleet of nodes.">
+<meta property="og:title" content="Cameo — local LLM serving for AMD GPUs">
+<meta property="og:description" content="Flash Cameo onto a USB, boot the AMD box, chat. No internet after that. Network is only for extra models and joining Cameo Mesh.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://cameoconstruct.xyz/">
 <meta property="og:image" content="https://cameoconstruct.xyz/assets/og.png">
@@ -38,22 +38,20 @@
   --wrap:1120px;
 }
 *{box-sizing:border-box}
-html{-webkit-text-size-adjust:100%;scroll-behavior:smooth}
+html{-webkit-text-size-adjust:100%;scroll-behavior:smooth;scroll-padding-top:80px}
 body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
   font-size:17px;line-height:1.55;font-weight:400;-webkit-font-smoothing:antialiased;overflow-x:hidden}
 body::before{content:"";position:fixed;inset:0;z-index:-4;pointer-events:none;
   background:
-    radial-gradient(1000px 700px at 78% 8%, rgba(255,166,90,.14), transparent 62%),
-    radial-gradient(820px 640px at 8% 94%, rgba(180,71,47,.12), transparent 58%),
-    radial-gradient(640px 560px at 52% 62%, rgba(255,122,26,.05), transparent 60%),
-    linear-gradient(160deg,#221F18,#17150E 55%,#1B1812)}
-/* living backdrop: an amber nebula (WebGL, 2D starfield fallback) with drifting
-   stars, occasional shooting stars, filmic grain, and a vignette for depth. */
-#stars{position:fixed;inset:0;z-index:-3;pointer-events:none}
-#streaks{position:fixed;inset:0;z-index:-2;pointer-events:none}
+    linear-gradient(90deg,rgba(26,24,18,.92) 0%,rgba(26,24,18,.45) 54%,rgba(26,24,18,.78) 100%),
+    linear-gradient(180deg,rgba(26,24,18,.08),rgba(26,24,18,.9) 88%),
+    url("assets/cameo-forum-bg.webp") 60% top / cover no-repeat,
+    linear-gradient(160deg,#221F18,#17150E 55%,#1B1812);
+  filter:saturate(.78) contrast(1.06)}
+/* Original Roman command-hall artwork: static so atmosphere costs no frame budget. */
 #vignette{position:fixed;inset:0;z-index:-1;pointer-events:none;
-  background:radial-gradient(128% 118% at 50% 32%, transparent 54%, rgba(0,0,0,.55))}
-#grain{position:fixed;inset:0;z-index:-1;pointer-events:none;opacity:.04;
+  background:radial-gradient(128% 118% at 50% 30%, transparent 48%, rgba(0,0,0,.64))}
+#grain{position:fixed;inset:0;z-index:-1;pointer-events:none;opacity:.006;
   background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
   background-size:140px 140px}
 a{color:inherit;text-decoration:none}
@@ -70,13 +68,22 @@ header{position:sticky;top:0;z-index:30;background:rgba(26,24,18,.86);
 .nav{display:flex;align-items:center;height:60px;gap:22px}
 .brand{display:flex;align-items:center;gap:10px;font-family:var(--disp);font-weight:700;font-size:19px;letter-spacing:-.03em;margin-right:auto}
 .brand svg{width:26px;height:26px}
-.nav a.l{font-family:var(--mono);font-size:13px;color:var(--muted)}
+.nav a.l{font-family:var(--mono);font-size:13px;color:var(--muted);white-space:nowrap}
 .nav a.l:hover{color:var(--ink)}
 .nav .ico{display:inline-block;width:14px;height:14px;vertical-align:-2px;margin-right:6px}
+@media(min-width:901px){.nav .links{display:contents}}
+@media(max-width:900px){
+  .nav{gap:16px}
+  .nav .links{display:flex;min-width:0;gap:16px;overflow-x:auto;scrollbar-width:none;scroll-snap-type:x proximity;
+    -webkit-overflow-scrolling:touch;mask-image:linear-gradient(90deg,#000 88%,transparent)}
+  .nav .links::-webkit-scrollbar{display:none}
+  .nav .links a.l{scroll-snap-align:start}
+}
 @media(max-width:600px){
-  .nav{height:auto;min-height:60px;flex-wrap:wrap;gap:8px 12px;padding-block:10px}
-  .nav .brand{width:100%;margin-right:0}
+  .nav{gap:12px}
   .nav a.l{font-size:12px}
+  .nav>.gh{font-size:0}
+  .nav>.gh .ico{margin-right:0;width:17px;height:17px}
 }
 
 .hero{padding:64px 0 40px}
@@ -107,49 +114,46 @@ body.anim h1 .w{opacity:0;animation:wordin .55s cubic-bezier(.2,.8,.2,1) forward
 .chip,.btn,.btn-primary{backdrop-filter:blur(10px)}
 .ico{width:15px;height:15px;flex:none}
 
-/* hero: appliance + GPU + LAN console — what you actually get */
-.hero-stage{position:relative;min-height:440px;perspective:1400px}
-.stage-box{position:absolute;left:0;bottom:4%;width:54%;z-index:1;
-  transform:rotateY(-22deg) rotateX(10deg);transform-style:preserve-3d}
-.chassis{position:relative;height:228px;border-radius:12px;overflow:hidden;
-  background:linear-gradient(165deg,#2c2922 0%,#1a1812 55%,#14120e 100%);
-  border:1px solid var(--line-2);
-  box-shadow:0 24px 50px rgba(0,0,0,.55),0 0 40px rgba(255,122,26,.12),0 1px 0 rgba(255,176,90,.18) inset}
-.chassis-top{height:22px;background:linear-gradient(90deg,#3a362e,#25221c);border-bottom:1px solid var(--line);
-  display:flex;align-items:center;padding:0 14px;gap:6px}
-.chassis-top span{width:7px;height:7px;border-radius:50%;background:var(--line-2)}
-.chassis-top span.on{background:var(--ember);box-shadow:0 0 8px var(--ember);animation:blink 1.8s ease-in-out infinite}
-.chassis-face{padding:16px 16px 14px;font-family:var(--mono)}
-.chassis-face .word{font-family:var(--disp);font-weight:700;font-size:22px;letter-spacing:.04em;color:var(--ink)}
-.chassis-face .word em{color:var(--ember);font-style:normal}
-.chassis-face .meta{font-size:11px;color:var(--faint);letter-spacing:.1em;text-transform:uppercase;margin-top:4px}
-.pcieslot{margin-top:18px;height:58px;border-radius:6px;background:#0e0d0b;border:1px solid rgba(255,122,26,.45);
-  display:flex;align-items:center;justify-content:center;overflow:hidden}
-.pcieslot svg{width:86%;height:42px}
-.vents{position:absolute;right:14px;top:48px;bottom:18px;width:10px;display:flex;flex-direction:column;gap:5px}
-.vents i{flex:1;background:repeating-linear-gradient(180deg,transparent 0 3px,#2a271f 3px 5px);opacity:.7;border-radius:2px}
-.stage-console{position:absolute;top:0;right:-2%;width:68%;z-index:2;
-  transform:rotateY(8deg) rotateX(4deg);
-  filter:drop-shadow(0 22px 40px rgba(0,0,0,.5))}
-.minidash{border-radius:10px;overflow:hidden;border:1px solid var(--line-2);background:var(--bg-2);
-  box-shadow:0 0 0 1px rgba(255,176,90,.12)}
-.minidash .chrome{display:flex;align-items:center;gap:8px;padding:8px 10px;background:#16140f;border-bottom:1px solid var(--line);
-  font-family:var(--mono);font-size:10.5px;color:var(--faint)}
-.minidash .chrome .d{display:flex;gap:5px}
-.minidash .chrome .d i{width:8px;height:8px;border-radius:50%;background:var(--line-2)}
-.minidash .chrome .url{flex:1;background:var(--inset);border:1px solid var(--line);border-radius:5px;padding:3px 8px;color:var(--muted)}
-.minidash .body{padding:10px}
-.minidash .row{display:flex;justify-content:space-between;align-items:center;font-family:var(--mono);font-size:11px;color:var(--muted);margin-bottom:8px}
-.minidash .row b{color:var(--ink);font-weight:500}
-.minidash .meter{height:6px;border-radius:4px;background:var(--inset);overflow:hidden;margin-bottom:10px}
-.minidash .meter i{display:block;height:100%;width:41%;background:linear-gradient(90deg,#FF7A1A,#FFD08A);border-radius:4px}
-.minidash .pill{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11px;color:var(--body);
-  border:1px solid var(--line);border-radius:6px;padding:6px 8px;background:var(--inset)}
-.minidash .pill .on{width:6px;height:6px;border-radius:50%;background:#3fb950;box-shadow:0 0 8px #3fb950}
-@media(max-width:900px){
-  .hero-stage{min-height:360px;max-width:480px;margin-inline:auto}
-  .stage-box{transform:none;width:50%;bottom:0}
-  .stage-console{transform:none;width:62%}
+/* Hero: a faithful, static slice of the real Cameo Deck. Crisp 2D rendering
+   replaces the old perspective-transformed appliance mockup. */
+.hero-visual{position:relative;min-width:0;padding:12px 0 28px 14px}
+.deck-preview{position:relative;overflow:hidden;min-height:416px;border:1px solid #5d4038;border-radius:13px;
+  background:#0a0a0a;font-family:var(--mono);color:#e5e2e1;
+  box-shadow:0 34px 80px rgba(0,0,0,.62),0 0 0 1px rgba(255,122,26,.12),0 0 55px rgba(255,86,37,.11)}
+.deck-preview::before,.deck-preview::after{content:"";position:absolute;width:12px;height:12px;z-index:6;pointer-events:none;border:2px solid #ff5625;opacity:.8}
+.deck-preview::before{left:-1px;top:-1px;border-width:2px 0 0 2px}.deck-preview::after{right:-1px;bottom:-1px;border-width:0 2px 2px 0}
+.dp-head{height:48px;padding:0 15px;display:flex;align-items:center;gap:10px;background:#0d0c0b;border-bottom:1px solid #3f3f46}
+.dp-brand{font-family:var(--disp);font-size:15px;font-weight:700;letter-spacing:.04em}.dp-brand em{color:#ff5625;font-style:normal}
+.dp-host{font-size:9px;letter-spacing:.07em;color:#8b857c}.dp-status{margin-left:auto;display:flex;align-items:center;gap:6px;padding:4px 7px;border:1px solid #3f3f46;background:#1a1812;font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:#e7bdb2}
+.dp-dot{width:6px;height:6px;border-radius:50%;background:#4ade80;box-shadow:0 0 7px rgba(74,222,128,.75);flex:none}
+.dp-tabs{height:37px;display:flex;align-items:end;gap:2px;padding:0 13px;border-bottom:1px solid #3f3f46;background:#0a0a0a}
+.dp-tab{height:37px;padding:11px 9px 8px;font-family:var(--sans);font-size:9px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:#8b857c;border-bottom:2px solid transparent}
+.dp-tab.on{color:#ffb5a0;border-bottom-color:#ff5625}.dp-url{margin:0 1px 9px auto;font-size:8px;color:#8b857c}
+.dp-screen{display:grid;grid-template-columns:minmax(0,1fr) 154px;min-height:330px}
+.dp-field{position:relative;padding:16px;background:radial-gradient(ellipse at 45% 20%,#211a14 0%,#0a0a0a 70%);
+  background-image:linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.025) 1px,transparent 1px),radial-gradient(ellipse at 45% 20%,#211a14 0%,#0a0a0a 70%);background-size:16px 16px,16px 16px,auto}
+.dp-field-label,.dp-rail-title{font-family:var(--sans);font-weight:600;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:#8b857c;margin-bottom:10px}
+.dp-node{position:relative;border:1px solid #3f3f46;background:#1a1812;padding:11px 12px;margin-bottom:10px;box-shadow:0 10px 24px rgba(0,0,0,.24)}
+.dp-node.on{border-color:#ff5625;box-shadow:0 0 0 1px rgba(255,86,37,.2),0 12px 30px rgba(0,0,0,.32)}
+.dp-node-head{display:flex;align-items:center;gap:7px;font-size:10px;font-weight:500}.dp-node-head .addr{margin-left:auto;color:#8b857c;font-size:8px;font-weight:400}
+.dp-badge{padding:1px 5px;border:1px solid #3f3f46;background:#161311;color:#8b857c;font-size:7px;font-weight:700;letter-spacing:.05em;text-transform:uppercase}
+.dp-badge.run{color:#4ade80;border-color:rgba(74,222,128,.42);background:rgba(74,222,128,.09)}
+.dp-chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}.dp-chip{padding:4px 6px;border:1px solid #3f3f46;background:#201f1f;color:#e7bdb2;font-size:8px}
+.dp-chip b{font-weight:500;color:#e5e2e1}.dp-who{margin-top:8px;color:#e7bdb2;font-size:8px}
+.dp-rail{padding:15px 13px;background:#1a1812;border-left:1px solid #3f3f46}.dp-rail h3{margin:0 0 10px;font-family:var(--sans);font-size:12px;color:#e5e2e1}
+.dp-kv{display:grid;grid-template-columns:auto 1fr;gap:4px 8px;font-size:8px;color:#8b857c}.dp-kv b{font-weight:500;color:#e5e2e1}
+.dp-session{margin-top:15px;padding:9px;border:1px solid #3f3f46;background:#201f1f;font-size:8px;color:#8b857c}.dp-session strong{display:block;margin-bottom:4px;color:#e5e2e1;font-size:9px}
+.dp-pass{display:flex;align-items:center;gap:5px;margin-top:7px;color:#4ade80}.dp-pass i{width:5px;height:5px;border-radius:50%;background:#4ade80;box-shadow:0 0 6px rgba(74,222,128,.7)}
+.gpu-float{position:absolute;left:-10px;bottom:0;width:250px;z-index:8;padding:12px 13px;border:1px solid #5d4038;border-radius:9px;
+  background:rgba(22,19,17,.97);font-family:var(--mono);box-shadow:0 18px 42px rgba(0,0,0,.58),0 0 28px rgba(255,86,37,.1)}
+.gf-head{display:flex;align-items:center;gap:7px}.gf-head b{font-size:10px;color:#f6f4f2}.gf-head span{margin-left:auto;color:#4ade80;border:1px solid rgba(74,222,128,.36);background:rgba(74,222,128,.08);padding:1px 5px;font-size:7px;text-transform:uppercase;letter-spacing:.07em}
+.gf-meta{display:flex;justify-content:space-between;margin-top:9px;font-size:8px;color:#8b857c}.gf-meta b{font-weight:500;color:#e7bdb2}
+.gf-meter{height:6px;margin-top:6px;background:#0a0a0a;overflow:hidden}.gf-meter i{display:block;width:41%;height:100%;background:linear-gradient(90deg,#ff5625,#ffb5a0)}
+.gf-foot{display:flex;gap:12px;margin-top:9px;font-size:8px;color:#8b857c}.gf-foot b{color:#e5e2e1;font-weight:500}
+@media(max-width:900px){.hero-visual{max-width:640px;margin-inline:auto;padding-top:0}}
+@media(max-width:520px){
+  .hero-visual{padding:0 0 10px}.deck-preview{min-height:0}.dp-screen{grid-template-columns:1fr}.dp-rail{border-left:0;border-top:1px solid #3f3f46}.dp-node.secondary{display:none}.dp-url{display:none}
+  .gpu-float{position:relative;left:auto;bottom:auto;width:auto;margin:-18px 12px 0}.dp-host{display:none}
 }
 
 /* the real firstboot printout — proof, shown in the tiers section */
@@ -162,6 +166,13 @@ body.anim h1 .w{opacity:0;animation:wordin .55s cubic-bezier(.2,.8,.2,1) forward
 .boot-note{margin:14px 0 0}
 
 section{padding:64px 0;border-top:1px solid var(--line);position:relative}
+#deck{isolation:isolate;overflow:hidden}
+#deck::before{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;
+  background:
+    linear-gradient(90deg,rgba(26,24,18,.96),rgba(26,24,18,.64) 55%,rgba(26,24,18,.9)),
+    url("assets/cameo-praetor-map.webp") center / cover no-repeat;
+  opacity:.3;filter:grayscale(.2) sepia(.3) saturate(.72) contrast(1.04);
+  mask-image:linear-gradient(180deg,transparent,#000 18%,#000 82%,transparent)}
 .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:var(--faint);margin:0 0 14px;
   display:flex;align-items:center;gap:14px}
 .eyebrow .ix{color:var(--ember)}
@@ -170,13 +181,26 @@ h2{font-family:var(--disp);font-weight:700;letter-spacing:-.03em;font-size:clamp
 .lede{color:var(--body);max-width:48em;margin:0 0 28px}
 
 .steps{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-bottom:22px}
-@media(max-width:980px){.steps{grid-template-columns:1fr 1fr}}
+#deck .steps{grid-template-columns:repeat(6,minmax(0,1fr))}
+#deck .step:nth-child(1),#deck .step:nth-child(2){grid-column:span 3}
+#deck .step:nth-child(3){grid-column:span 4}
+#deck .step:nth-child(4){grid-column:span 2}
+@media(max-width:980px){.steps,#deck .steps{grid-template-columns:1fr 1fr}.step:nth-child(n),#deck .step:nth-child(n){grid-column:auto}}
 @media(max-width:640px){.steps{grid-template-columns:1fr}}
+.caps{width:100%;border-collapse:collapse;font-size:15px;margin:8px 0 0}
+.caps th,.caps td{text-align:left;vertical-align:top;padding:10px 12px;border-bottom:1px solid var(--line);font-family:var(--sans)}
+.caps th{color:var(--muted);font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase}
+.caps td:first-child{font-family:var(--mono);font-size:13px;white-space:nowrap}
+.caps .yes{color:#86efac}.caps .no{color:var(--muted)}
+@media(max-width:720px){.caps td:first-child{white-space:normal}}
 .step{border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:18px 18px 16px;backdrop-filter:blur(10px)}
 .step .n{font-family:var(--mono);font-size:12px;color:var(--ember);letter-spacing:.08em}
 .step h3{font-family:var(--disp);font-size:18px;margin:8px 0 6px;letter-spacing:-.02em}
 .step p{margin:0;color:var(--muted);font-size:15px}
 .step code{font-family:var(--mono);font-size:13px;color:var(--amber)}
+.step-foot{display:flex;align-items:center;gap:8px;margin-top:18px;padding-top:12px;border-top:1px solid var(--line);
+  font-family:var(--mono);font-size:11px;color:var(--faint)}
+.step-foot i{width:6px;height:6px;border-radius:50%;background:var(--ember);box-shadow:0 0 8px rgba(255,122,26,.68)}
 
 .term,.ladder,.console-frame,.install{position:relative;border:1px solid var(--line);border-radius:12px;overflow:hidden}
 .term::after,.ladder::after,.console-frame::after,.install::after{content:"";position:absolute;top:0;left:7%;right:7%;height:1px;
@@ -445,24 +469,18 @@ footer{border-top:1px solid var(--line);padding:44px 0 54px}
   background:radial-gradient(circle, rgba(255,122,26,.14), transparent 70%);
   transform:translate(-50%,-50%);mix-blend-mode:screen;opacity:0;transition:opacity .35s ease}
 body.glow #cursor{opacity:1}
-.dash,.minidash,.term{position:relative}
+.dash,.term{position:relative}
 .scan::after{content:"";position:absolute;inset:0;pointer-events:none;z-index:5;
   background:repeating-linear-gradient(180deg,transparent 0 2px,rgba(0,0,0,.09) 2px 3px);
   opacity:.4;mix-blend-mode:multiply}
 @keyframes sweep{from{transform:translateY(-100%)}to{transform:translateY(220%)}}
-.minidash .sweep,.dash .sweep{position:absolute;left:0;right:0;height:28%;pointer-events:none;z-index:4;
+.dash .sweep{position:absolute;left:0;right:0;height:28%;pointer-events:none;z-index:4;
   background:linear-gradient(180deg,transparent,rgba(255,176,90,.07),transparent);
   animation:sweep 4.8s ease-in-out infinite}
 .fan{transform-box:fill-box;transform-origin:center;animation:spin 1.8s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
 @keyframes breath{0%,100%{width:38%}50%{width:54%}}
-.minidash .meter i,.stat .meter i{animation:breath 3.8s ease-in-out infinite}
-.marquee{overflow:hidden;margin:36px 0 8px;border-block:1px solid var(--line);
-  mask-image:linear-gradient(90deg,transparent, #000 7%, #000 93%, transparent)}
-.marquee-track{display:flex;gap:10px;width:max-content;padding:12px 0;animation:marq 32s linear infinite}
-.marquee-track span{font-family:var(--mono);font-size:12px;color:var(--muted);border:1px solid var(--line);
-  border-radius:999px;padding:5px 12px;white-space:nowrap}
-@keyframes marq{to{transform:translateX(-50%)}}
+.stat .meter i{animation:breath 3.8s ease-in-out infinite}
 .eyebrow .ix{text-shadow:0 0 16px rgba(255,122,26,.45)}
 .cmdbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:22px;padding:11px 14px;
   background:var(--inset);border:1px solid var(--line);border-radius:10px;
@@ -474,16 +492,23 @@ header{box-shadow:0 1px 0 rgba(255,176,90,.06)}
 .nav a.l::after{content:"";position:absolute;left:0;right:0;bottom:-6px;height:1px;
   background:var(--ember);transform:scaleX(0);transform-origin:left;transition:transform .22s ease}
 .nav a.l:hover::after{transform:scaleX(1)}
+.nav a.l[aria-current="true"]{color:var(--amber)}
+.nav a.l[aria-current="true"]::after{transform:scaleX(1)}
+
+/* Aceternity-inspired depth, translated into Cameo's quieter instrument-panel
+   language. One lightweight overlay follows the pointer; no content depends on it. */
+.edge-glow{position:absolute;inset:0;border-radius:inherit;pointer-events:none;z-index:5;opacity:0;
+  background:radial-gradient(190px circle at var(--gx,50%) var(--gy,50%),rgba(255,176,90,.13),transparent 72%);
+  transition:opacity .2s ease}
+.has-edge-glow:hover>.edge-glow{opacity:1}
 @media(prefers-reduced-motion:reduce){
-  .marquee-track,.fan,.minidash .meter i,.stat .meter i,.minidash .sweep,.dash .sweep,.btn-primary::after{animation:none!important}
-  #cursor{display:none}
+  .stat .meter i,.dash .sweep,.btn-primary::after{animation:none!important}
+  #cursor,.edge-glow{display:none}
 }
 </style>
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
-<canvas id="stars" aria-hidden="true"></canvas>
-<canvas id="streaks" aria-hidden="true"></canvas>
 <div id="vignette" aria-hidden="true"></div>
 <div id="grain" aria-hidden="true"></div>
 <div id="grid" aria-hidden="true"></div>
@@ -524,10 +549,14 @@ header{box-shadow:0 1px 0 rgba(255,176,90,.06)}
 
 <header><div class="wrap nav">
   <a class="brand" href="#top"><svg viewBox="0 0 26 26"><use href="#mark"/></svg>cameo</a>
-  <a class="l" href="#how">how</a>
-  <a class="l" href="#tiers">tiers</a>
-  <a class="l" href="#deck">deck</a>
-  <a class="l" href="#install">download</a>
+  <nav class="links" aria-label="Sections">
+    <a class="l" href="#how">how</a>
+    <a class="l" href="#tiers">tiers</a>
+    <a class="l" href="#console">console</a>
+    <a class="l" href="#deck">deck</a>
+    <a class="l" href="#scale">mesh</a>
+    <a class="l" href="#install">download</a>
+  </nav>
   <a class="l gh" href="https://github.com/sadlowskik/Cameo" rel="noopener">
     <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg>github</a>
 </div></header>
@@ -535,11 +564,12 @@ header{box-shadow:0 1px 0 rgba(255,176,90,.06)}
 <main id="main">
   <section class="hero" id="top" style="border:0"><div class="wrap hero-grid">
     <div>
-      <h1 id="h1"><span class="w">any</span> <span class="w">AMD</span> <span class="w">card.</span><br><span class="w">serves</span> <span class="w">LLMs.</span></h1>
-      <p class="sub">Flash the image. Boot the box. Chat. After that it does not need the internet. Network is only for extra models and attaching nodes to a fleet.</p>
+      <h1 id="h1"><span class="w">your</span> <span class="w">AMD</span> <span class="w">card.</span><br><span class="w">serves</span> <span class="w">LLMs.</span></h1>
+      <p class="sub">Flash Cameo to a USB, boot an AMD machine, and open the local web app. Models run offline.</p>
       <div class="cards" aria-label="Example AMD GPUs">
         <span>RX 580</span><span>RX 6800</span><span>7900 XTX</span><span>MI210</span><span>APUs</span>
       </div>
+      <p class="cta-note">Compatibility depends on the card, driver, model, and available memory. Check before release use.</p>
       <div class="actions">
         <div class="cta-stack">
           <a class="btn-primary" href="#install">
@@ -554,84 +584,61 @@ header{box-shadow:0 1px 0 rgba(255,176,90,.06)}
         </a>
       </div>
     </div>
-    <div>
-      <div class="hero-stage" role="img" aria-label="Cameo appliance: a box with an AMD GPU in a PCIe slot, and the local web console at cameo.local:9090">
-        <div class="stage-box">
-          <div class="chassis">
-            <div class="chassis-top"><span></span><span class="on"></span><span></span></div>
-            <div class="chassis-face">
-              <div class="word">CAM<em>EO</em></div>
-              <div class="meta">AMD GPU · local LLM box</div>
-              <div class="pcieslot">
-                <svg viewBox="0 0 240 42" fill="none" aria-hidden="true">
-                  <rect x="1" y="5" width="238" height="32" rx="3" fill="#1a140e" stroke="#FF7A1A" stroke-opacity=".6"/>
-                  <rect x="1" y="5" width="12" height="32" rx="2" fill="#3a362e" stroke="#6A655C"/>
-                  <g class="fan">
-                    <circle cx="48" cy="21" r="13" fill="#241c14" stroke="#FF9A45" stroke-width="1.2"/>
-                    <circle cx="48" cy="21" r="3" fill="#FFD08A"/>
-                    <path d="M48 10.5V31.5M37.5 16 58.5 26M37.5 26 58.5 16" stroke="#FF9A45" stroke-width=".8" opacity=".85"/>
-                  </g>
-                  <g class="fan" style="animation-delay:-.9s">
-                    <circle cx="90" cy="21" r="13" fill="#241c14" stroke="#FF9A45" stroke-width="1.2"/>
-                    <circle cx="90" cy="21" r="3" fill="#FFD08A"/>
-                    <path d="M90 10.5V31.5M79.5 16 100.5 26M79.5 26 100.5 16" stroke="#FF9A45" stroke-width=".8" opacity=".85"/>
-                  </g>
-                  <rect x="112" y="10" width="70" height="22" rx="2" fill="#2a241c"/>
-                  <path d="M116 12v18M120 12v18M124 12v18M128 12v18M132 12v18M136 12v18M140 12v18M144 12v18M148 12v18M152 12v18M156 12v18M160 12v18M164 12v18M168 12v18M172 12v18M176 12v18" stroke="#6A655C" stroke-width="1.15"/>
-                  <text x="194" y="25" fill="#FFD08A" font-family="IBM Plex Mono,monospace" font-size="9">GPU</text>
-                </svg>
-              </div>
-            </div>
-            <div class="vents"><i></i><i></i><i></i></div>
-          </div>
+    <div class="hero-visual">
+      <div class="deck-preview" role="img" aria-label="The real Cameo Deck showing two online nodes, their AMD GPUs, a running local model, an active Knossos lease, and passed verification">
+        <div class="dp-head">
+          <span class="dp-brand">CAM<em>EO</em></span>
+          <span class="dp-host">forge-01 · local control plane</span>
+          <span class="dp-status"><i class="dp-dot"></i>2 nodes online</span>
         </div>
-        <div class="stage-console">
-          <div class="minidash scan">
-            <div class="sweep" aria-hidden="true"></div>
-            <div class="chrome">
-              <div class="d"><i></i><i></i><i></i></div>
-              <div class="url">http://cameo.local:9090</div>
+        <div class="dp-tabs">
+          <span class="dp-tab">Console</span><span class="dp-tab on">Deck</span><span class="dp-url">cameo.local:9090</span>
+        </div>
+        <div class="dp-screen">
+          <div class="dp-field">
+            <div class="dp-field-label">Cameo Mesh / this house</div>
+            <div class="dp-node on">
+              <div class="dp-node-head"><i class="dp-dot"></i>forge-01 <span class="dp-badge">this box</span><span class="addr">192.168.1.40</span></div>
+              <div class="dp-chips"><span class="dp-chip"><b>RX 7900 XTX</b> · T1 · 24 GB</span><span class="dp-chip"><b>qwen2.5-0.5b</b> <span class="dp-badge run">running</span></span></div>
+              <div class="dp-who">Agent: Knossos · 2 reservations</div>
             </div>
-            <div class="body">
-              <div class="row"><span>GPU 0</span><b>RX 7900 XTX</b></div>
-              <div class="row"><span>VRAM</span><b>9.8 / 24 GB</b></div>
-              <div class="meter"><i></i></div>
-              <div class="row"><span>backend</span><b>rocm</b></div>
-              <span class="pill"><span class="on"></span> <span id="live-model">qwen2.5-0.5b · /v1 · running</span></span>
+            <div class="dp-node secondary">
+              <div class="dp-node-head"><i class="dp-dot"></i>drawer-580 <span class="addr">192.168.1.44</span></div>
+              <div class="dp-chips"><span class="dp-chip"><b>RX 580</b> · T3 · 8 GB</span><span class="dp-chip">Vulkan ready</span></div>
+              <div class="dp-who">idle · available to Mesh</div>
             </div>
           </div>
+          <aside class="dp-rail">
+            <div class="dp-rail-title">Node details</div>
+            <h3>forge-01</h3>
+            <div class="dp-kv"><span>backend</span><b>rocm</b><span>endpoint</span><b>/v1</b><span>context</span><b>32k</b><span>state</span><b>serving</b></div>
+            <div class="dp-session"><strong>Active agent · Knossos</strong>Mode: write · Reservation: active<div class="dp-pass"><i></i>verification passed</div></div>
+          </aside>
         </div>
+      </div>
+      <div class="gpu-float" aria-hidden="true">
+        <div class="gf-head"><i class="dp-dot"></i><b>GPU 0 · RX 7900 XTX</b><span>Tier 1</span></div>
+        <div class="gf-meta"><span>VRAM</span><b>9.8 / 24 GB</b></div><div class="gf-meter"><i></i></div>
+        <div class="gf-foot"><span>backend <b>rocm</b></span><span>temp <b>62°C</b></span><span>util <b>41%</b></span></div>
       </div>
     </div>
   </div>
-    <div class="marquee" aria-hidden="true">
-      <div class="marquee-track">
-        <span>RX 580</span><span>RX 6700 XT</span><span>RX 6800</span><span>7900 XTX</span><span>MI210</span><span>APUs</span><span>gfx803</span><span>Vulkan</span><span>ROCm</span><span>cameo.local:9090</span>
-        <span>RX 580</span><span>RX 6700 XT</span><span>RX 6800</span><span>7900 XTX</span><span>MI210</span><span>APUs</span><span>gfx803</span><span>Vulkan</span><span>ROCm</span><span>cameo.local:9090</span>
-      </div>
-    </div>
   </section>
 
   <section id="how"><div class="wrap">
     <p class="eyebrow rise"><span class="ix">01</span>how it works</p>
-    <h2 class="rise">Download. Plug it in. Set an account. Play.</h2>
-    <p class="lede rise">Cameo is an appliance, not a toolchain. The USB already carries the OS. Install copies that image onto disk — it downloads nothing. After reboot the box serves on your LAN with the cables pulled.</p>
+    <h2 class="rise">Four steps. Then it’s local.</h2>
     <div class="steps">
-      <article class="step rise"><span class="n">01</span><h3>Download</h3><p>One ISO, while you still have a network. Universal if you're unsure; lite if you know the card is Vulkan-only.</p></article>
-      <article class="step rise"><span class="n">02</span><h3>Plug in</h3><p>Flash a USB, boot the AMD machine. <strong>Install Cameo to disk</strong> is the default menu entry.</p></article>
-      <article class="step rise"><span class="n">03</span><h3>Account</h3><p>Pick a disk, set an admin username and password. A console key is written for you.</p></article>
-      <article class="step rise"><span class="n">04</span><h3>Play</h3><p>Open <code>:9090</code> from the LAN. A starter model (<code>qwen2.5-0.5b</code>) is already on disk. Chatting does not need the internet.</p></article>
-    </div>
-    <div class="term rise">
-      <div class="bar"><i></i><i></i><i></i>&nbsp;&nbsp;first boot · tty1</div>
-<pre><span class="ln"><span class="o">================  Cameo  ================</span></span><span class="ln"><span class="o">  RX 580 8G · Tier 3 · vulkan OK</span></span><span class="ln">&nbsp;</span><span class="ln"><b>Web console:</b>  <span class="em">http://192.168.1.40:9090</span></span><span class="ln"><span class="p">  Console key:</span>  <span class="em">K7m…</span></span><span class="ln"><span class="p">  Log in as the admin you created.</span></span><span class="ln"><span class="o">  No internet required to serve.</span><span class="cur"></span></span></pre>
+      <article class="step rise"><span class="n">01</span><h3>Download</h3><p>One bootable ISO.</p></article>
+      <article class="step rise"><span class="n">02</span><h3>Flash</h3><p>Write it to USB.</p></article>
+      <article class="step rise"><span class="n">03</span><h3>Boot</h3><p>Install on the AMD box.</p></article>
+      <article class="step rise"><span class="n">04</span><h3>Open</h3><p><code>cameo.local:9090</code></p></article>
     </div>
   </div></section>
 
   <section id="tiers"><div class="wrap">
     <p class="eyebrow rise"><span class="ix">02</span>what your card does</p>
     <h2 class="rise">Three tiers. Vulkan on all of them.</h2>
-    <p class="lede rise">Cameo never silently fails on unsupported hardware. It classifies the card and says so in plain language. Training needs ROCm (tiers 1–2). Inference does not.</p>
     <div class="tiers">
       <article class="tier t1 rise">
         <p class="tk">Tier 1</p>
@@ -643,7 +650,6 @@ header{box-shadow:0 1px 0 rgba(255,176,90,.06)}
           <div class="caprow">serve <span class="dots"><i class="lit"></i><i class="lit"></i></span></div>
           <div class="bar"><i style="--w:100%"></i></div>
         </div>
-        <p class="why">Official ROCm. Vulkan fallback. This is the card you train on.</p>
       </article>
       <article class="tier t2 rise">
         <p class="tk">Tier 2</p>
@@ -655,7 +661,6 @@ header{box-shadow:0 1px 0 rgba(255,176,90,.06)}
           <div class="caprow">serve <span class="dots"><i class="lit"></i><i class="lit"></i></span></div>
           <div class="bar"><i style="--w:64%"></i></div>
         </div>
-        <p class="why">Inference on day one. Training is community-tested via HSA override, not official ROCm.</p>
       </article>
       <article class="tier t3 rise">
         <p class="tk">Tier 3</p>
@@ -667,20 +672,13 @@ header{box-shadow:0 1px 0 rgba(255,176,90,.06)}
           <div class="caprow">serve <span class="dots"><i class="lit"></i><i></i></span></div>
           <div class="bar"><i style="--w:38%"></i></div>
         </div>
-        <p class="why">No usable ROCm path. Vulkan-only inference. Still a working LLM box.</p>
       </article>
     </div>
-    <div class="term boot rise">
-      <div class="bar"><i></i><i></i><i></i>&nbsp;&nbsp;first boot · tty1</div>
-<pre><span class="ln"><span class="o">================  Cameo  ================</span></span><span class="ln"><b>GPU 0</b>  <span class="em">Radeon RX 580 8G</span></span><span class="ln"><span class="p">  pci </span> 0000:01:00.0</span><span class="ln"><span class="p">  vram</span> 8192 MiB</span><span class="ln"><span class="p">  arch</span> gfx803</span><span class="ln"><span class="p">  tier</span> <span class="tt">● Tier 3</span>   <span class="p">no training</span></span><span class="ln"><span class="p">  why </span> <span class="p">gfx803 has no usable ROCm path:</span></span><span class="ln"><span class="p">        Vulkan-only inference, no training.</span></span><span class="ln"><span class="o">-----------------------------------------</span></span><span class="ln"><b>Web console:</b>  <span class="em">http://192.168.1.40:9090</span><span class="cur"></span></span></pre>
-    </div>
-    <p class="note boot-note rise">That's the real first-boot printout for a tier-3 drawer card — the tier in plain language, the reason, then the console URL. Check yours with <code style="color:var(--amber)">cameo gpu-status</code>; the tier is a smart default, not a verdict.</p>
   </div></section>
 
   <section id="console"><div class="wrap">
     <p class="eyebrow rise"><span class="ix">03</span>the console</p>
     <h2 class="rise">Administer it from a browser.</h2>
-    <p class="lede rise"><code style="font-family:var(--mono);font-size:.9em;color:var(--amber)">cameod</code> starts on boot and binds <code style="font-family:var(--mono);font-size:.9em;color:var(--amber)">:9090</code> with a key. GPUs, endpoints, a playground — on your LAN. Drop a GGUF, chat. No cloud, no extra web stack.</p>
     <div class="dash scan rise" role="img" aria-label="Cameo web console at cameo.local:9090 showing GPU status, VRAM, backend, running models, endpoints, temperature, utilization, start and stop, and a chat playground">
       <div class="sweep" aria-hidden="true"></div>
       <div class="dash-chrome">
@@ -764,25 +762,26 @@ header{box-shadow:0 1px 0 rgba(255,176,90,.06)}
 
   <section id="deck"><div class="wrap">
     <p class="eyebrow rise"><span class="ix">04</span>the Deck</p>
-    <h2 class="rise">See the model, its owner, and the proof.</h2>
-    <p class="lede rise">Cameo is the compute observer for the standalone Rust Daedalus agent. The Deck keeps the useful facts together: what is serving, which live session has claimed it, and whether that session finished with verification.</p>
+    <h2 class="rise">Model. Owner. Proof.</h2>
     <div class="steps">
-      <article class="step rise"><span class="n">RUNNING</span><h3>What is live?</h3><p>Each resident model shows its backend, context window, endpoint state, and lease count. Inference stays OpenAI-compatible at <code>/v1</code>.</p></article>
-      <article class="step rise"><span class="n">OWNER</span><h3>Who has capacity?</h3><p>A session can explicitly lease an already-running model. Cameo protects that model from ordinary LRU eviction and shows the owning session beside it.</p></article>
-      <article class="step rise"><span class="n">DONE</span><h3>Did it earn done?</h3><p>The agent reports its mode, plan step, changed files, halt reason, verification result, and trace reference. Cameo displays them; it never decides for the agent.</p></article>
-      <article class="step rise"><span class="n">BOUNDARY</span><h3>Who may act?</h3><p>Consumer keys discover and infer. Operator keys may ensure, stop, inspect, and manage leases. Credentials are never returned by the node.</p></article>
+      <article class="step rise"><span class="n">RUNNING</span><h3>Model status</h3><div class="step-foot"><i></i>/v1 · serving</div></article>
+      <article class="step rise"><span class="n">MEMORY</span><h3>Capacity</h3><div class="step-foot"><i></i>18.2 GB · available</div></article>
+      <article class="step rise"><span class="n">RESULT</span><h3>Verification</h3><div class="step-foot"><i></i>12 checks · passed</div></article>
+      <article class="step rise"><span class="n">ACCESS</span><h3>Permissions</h3><div class="step-foot"><i></i>scoped keys</div></article>
     </div>
-    <div class="term rise">
+    <details class="devbox rise">
+      <summary>API contract</summary>
+      <div class="term">
       <div class="bar"><i></i><i></i><i></i>&nbsp;&nbsp;Cameo Engine Contract v1</div>
-<pre><span class="ln"><span class="p">consumer</span>  GET /api/engines  -&gt; models, profiles, limits, capabilities</span><span class="ln"><span class="p">consumer</span>  POST /v1/chat/completions  -&gt; OpenAI JSON + SSE streaming</span><span class="ln"><span class="p">operator</span>  POST /api/servers  -&gt; deliberately provision a cold model</span><span class="ln"><span class="p">session</span>   POST /api/sessions/{id}/lease  -&gt; protect a running model</span><span class="ln"><span class="p">tools</span>     agent-managed fallback  -&gt; no assumed server-specific dialect</span><span class="ln"><span class="o">Cameo observes the work. Daedalus owns the agent loop.</span><span class="cur"></span></pre>
-    </div>
+<pre><span class="ln"><span class="p">consumer</span>  GET /api/engines  -&gt; models, profiles, limits, capabilities</span><span class="ln"><span class="p">consumer</span>  POST /v1/chat/completions  -&gt; OpenAI JSON + SSE streaming</span><span class="ln"><span class="p">operator</span>  POST /api/servers  -&gt; deliberately provision a cold model</span><span class="ln"><span class="p">session</span>   POST /api/sessions/{id}/lease  -&gt; protect a running model</span><span class="ln"><span class="p">tools</span>     agent-managed fallback  -&gt; no assumed server-specific dialect</span><span class="ln"><span class="o">Cameo observes the work. Knossos owns the agent loop.</span><span class="cur"></span></pre>
+      </div>
+    </details>
   </div></section>
 
   <section id="scale"><div class="wrap">
-    <p class="eyebrow rise"><span class="ix">05</span>one card → a cluster</p>
-    <h2 class="rise">Same two commands on 1, 4, or 9 cards.</h2>
-    <p class="lede rise">One box is image and flash — no Wi-Fi, no extra models required. Connecting boxes to each other is the only time you join a network: Ethernet if you have it, otherwise <code style="font-family:var(--mono);font-size:.9em;color:var(--amber)">iwctl</code> on that node so it can attach to the fleet.</p>
-    <svg class="flow rise" viewBox="0 0 1000 240" role="img" aria-label="One AMD card scaling out to a box, then a cluster">
+    <p class="eyebrow rise"><span class="ix">05</span>one card → Cameo Mesh</p>
+    <h2 class="rise">Pair machines. Route each request where it fits.</h2>
+    <svg class="flow rise" viewBox="0 0 1000 240" role="img" aria-label="One AMD card scaling out to a box, then Cameo Mesh">
       <ellipse cx="156" cy="120" rx="115" ry="62" fill="url(#ug)"/>
       <ellipse cx="530" cy="122" rx="135" ry="78" fill="url(#ug)"/>
       <ellipse cx="908" cy="126" rx="155" ry="92" fill="url(#ug)"/>
@@ -798,10 +797,10 @@ header{box-shadow:0 1px 0 rgba(255,176,90,.06)}
       <use href="#gpuHot" x="820" y="66"/><use href="#gpu" x="878" y="66"/><use href="#gpu" x="936" y="66"/>
       <use href="#gpu" x="820" y="106"/><use href="#gpuHot" x="878" y="106"/><use href="#gpu" x="936" y="106"/>
       <use href="#gpu" x="820" y="146"/><use href="#gpu" x="878" y="146"/><use href="#gpuHot" x="936" y="146"/>
-      <text x="908" y="206" fill="#B8B1A6" font-family="IBM Plex Mono,monospace" font-size="13" text-anchor="middle">a cluster</text>
+      <text x="908" y="206" fill="#B8B1A6" font-family="IBM Plex Mono,monospace" font-size="13" text-anchor="middle">Cameo Mesh</text>
       <text x="908" y="226" fill="#FF7A1A" font-family="IBM Plex Mono,monospace" font-size="11" text-anchor="middle">×9</text>
     </svg>
-    <svg class="flow-m rise" viewBox="0 0 360 560" role="img" aria-label="One AMD card scaling to a box, then a cluster">
+    <svg class="flow-m rise" viewBox="0 0 360 560" role="img" aria-label="One AMD card scaling to a box, then Cameo Mesh">
       <ellipse cx="180" cy="60" rx="120" ry="55" fill="url(#ug)"/>
       <ellipse cx="180" cy="222" rx="130" ry="72" fill="url(#ug)"/>
       <ellipse cx="180" cy="430" rx="145" ry="92" fill="url(#ug)"/>
@@ -817,15 +816,44 @@ header{box-shadow:0 1px 0 rgba(255,176,90,.06)}
       <use href="#gpuHot" x="92" y="360"/><use href="#gpu" x="152" y="360"/><use href="#gpu" x="212" y="360"/>
       <use href="#gpu" x="92" y="402"/><use href="#gpuHot" x="152" y="402"/><use href="#gpu" x="212" y="402"/>
       <use href="#gpu" x="92" y="444"/><use href="#gpu" x="152" y="444"/><use href="#gpuHot" x="212" y="444"/>
-      <text x="180" y="512" fill="#B8B1A6" font-family="IBM Plex Mono,monospace" font-size="13" text-anchor="middle">a cluster</text>
+      <text x="180" y="512" fill="#B8B1A6" font-family="IBM Plex Mono,monospace" font-size="13" text-anchor="middle">Cameo Mesh</text>
       <text x="180" y="530" fill="#FF7A1A" font-family="IBM Plex Mono,monospace" font-size="11" text-anchor="middle">×9</text>
     </svg>
   </div></section>
 
+  <section id="capabilities"><div class="wrap">
+    <p class="eyebrow rise"><span class="ix">06</span>v1 capabilities</p>
+    <h2 class="rise">The typed contract, not marketing copy.</h2>
+    <p class="rise" style="color:var(--body);max-width:46rem">Every public claim is generated from <code>contracts/cameo-capabilities-v1.json</code>. Planned and unsupported rows stay visible so absence is not mistaken for an old server.</p>
+    <!-- CAPABILITIES:BEGIN -->
+    <table class="caps">
+      <thead><tr><th>Capability</th><th>Maturity</th><th>Available</th><th>Scope</th></tr></thead>
+      <tbody>
+    <tr><td>inference.openai_compatible_gateway</td><td>stable</td><td class="yes">yes</td><td>Authenticated /v1 gateway for chat completions, completions, and embeddings.</td></tr>
+    <tr><td>inference.streaming</td><td>stable</td><td class="yes">yes</td><td>Server-sent event streaming is proxied without response buffering.</td></tr>
+    <tr><td>inference.native_tool_calls</td><td>unsupported</td><td class="no">no</td><td>Tool orchestration is currently owned by the agent harness.</td></tr>
+    <tr><td>harness.knossos_session_control</td><td>stable</td><td class="yes">yes</td><td>Authenticated session board and Knossos control routes are available.</td></tr>
+    <tr><td>harness.vram_leases</td><td>stable</td><td class="yes">yes</td><td>Session-owned VRAM leases prevent surprise eviction by default.</td></tr>
+    <tr><td>harness.context_discovery</td><td>stable</td><td class="yes">yes</td><td>Per-model context limits are exposed in engine profiles.</td></tr>
+    <tr><td>models.verified_downloads</td><td>stable</td><td class="yes">yes</td><td>Known aliases are pinned by SHA-256 and incomplete downloads are isolated.</td></tr>
+    <tr><td>models.hardware_recommendation</td><td>preview</td><td class="yes">yes</td><td>Detected accelerator and host headroom select the highest-ranked checksum-pinned profile for chat, coding, or agent work.</td></tr>
+    <tr><td>models.one_action_setup</td><td>preview</td><td class="yes">yes</td><td>cameo setup preflights policy and runtime, downloads a pinned model, verifies SHA-256, configures serving arguments, and starts on loopback by default.</td></tr>
+    <tr><td>mesh.scheduling</td><td>preview</td><td class="yes">yes</td><td>Trust, health, locality, affinity, deadline, warm-model, and load-aware admission is available on /hub/dispatch.</td></tr>
+    <tr><td>mesh.device_pairing</td><td>preview</td><td class="yes">yes</td><td>An operator creates a ten-minute one-time code; redemption issues a per-node 256-bit credential stored only as a hub-side digest. Node and hub identity state survives restart; removal durably revokes it. Certificate binding remains pending.</td></tr>
+    <tr><td>mesh.mutual_tls</td><td>planned</td><td class="no">no</td><td>Hub-to-node callbacks require HTTPS but are not yet mutually authenticated with device certificates.</td></tr>
+    <tr><td>mesh.distributed_model_sharding</td><td>planned</td><td class="no">no</td><td>Cameo routes whole inference requests; it does not shard one model execution across LAN nodes.</td></tr>
+    <tr><td>security.role_scoped_keys</td><td>stable</td><td class="yes">yes</td><td>Consumer and operator credentials are separated and compared in constant time.</td></tr>
+    <tr><td>security.local_harness_bypass</td><td>stable</td><td class="yes">yes</td><td>Keyless harness control is restricted to local transport in self-host posture.</td></tr>
+    <tr><td>security.request_rate_limits</td><td>stable</td><td class="yes">yes</td><td>Bounded per-client fixed-window admission protects pairing, invalid credentials, inference, control, and public HTTP routes.</td></tr>
+    <tr><td>security.release_security_review</td><td>preview</td><td class="yes">yes</td><td>Security regression tests exist; independent release review and platform certification remain pending.</td></tr>
+      </tbody>
+    </table>
+    <!-- CAPABILITIES:END -->
+  </div></section>
+
   <section id="install"><div class="wrap">
-    <p class="eyebrow rise"><span class="ix">05</span>get it</p>
-    <h2 class="rise">Image. Flash. That’s the whole path.</h2>
-    <p class="lede rise">Get an <code style="font-family:var(--mono);font-size:.9em;color:var(--amber)">.iso</code>, write it to a USB, boot the AMD box. No toolchain, no Wi-Fi, no extra models. A starter is already on the image. Network is later — extra GGUFs, or attaching this box as a node in a fleet.</p>
+    <p class="eyebrow rise"><span class="ix">07</span>get it</p>
+    <h2 class="rise">Image. Flash. Done.</h2>
     <div class="cmdbar rise">
       <span>flash</span>
       <kbd>cameo-*.iso</kbd>
@@ -833,7 +861,7 @@ header{box-shadow:0 1px 0 rgba(255,176,90,.06)}
       <kbd>Install Cameo to disk</kbd>
       <span>→ chat</span>
       <kbd>cameo.local:9090</kbd>
-      <button class="chip copy" type="button" data-copy="https://github.com/sadlowskik/Cameo/releases/tag/v0.5.0" aria-label="Copy Cameo release URL">
+      <button class="chip copy" type="button" data-copy="https://github.com/sadlowskik/Cameo/releases" aria-label="Copy Cameo releases URL">
         <svg class="ico cp" data-copy-icon viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
         copy release URL
       </button>
@@ -841,47 +869,50 @@ header{box-shadow:0 1px 0 rgba(255,176,90,.06)}
 
     <article class="install rise">
       <h3>1 · Download the image</h3>
-      <p>Take the file named <code style="font-family:var(--mono);font-size:.9em;color:var(--amber)">cameo-*.iso</code> (or <code style="font-family:var(--mono);font-size:.9em;color:var(--amber)">.iso.part*</code> if it was split). Ignore “Source code” zip/tar — those are not flashable. If the newest tag has no ISO yet, use the last tag that lists one.</p>
+      <p>Choose Universal unless you specifically want the smaller Vulkan-only image.</p>
       <div class="eds">
         <div class="ed rec">
           <div class="ed-h"><span class="ed-name">Universal</span><span class="tag-rec">Vulkan + ROCm</span></div>
-          <p>Includes both AMD runtime paths. ROCm is enabled only on supported cards; other compatible AMD GPUs use Vulkan.</p>
-          <a class="btn-primary" href="https://github.com/sadlowskik/Cameo/releases/tag/v0.5.0" rel="noopener">
+          <p>Vulkan + ROCm.</p>
+          <a class="btn-primary" href="https://github.com/sadlowskik/Cameo/releases/download/v0.1.0-beta.1/cameo-2026.08.20.gunknown-x86_64.iso" rel="noopener">
             <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
-            Cameo v0.5.0 downloads
+            Download Universal ISO
           </a>
+          <p><a href="https://github.com/sadlowskik/Cameo/releases/download/v0.1.0-beta.1/SHA256SUMS" rel="noopener" style="color:var(--amber)">SHA-256 checksum</a></p>
         </div>
         <div class="ed">
           <div class="ed-h"><span class="ed-name">Lite</span><span class="tag-s">smaller · vulkan only</span></div>
-          <p>For Vulkan-capable AMD hardware that does not need the much larger ROCm training stack.</p>
-          <a class="btn" href="https://github.com/sadlowskik/Cameo/releases/tag/v0.5.0" rel="noopener">Cameo Lite v0.5.0</a>
+          <p>Vulkan only.</p>
+          <a class="btn" href="https://github.com/sadlowskik/Cameo/releases/download/v0.1.0-beta.2/cameo-lite-2026.08.20.gunknown-x86_64.iso" rel="noopener">Download Lite ISO</a>
+          <p><a href="https://github.com/sadlowskik/Cameo/releases/download/v0.1.0-beta.2/SHA256SUMS" rel="noopener" style="color:var(--amber)">SHA-256 checksum</a></p>
         </div>
       </div>
     </article>
 
-    <article class="install rise">
-      <h3>Daedalus standalone harness</h3>
-      <p>Both Cameo images include the Rust-native <code style="font-family:var(--mono);font-size:.9em;color:var(--amber)">daedalus</code> harness. To run it on an existing workstation, download the versioned archive for your operating system and verify it against <a href="https://github.com/sadlowskik/Knossos-Harness/releases/download/v0.1.0/SHA256SUMS" rel="noopener" style="color:var(--amber)">SHA256SUMS</a>.</p>
+    <details class="devbox rise">
+      <summary>Knossos standalone for Windows</summary>
+      <article class="install">
+      <h3>Standalone harness</h3>
+      <p>Run the Rust-native <code style="font-family:var(--mono);font-size:.9em;color:var(--amber)">knossos</code> harness on an existing Windows workstation. The v0.1 archive below retains the original filename; v0.2 and later use Knossos throughout.</p>
       <div class="eds">
         <div class="ed rec">
-          <div class="ed-h"><span class="ed-name">Linux</span><span class="tag-rec">x86_64</span></div>
-          <p>Native build for current 64-bit Linux distributions.</p>
-          <a class="btn-primary" href="https://github.com/sadlowskik/Knossos-Harness/releases/download/v0.1.0/daedalus-v0.1.0-linux-x86_64.zip" rel="noopener">download Daedalus</a>
+          <div class="ed-h"><span class="ed-name">Windows</span><span class="tag-rec">x86_64</span></div>
+          <p>Standalone v0.1 harness plus documentation.</p>
+          <a class="btn-primary" href="/downloads/daedalus-v0.1.0-windows-x86_64.zip">Download Windows zip</a>
+          <p><a href="/downloads/daedalus-v0.1.0-windows-x86_64.zip.sha256" style="color:var(--amber)">SHA-256 checksum</a></p>
         </div>
         <div class="ed">
-          <div class="ed-h"><span class="ed-name">Windows</span><span class="tag-s">x86_64</span></div>
-          <p>Standalone <code style="font-family:var(--mono);font-size:.85em;color:var(--amber)">daedalus.exe</code> plus documentation.</p>
-          <a class="btn" href="https://github.com/sadlowskik/Knossos-Harness/releases/download/v0.1.0/daedalus-v0.1.0-windows-x86_64.zip" rel="noopener">Windows zip</a>
-        </div>
-        <div class="ed">
-          <div class="ed-h"><span class="ed-name">macOS</span><span class="tag-s">Apple silicon</span></div>
-          <p>Native arm64 build for M-series Macs.</p>
-          <a class="btn" href="https://github.com/sadlowskik/Knossos-Harness/releases/download/v0.1.0/daedalus-v0.1.0-macos-arm64.zip" rel="noopener">macOS zip</a>
+          <div class="ed-h"><span class="ed-name">Linux + macOS</span><span class="tag-s">coming later</span></div>
+          <p>Packages will appear here after their release builds pass validation.</p>
         </div>
       </div>
-    </article>
+      </article>
+    </details>
 
-    <article class="install rise">
+    <details class="devbox rise">
+      <summary>Installation guide · USB to local chat · erases the selected disk</summary>
+      <div class="body installs">
+    <article class="install">
       <h3>2 · Flash a USB</h3>
       <p>Windows: <a href="https://rufus.ie/" rel="noopener" style="color:var(--amber)">Rufus</a> in <strong>DD Image mode</strong> (ISO mode often will not boot), or <a href="https://etcher.balena.io/" rel="noopener" style="color:var(--amber)">Etcher</a>. Linux/macOS: Etcher, or:</p>
 <pre id="cmd-iso">sudo dd if=cameo-*.iso of=/dev/sdX bs=4M status=progress oflag=sync</pre>
@@ -891,7 +922,7 @@ header{box-shadow:0 1px 0 rgba(255,176,90,.06)}
       </button>
     </article>
 
-    <article class="install rise">
+    <article class="install">
       <h3>3 · Plug it in, set an account</h3>
       <p><strong>Disable Secure Boot</strong> (or the stick is ignored and Windows boots). Put the USB in the AMD machine. <strong>Install Cameo to disk</strong> is already the default entry. It shows the detected GPU and tier, then asks for:</p>
       <div class="flash-row" aria-label="Installer prompts">
@@ -915,14 +946,14 @@ header{box-shadow:0 1px 0 rgba(255,176,90,.06)}
       <p style="margin-top:14px">Nothing is downloaded. The installer copies the live image onto that disk, writes a console key, and enables <code style="font-family:var(--mono);font-size:.9em;color:var(--amber)">cameod</code>. Then reboot and pull the USB.</p>
     </article>
 
-    <article class="install rise">
+    <article class="install">
       <h3>4 · Play, offline</h3>
       <p>From a laptop or phone on the same LAN (plug the box into Ethernet if it has a port), open the URL printed after login — <code style="font-family:var(--mono);font-size:.9em;color:var(--amber)">http://cameo.local:9090</code> or the IP. Enter the key. Start <code style="font-family:var(--mono);font-size:.9em;color:var(--amber)">qwen2.5-0.5b</code> (smoke test, already on disk). Chatting never phones home. Extra GGUFs: drop them in <code style="font-family:var(--mono);font-size:.9em;color:var(--amber)">/var/lib/cameo/models</code>.</p>
     </article>
 
-    <article class="install netopt rise">
-      <h3>Fleet: that’s when you connect Wi-Fi</h3>
-      <p>A single box does not need Wi-Fi. Join a fleet of nodes — then give that node a network so it can attach:</p>
+    <article class="install netopt">
+      <h3>Cameo Mesh: that’s when you connect Wi-Fi</h3>
+      <p>A single box does not need Wi-Fi. Cameo Link joins it to a request-level pool; Mesh does not combine VRAM or shard one inference across machines.</p>
       <div class="flash-row">
         <span>Ethernet — plug in, DHCP is automatic</span>
         <span>Wi-Fi — <b style="color:var(--body);font-weight:500">iwctl</b> on that node only</span>
@@ -933,8 +964,10 @@ header{box-shadow:0 1px 0 rgba(255,176,90,.06)}
   station wlan0 scan
   station wlan0 get-networks
   station wlan0 connect 'YourSSID'</pre>
-      <p style="margin:12px 0 0">Then <code style="font-family:var(--mono);font-size:.9em;color:var(--amber)">cameo fleet</code> / hub URL on that node. One machine, one card, one house: stay air-gapped after you flash.</p>
+      <p style="margin:12px 0 0">Pair Cameo Link to the hub with a single-use code. Request routing and pairing are preview; mutual TLS is not available yet. One machine, one card, one house can stay offline after you flash.</p>
     </article>
+      </div>
+    </details>
 
     <details class="devbox rise">
       <summary>Developers: container or build the ISO yourself</summary>
@@ -999,6 +1032,22 @@ sudo CAMEO_EDITION=lite ./scripts/build-iso.sh</pre>
     setTimeout(function(){rises.forEach(function(el){if(!el.classList.contains('in'))reveal(el);});},2000);
   } else {rises.forEach(reveal);}
 
+  var navLinks=Array.prototype.slice.call(d.querySelectorAll('.nav .links a.l'));
+  var navTargets=navLinks.map(function(a){return d.querySelector(a.getAttribute('href'));}).filter(Boolean);
+  if(navTargets.length&&'IntersectionObserver' in window){
+    var visible={};
+    var spy=new IntersectionObserver(function(es){
+      es.forEach(function(e){visible[e.target.id]=e.intersectionRatio;});
+      var best='',ratio=0;
+      Object.keys(visible).forEach(function(id){if(visible[id]>ratio){ratio=visible[id];best=id;}});
+      navLinks.forEach(function(a){
+        var active=a.getAttribute('href')==='#'+best;
+        if(active)a.setAttribute('aria-current','true');else a.removeAttribute('aria-current');
+      });
+    },{threshold:[0,.15,.35,.6],rootMargin:'-15% 0px -55% 0px'});
+    navTargets.forEach(function(t){spy.observe(t);});
+  }
+
   var check='<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
   d.querySelectorAll('[data-copy],[data-copy-from]').forEach(function(btn){
     btn.addEventListener('click',function(){
@@ -1026,22 +1075,16 @@ sudo CAMEO_EDITION=lite ./scripts/build-iso.sh</pre>
         requestAnimationFrame(loop);
       })();
     }
-    var stage=d.querySelector('.hero-stage');
-    if(stage){
-      var wrap=stage.parentElement;
-      wrap.addEventListener('pointermove',function(e){
-        var r=stage.getBoundingClientRect();
-        var x=(e.clientX-r.left)/r.width-.5;
-        var y=(e.clientY-r.top)/r.height-.5;
-        stage.style.transform='rotateY('+(x*9).toFixed(2)+'deg) rotateX('+(-y*7).toFixed(2)+'deg)';
+    if(matchMedia('(hover:hover) and (pointer:fine)').matches){
+      d.querySelectorAll('.step,.tier,.install,.gcard').forEach(function(card){
+        card.classList.add('has-edge-glow');
+        var edge=d.createElement('span');edge.className='edge-glow';edge.setAttribute('aria-hidden','true');card.appendChild(edge);
+        card.addEventListener('pointermove',function(e){
+          var box=card.getBoundingClientRect();
+          card.style.setProperty('--gx',(e.clientX-box.left)+'px');
+          card.style.setProperty('--gy',(e.clientY-box.top)+'px');
+        },{passive:true});
       });
-      wrap.addEventListener('pointerleave',function(){stage.style.transform='';});
-    }
-    var live=d.getElementById('live-model');
-    if(live){
-      var frames=['qwen2.5-0.5b · /v1 · running','qwen2.5-0.5b · vulkan · offline','qwen2.5-0.5b · tok/s 38','qwen2.5-0.5b · /v1 · running'];
-      var fi=0;
-      setInterval(function(){fi=(fi+1)%frames.length;live.textContent=frames[fi];},2800);
     }
   }
 })();

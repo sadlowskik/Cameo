@@ -61,7 +61,9 @@ fi
 rule
 printf '%s  Web console%s\n' "$C_ACCENT" "$C_OFF"
 echo "    http://${shown}:${port}"
-echo "    http://cameo.local:${port}"
+if [ "$host" != "127.0.0.1" ] && [ "$host" != "localhost" ] && [ "$host" != "::1" ]; then
+  echo "    http://cameo.local:${port}"
+fi
 if [ -n "${CAMEO_CONSOLE_KEY:-}" ]; then
   printf '    Console key:  %s%s%s\n' "$C_ACCENT" "$CAMEO_CONSOLE_KEY" "$C_OFF"
 fi
@@ -71,13 +73,19 @@ else
   echo "    ${C_DIM}Key in /etc/cameo/cameod.env — stable across reboots.${C_OFF}"
 fi
 echo
-echo "    Open from a phone or laptop on this LAN. No internet."
+if [ "$host" = "127.0.0.1" ] || [ "$host" = "localhost" ] || [ "$host" = "::1" ]; then
+  echo "    Listener is loopback-only (HTTP credentials stay off the LAN)."
+  echo "    Tunnel from your laptop: ssh -L ${port}:127.0.0.1:${port} <user>@${ip:-<this-box-ip>}"
+  echo "    Then open http://127.0.0.1:${port} locally."
+else
+  echo "    Non-loopback HTTP is enabled explicitly; prefer a TLS reverse proxy."
+fi
 echo "    Starter is a smoke test: Start qwen2.5-0.5b and chat."
 rule
 
 if [ -z "$ip" ]; then
   echo
-  printf '%s  No LAN address yet.%s Plug Ethernet for the console on this LAN.\n' "$C_ACCENT" "$C_OFF"
+  printf '%s  No LAN address yet.%s Plug Ethernet before creating the SSH/VPN tunnel.\n' "$C_ACCENT" "$C_OFF"
   echo "    Wi-Fi is only for attaching this box as a fleet node — then: iwctl"
 fi
 echo

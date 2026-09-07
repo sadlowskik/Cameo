@@ -1,67 +1,80 @@
-# Updating Cameo — F5
+﻿# Updating Cameo
 
-A product has to update safely, and the three delivery forms update differently.
-`cameod` exposes `GET /api/version` (unauthenticated, like the health probes) so a
-console or an external checker can compare the running version against the latest
-release and flag "update available".
+The current checkout does not yet provide a qualified transactional appliance
+update. `GET /api/version` reports the daemon version; it does not establish
+compatibility, update availability, or successful rollback.
 
-## Container (hero) — immutable image tags
+## Installed systems
 
-The container is the safe, trivially-rollback-able path.
-
-```bash
-# pull the new image and restart; models live in a volume, so they persist
-podman pull ghcr.io/sadlowskik/cameo:1.x
-podman stop cameo && podman rm cameo
-podman run -d --name cameo -p 9090:9090 \
-  -v cameo-models:/var/lib/cameo/models \
-  --device=/dev/kfd --device=/dev/dri --group-add video --group-add render \
-  ghcr.io/sadlowskik/cameo:1.x
-```
-
-Rollback is `podman run … cameo:1.(x-1)` — the previous tag is still there.
-Because the model cache is a named volume (F2), nothing is re-downloaded.
-
-## Installed (bare metal) — pinned pacman transaction
-
-An installed system updates the **Arch stack** (kernel, mesa, llama-cpp, …)
-through `pacman`, pinned to the same Arch archive snapshot the image was built
-against (see [F4](remediation-plan.md)), so an update is reproducible and a
-serving box is never surprised by a rolling package:
+`cameo-update` now verifies an offline signed bundle and can perform a
+non-mutating compatibility/disk-space preflight. It no longer runs
+`pacman -Syu` or falls back to rolling Arch repositories.
 
 ```bash
-# point pacman at the release's pinned snapshot, then update
-sudo cameo-update            # wrapper: sets the snapshot mirror, runs pacman -Syu
+cameo-update status
+cameo-update verify /path/to/bundle
+cameo-update preflight /path/to/bundle
 ```
 
-`cameo` and `cameod` are staged into `/usr/local/bin` by the ISO build. They are
-**not** pacman packages. `cameo-update` does not replace them. A new Cameo
-build is a re-flash of the ISO, or copying those two binaries from a GitHub
-release.
+A bundle contains `manifest.json`, its detached `manifest.sig`, and the
+listed component files. Signature verification requires the independently trusted
+release public key at `/etc/cameo/update-root.pem`. Preflight also requires an
+installed `/etc/cameo/compatibility-id` matching the signed manifest. Release
+ISOs ship that public key from `archiso/airootfs/etc/cameo/update-root.pem`.
+GitHub Actions can overwrite it with the `CAMEO_UPDATE_ROOT_PEM` repository
+secret. The matching private key is the `CAMEO_UPDATE_PRIVATE_PEM` secret; the
+ISO publish job signs `SHA256SUMS` with it. Never put the private key in git or
+on the image. A public key supplied inside an untrusted bundle is not a trust
+root.
 
-The wrapper is a thin, auditable script; the snapshot pin is what makes the
-transaction match a known-good release rather than "whatever is newest today".
-Take a filesystem snapshot (btrfs/ZFS) first if the root supports it — then a bad
-update is one rollback away.
+To provision signing on GitHub: Settings → Secrets and variables → Actions →
+New repository secret. Name `CAMEO_UPDATE_PRIVATE_PEM`, paste
+`cameo-update-private.pem`. Then tag `v*` or run the ISO workflow. The runner
+builds the OS and, on a tag, attaches signed checksums to the GitHub Release.
 
-## ISO appliance — re-flash
+Verification checks the signature, manifest structure, file destinations and
+component digests. Preflight additionally checks installed compatibility and
+available space. Success does not install anything or certify that the system
+can boot the bundle. The current file-bundle schema is an initial increment;
+full OS/runtime/model component provenance and migration policy remain open.
 
-The live ISO is immutable by design: to update, download the new ISO and re-flash
-the USB. Persistent data lives on the data partition chosen at first boot (F2), not
-on the medium, so re-flashing does not lose models or config.
+`apply`, `commit`, and `rollback` reject the current single-root installation.
+The installer uses ext4 with separate boot storage; a filesystem snapshot alone
+cannot guarantee rollback of the kernel, bootloader and package database together.
+No automatic repartition or destructive migration is provided.
 
-## What the daemon exposes
+The [Cameo completion plan](completion-cameo.md) specifies the pending A/B design:
+separate OS slots, persistent identity/configuration/models/state, bounded trial
+boots, representative health probes, and prior-slot fallback. The regular-file
+simulator exercises proposed decisions; it is not a bootable implementation.
 
-- `GET /api/version` → `{ "name": "cameod", "version": "…" }`. The console polls
-  this and the latest-release version to show an update banner; it never updates
-  itself in place (that is the delivery layer's job, above).
-- A serving box is never updated mid-flight by Cameo: you pull/restart (container),
-  run the pinned transaction (installed), or re-flash (ISO) deliberately.
+## Containers
 
-> Status: the `/api/version` endpoint and the `cameo-update` wrapper both ship now
-> (the wrapper reads the snapshot the build recorded at `/etc/cameo/snapshot`, or
-> `CAMEO_ARCH_SNAPSHOT`, and falls back to a rolling update with a warning). The
-> wrapper updates Arch packages only — not `/usr/local/bin/cameo` / `cameod`. The
-> `.github/workflows/publish.yml` workflow pushes `ghcr.io/<owner>/cameo:<ver>` on a
-> version tag (vulkan hero image required, rocm best-effort). What remains is
-> operational: cutting an actual tagged release so the images exist to pull.
+Container replacement must retain the exact previous image digest, complete run
+configuration, device mappings, credentials, and persistent volumes. Model-volume
+persistence alone does not preserve daemon state or configuration. An image tag
+can change and is not evidence of an immutable or available release artifact.
+
+Before a release can advertise this upgrade path, qualify the exact old/new image
+digests and state-schema compatibility, drain active requests, back up mutable
+state, launch the new image with the retained configuration, and check inference.
+Rollback requires the previous image and a compatible state backup; starting an
+older binary against a migrated volume is not automatically safe. Publication
+workflows are configured for Vulkan and ROCm, but this local audit has not run them
+or verified registry artifacts.
+
+## Live ISO media
+
+Updating live media means booting a separately verified replacement ISO. Keep a
+verified backup of models, configuration, credentials and persistent state first.
+Writing an image to a USB device can destroy partitions on that device, including
+a persistence partition. Do not assume re-flashing preserves it. The clean-media
+restore and installed-system migration walkthroughs remain qualification gates.
+
+## Required release evidence
+
+Before this update path is called production-ready, retain actual signed bundle
+verification, Linux wrapper integration, interrupted staging/journal/boot tests,
+health-triggered fallback, previous-version migration and downgrade tests, and
+restores preserving models, configuration and user state. Current local simulator
+checks do not replace Linux VM or physical appliance evidence.

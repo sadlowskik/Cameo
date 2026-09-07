@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Verification is production-active. Apply remains fail-closed until the installed
+# image provides the versioned A/B layout consumed by the next transaction layer.
+set -euo pipefail
+verifier=/usr/local/lib/cameo/update-verify
+command="${1:-status}"; [ "$#" -eq 0 ] || shift
+case "$command" in
+  status) echo "idle: no transactional update applied" ;;
+  verify|preflight)
+    [ "$#" -eq 1 ] || { echo "usage: cameo-update $command <bundle-directory>" >&2; exit 2; }
+    bundle="$1"; key=/etc/cameo/update-root.pem
+    # Unprivileged test execution may supply fixture paths. Root always uses the
+    # installed trust anchor and verifier.
+    if [ "$(id -u)" -ne 0 ]; then
+      key="${CAMEO_UPDATE_TEST_KEY:-$key}"
+      verifier="${CAMEO_UPDATE_TEST_VERIFIER:-$verifier}"
+    fi
+    [ -f "$bundle/manifest.json" ] && [ -f "$bundle/manifest.sig" ] || { echo "cameo-update: incomplete bundle" >&2; exit 1; }
+    [ -r "$key" ] || { echo "cameo-update: trusted release key is not installed" >&2; exit 1; }
+    [ ! -L "$bundle" ] && [ ! -L "$bundle/manifest.json" ] && [ ! -L "$bundle/manifest.sig" ] && [ ! -L "$key" ] || { echo "cameo-update: linked trust or signature input refused" >&2; exit 1; }
+    staged="$(mktemp -d)"; trap 'rm -rf -- "$staged"' EXIT
+    chmod 0700 "$staged"
+    cp --no-dereference "$bundle/manifest.json" "$staged/manifest.json"
+    cp --no-dereference "$bundle/manifest.sig" "$staged/manifest.sig"
+    chmod 0400 "$staged/manifest.json" "$staged/manifest.sig"
+    openssl pkeyutl -verify -pubin -inkey "$key" -rawin -in "$staged/manifest.json" -sigfile "$staged/manifest.sig" >/dev/null
+    "$verifier" verify "$bundle" / "$staged/manifest.json"
+    [ "$command" = verify ] || "$verifier" preflight "$bundle" / "$staged/manifest.json"
+    echo "cameo-update: signed offline bundle $command passed" ;;
+  apply|commit|rollback)
+    echo "cameo-update: transactional apply requires a qualified Cameo A/B installation; this host has the legacy single-root layout" >&2
+    exit 1 ;;
+  *) echo "usage: cameo-update verify|preflight <bundle-directory> | status" >&2; exit 2 ;;
+esac

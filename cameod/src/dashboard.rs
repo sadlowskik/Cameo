@@ -171,7 +171,12 @@ pub const INDEX_HTML: &str = r##"
   .nchip{background:var(--panel-2);border:1px solid var(--line);padding:3px 8px;font-size:11px}
   .ncard .who{font-size:12px;color:var(--muted);margin-top:8px}
   #view-deck .serve{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
-  #view-deck .serve input{flex:1;min-width:80px}
+  #view-deck .serve .serve-field{flex:1;min-width:90px}
+  #view-deck .serve .serve-field.port{flex:0 0 72px}
+  #view-deck .serve input{min-width:0}
+  #view-deck .serve button{width:100%}
+  .session-facts{grid-template-columns:66px 1fr;margin-top:8px}
+  .session-facts b{overflow-wrap:anywhere}
   .mission-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
   button.mini{padding:5px 8px;font-size:10px}
   button.mini.warn{color:var(--ember-soft);border-color:var(--ember)}
@@ -181,11 +186,11 @@ pub const INDEX_HTML: &str = r##"
 <body>
 <header>
   <span class="wordmark">CAMEO</span>
-  <span class="tagline">any AMD card → a working LLM box</span>
+  <span class="tagline">your AMD card → a working LLM box</span>
   <span class="status"><span class="dot" id="dot"></span><span id="status-text">connecting…</span></span>
 </header>
 <div id="key-bar">
-  <span>This console needs the key printed at login (<code>cameo-hello</code>).</span>
+  <span>Enter the console key shown by <code>cameo-hello</code>.</span>
   <input id="key-input" type="password" placeholder="console key" autocomplete="off">
   <button type="button" id="key-save">Unlock</button>
 </div>
@@ -259,6 +264,13 @@ pub const INDEX_HTML: &str = r##"
     <h2><span class="hash">05</span> Model cache</h2>
     <div class="body"><div id="models"><div class="empty">loading…</div></div></div>
   </section>
+
+  <section>
+    <h2><span class="hash">06</span> Capabilities</h2>
+    <div class="body"><div id="capabilities"><div class="empty">loading…</div></div>
+      <p class="muted" style="margin-top:10px">Sourced from the same typed manifest as <code>cameo capabilities</code> and the public site. These labels are software surfaces, not hardware certification.</p>
+    </div>
+  </section>
 </div>
 
 <div id="view-deck">
@@ -266,20 +278,20 @@ pub const INDEX_HTML: &str = r##"
     <h3>Nodes</h3>
     <div id="deck-nodes"></div>
   </aside>
-  <div id="field" title="Every node, GPU, VRAM, loaded model, and who is using it"></div>
+  <div id="field" title="Nodes, GPUs, models, and active agents"></div>
   <aside class="rail r">
     <div id="deck-flash" class="flash"></div>
-    <h3>Selected</h3>
-    <div id="detail"><div class="empty">Click a node, GPU, or session.</div></div>
-    <h3 style="margin-top:18px">Serve on this node</h3>
+    <h3 id="detail-heading">Node details</h3>
+    <div id="detail"><div class="empty">Select a node.</div></div>
+    <h3 style="margin-top:18px">Start a model</h3>
     <div class="serve">
-      <input id="deck-model" placeholder="model" list="model-list">
-      <input id="deck-port" value="8080" style="flex:0 0 70px">
-      <button id="deck-serve" type="button">Serve</button>
+      <div class="serve-field"><label for="deck-model">Model or GGUF</label><input id="deck-model" placeholder="qwen2.5-0.5b" list="model-list"></div>
+      <div class="serve-field port"><label for="deck-port">Port</label><input id="deck-port" value="8080"></div>
+      <button id="deck-serve" type="button">Start</button>
     </div>
-    <h3 style="margin-top:18px">Who</h3>
-    <div id="deck-sessions" class="muted">No harness heartbeats yet.</div>
-    <div class="muted" style="margin-top:12px;font-size:11px">Knossos can reserve a resident model here. Loading a model that would displace another endpoint always needs a second operator confirmation.</div>
+    <h3 style="margin-top:18px">Active agents</h3>
+    <div id="deck-sessions" class="muted">No active agent sessions.</div>
+    <div class="muted" style="margin-top:12px;font-size:11px">Agents can keep a model loaded for their session. Deck asks before stopping another model to make room.</div>
   </aside>
 </div>
 </main>
@@ -396,6 +408,25 @@ async function loadGpus(){
     document.getElementById('topo').textContent=topo;
     setStatus(true,'connected');
   }catch(e){setStatus(false,'offline');}
+}
+
+async function loadCapabilities(){
+  const el=document.getElementById('capabilities');
+  if(!el) return;
+  try{
+    const r=await api('/api/capabilities');
+    if(!r.ok){el.innerHTML='<div class="empty">capabilities unavailable</div>';return;}
+    const d=await r.json();
+    const rows=[];
+    for(const [section,fields] of Object.entries(d)){
+      if(!fields||typeof fields!=='object') continue;
+      for(const [name,value] of Object.entries(fields)){
+        if(!value||typeof value!=='object'||typeof value.maturity!=='string') continue;
+        rows.push('<span>'+esc(section+'.'+name)+'</span><b>'+esc(value.maturity)+(value.available?' · available':' · not available')+'</b>');
+      }
+    }
+    el.innerHTML='<div class="kv">'+rows.join('')+'</div>';
+  }catch(e){el.innerHTML='<div class="empty">capabilities unavailable</div>';}
 }
 
 async function loadModels(){
@@ -534,24 +565,24 @@ function gpuChips(gpus){
       +'<div class="meter"><i style="width:'+pct+'%"></i></div></span>';
   }).join('');
 }
-function whoLine(sessions, endpoints){
+function agentLine(sessions){
   const who=(sessions||[]).map(s=>s.name||s.label||s.id).filter(Boolean);
-  const models=(endpoints||[]).map(e=>e.model||e.label).filter(Boolean);
-  const bits=[];
-  if(models.length) bits.push(models.join(', '));
-  if(who.length) bits.push('who: '+who.join(', '));
-  return bits.join(' · ');
+  return who.length?'Agents: '+who.join(', '):'';
 }
 function pick(ent){
   selected=ent; const el=document.getElementById('detail');
-  if(!ent){el.innerHTML='<div class="empty">Click a node, GPU, or session.</div>';return;}
+  if(!ent){el.innerHTML='<div class="empty">Select a node.</div>';return;}
   if(ent.kind==='node'||ent.node_id) selectedNode=ent;
+  document.getElementById('detail-heading').textContent='Node details';
+  const labels={node_id:'Node ID',online:'Status',local:'Location',cameo_version:'Cameo',address:'Address'};
+  const allowed=['node_id','online','local','cameo_version','address'];
   const rows=[];
-  for(const [k,v] of Object.entries(ent)){
-    if(k==='plugin'||v==null||v===''||typeof v==='object') continue;
-    rows.push('<span>'+esc(k)+'</span><b>'+esc(v)+'</b>');
+  for(const k of allowed){
+    const v=ent[k]; if(v==null||v==='') continue;
+    const shown=k==='online'?(v?'Online':'Offline'):k==='local'?(v?'Local':'Remote'):v;
+    rows.push('<span>'+labels[k]+'</span><b>'+esc(shown)+'</b>');
   }
-  el.innerHTML='<div class="muted">'+esc(ent.kind||'node')+'</div><h3 style="margin:6px 0">'+esc(ent.label||ent.name||ent.id)+'</h3><div class="kv">'+rows.join('')+'</div>';
+  el.innerHTML='<h3 style="margin:6px 0">'+esc(ent.label||ent.name||ent.id)+'</h3><div class="kv">'+rows.join('')+'</div>';
 }
 
 async function localNode(){
@@ -582,17 +613,17 @@ function nodeCard(n, i){
   const on=selectedNode && selectedNode.node_id===n.node_id;
   const eps=n.endpoints||[];
   const sess=n.sessions||[];
-  const who=whoLine(sess, eps);
+  const who=agentLine(sess);
   const models=eps.length?eps.map(e=>{const facts=[];
     const owners=sess.filter(s=>s.lease&&s.lease.endpoint_id===e.id&&s.lease.state==='active').map(s=>s.name||s.label||s.id).filter(Boolean);
     if(e.context_tokens) facts.push(Math.round(e.context_tokens/1024)+'k ctx');
-    if(e.lease_count) facts.push(e.lease_count+' lease'+(e.lease_count===1?'':'s'));
-    if(owners.length) facts.push('owned by '+owners.join(', '));
+    if(e.lease_count) facts.push(e.lease_count+' reservation'+(e.lease_count===1?'':'s'));
+    if(owners.length) facts.push('reserved by '+owners.join(', '));
     return '<span class="nchip"><code>'+esc(e.model||e.label||'')+'</code> <span class="badge st-'+esc(e.state||'')+'">'+esc(e.state||'')+'</span>'+(facts.length?' <span class="muted">'+esc(facts.join(' · '))+'</span>':'')+'</span>';
   }).join(''):'<span class="nchip muted">no model loaded</span>';
   return '<div class="ncard '+(n.online===false?'offline':'')+(on?' on':'')+'" data-i="'+i+'">'
     +'<h3><span class="dot '+(n.online===false?'bad':'ok')+'"></span>'+esc(n.name||n.node_id)
-    +(n.local?'<span class="badge">this box</span>':'')
+    +(n.local?'<span class="badge">local</span>':'')
     +'<span class="addr">'+esc(n.address||'')+'</span></h3>'
     +'<div class="nchips">'+gpuChips(n.gpus)+'</div>'
     +'<div class="nchips">'+models+'</div>'
@@ -603,34 +634,43 @@ function layoutFleet(nodes){
   fleetNodes=nodes;
   const field=document.getElementById('field');
   if(!nodes.length){
-    field.innerHTML='<div class="empty" style="padding:24px">No nodes yet. Load a model on Console, or boot another Cameo box with CAMEO_HUB_URL.</div>';
+    field.innerHTML='<div class="empty" style="padding:24px">No nodes connected. Start this node or connect another Cameo box.</div>';
   } else {
     field.innerHTML='<div class="nmap">'+nodes.map(nodeCard).join('')+'</div>';
     field.querySelectorAll('.ncard').forEach(c=>c.onclick=()=>pick(nodes[Number(c.dataset.i)]));
   }
   const rail=document.getElementById('deck-nodes');
-  rail.innerHTML=nodes.map((n,i)=>'<div class="dcard" data-i="'+i+'"><b>'+esc(n.name||n.node_id)+'</b><div class="muted">'+(n.online===false?'offline':'online')+(n.local?' · this box':'')+'</div></div>').join('');
+  rail.innerHTML=nodes.map((n,i)=>'<div class="dcard" data-i="'+i+'"><b>'+esc(n.name||n.node_id)+'</b><div class="muted">'+(n.online===false?'Offline':'Online')+(n.local?' · Local':'')+'</div></div>').join('');
   rail.querySelectorAll('.dcard').forEach(c=>c.onclick=()=>pick(nodes[Number(c.dataset.i)]));
   const focus=selectedNode?nodes.find(n=>n.node_id===selectedNode.node_id):nodes[0];
   const units=focus?(focus.sessions||[]):[];
   const sEl=document.getElementById('deck-sessions');
-  sEl.innerHTML=units.length?units.map(u=>{const facts=[u.mode,u.engine||u.model,u.state,u.plan_step,u.verification,u.halt,u.lease&&u.lease.state?('lease '+u.lease.state):''].filter(Boolean);
+  sEl.innerHTML=units.length?units.map(u=>{const facts=[];
+    if(u.mode) facts.push(['Mode',u.mode]);
+    if(u.engine||u.model) facts.push(['Model',u.engine||u.model]);
+    if(u.state) facts.push(['Status',u.state]);
+    if(u.plan_step) facts.push(['Current step',u.plan_step]);
+    if(u.verification) facts.push(['Verification',u.verification]);
+    if(u.halt) facts.push(['Stopped',u.halt]);
+    if(u.lease&&u.lease.state) facts.push(['Reservation',u.lease.state]);
     const files=(u.changed_files&&u.changed_files.length?u.changed_files:u.files)||[];
-    return '<div class="dcard">'+esc(u.name||u.label||u.id)+' <span class="muted">'+esc(facts.join(' · '))+'</span>'+(files.length?'<div class="muted">changed: '+esc(files.join(', '))+'</div>':'')+(u.trace_ref?'<div class="muted">trace: '+esc(u.trace_ref)+'</div>':'')+'</div>';
-  }).join(''):'<div class="empty">No harness heartbeats yet. Point Knossos at this node.</div>';
+    if(files.length) facts.push(['Changed',files.join(', ')]);
+    if(u.trace_ref) facts.push(['Trace',u.trace_ref]);
+    return '<div class="dcard"><b>'+esc(u.name||u.label||u.id)+'</b><div class="kv session-facts">'+facts.map(f=>'<span>'+esc(f[0])+'</span><b>'+esc(f[1])+'</b>').join('')+'</div></div>';
+  }).join(''):'<div class="empty">No active agent sessions. Connect an agent to see its work here.</div>';
   units.forEach((u,i)=>{
     const card=sEl.children[i]; if(!card) return;
     const v=u.vram||{}; const model=u.model||v.model||'';
-    if(v.status&&v.status!=='none') card.insertAdjacentHTML('beforeend','<div class="muted">VRAM: '+esc(v.status)+(v.impact?' / '+esc(v.impact):'')+'</div>');
-    const reserve=model?'<button class="ghost mini reserve" data-id="'+esc(u.id)+'" data-model="'+esc(model)+'">Reserve '+esc(model)+'</button>':'';
-    const release=v.status==='resident'?'<button class="ghost mini release" data-id="'+esc(u.id)+'">Release</button>':'';
-    const confirm=v.status==='blocked'&&v.evicts&&v.evicts.length?'<button class="ghost mini warn evict" data-id="'+esc(u.id)+'" data-model="'+esc(model)+'">Evict &amp; load</button>':'';
+    if(v.status&&v.status!=='none') card.insertAdjacentHTML('beforeend','<div class="kv session-facts"><span>Model memory</span><b>'+esc(v.status)+(v.impact?' · '+esc(v.impact):'')+'</b></div>');
+    const reserve=model?'<button class="ghost mini reserve" data-id="'+esc(u.id)+'" data-model="'+esc(model)+'">Keep '+esc(model)+' loaded</button>':'';
+    const release=v.status==='resident'?'<button class="ghost mini release" data-id="'+esc(u.id)+'">Release model</button>':'';
+    const confirm=v.status==='blocked'&&v.evicts&&v.evicts.length?'<button class="ghost mini warn evict" data-id="'+esc(u.id)+'" data-model="'+esc(model)+'" data-count="'+v.evicts.length+'">Stop '+v.evicts.length+' model'+(v.evicts.length===1?'':'s')+' &amp; load</button>':'';
     if(reserve||release||confirm) card.insertAdjacentHTML('beforeend','<div class="mission-actions">'+reserve+release+confirm+'</div>');
   });
   sEl.querySelectorAll('button.reserve').forEach(b=>b.onclick=()=>ensureMissionVram(b.dataset.id,b.dataset.model,false));
-  sEl.querySelectorAll('button.evict').forEach(b=>b.onclick=()=>ensureMissionVram(b.dataset.id,b.dataset.model,true));
+  sEl.querySelectorAll('button.evict').forEach(b=>b.onclick=()=>ensureMissionVram(b.dataset.id,b.dataset.model,true,Number(b.dataset.count)||0));
   sEl.querySelectorAll('button.release').forEach(b=>b.onclick=()=>releaseMissionVram(b.dataset.id));
-  if(focus) pick(focus);
+  if(focus){pick(focus);document.getElementById('deck-serve').textContent='Start on '+String(focus.name||focus.node_id||'node');}
 }
 async function tickDeck(){
   const local=await localNode();
@@ -642,25 +682,25 @@ function nextDeckPort(){
   let port=8080; while(used.has(port)) port++;
   return port;
 }
-async function ensureMissionVram(id,model,allowEvict){
-  if(allowEvict&&!confirm('Load '+model+' and evict the endpoints named in the mission impact?')) return;
+async function ensureMissionVram(id,model,allowEvict,evictCount=0){
+  if(allowEvict&&!confirm('Load '+model+'? This will stop '+evictCount+' running model'+(evictCount===1?'':'s')+' to free GPU memory.')) return;
   const r=await api('/api/knossos/sessions/'+encodeURIComponent(id)+'/vram',{method:'POST',body:JSON.stringify({model,host:'127.0.0.1',port:nextDeckPort(),allow_evict:allowEvict})});
   const d=await r.json().catch(()=>({}));
-  if(r.ok) flash('ok',d.reused?'Reserved resident '+model:'Loaded and reserved '+model);
-  else flash('err',d.error||('VRAM request failed ('+r.status+')'));
+  if(r.ok) flash('ok','Model reserved: '+model+'.');
+  else flash('err',d.error||('Could not reserve model ('+r.status+').'));
   tickDeck(); loadServers(); loadPlayground();
 }
 async function releaseMissionVram(id){
   const r=await api('/api/knossos/sessions/'+encodeURIComponent(id)+'/vram',{method:'DELETE'});
   const d=await r.json().catch(()=>({}));
-  if(r.ok) flash('ok','Released the mission VRAM reservation.');
-  else flash('err',d.error||('release failed ('+r.status+')'));
+  if(r.ok) flash('ok','Model reservation released.');
+  else flash('err',d.error||('Could not release model reservation ('+r.status+').'));
   tickDeck(); loadServers();
 }
 document.getElementById('deck-serve').onclick=async()=>{
   const model=document.getElementById('deck-model').value.trim();
   const port=Number(document.getElementById('deck-port').value)||8080;
-  if(!model){flash('err','Enter a model name to serve.');return;}
+  if(!model){flash('err','Enter a model name or GGUF.');return;}
   const n=selectedNode||fleetNodes[0];
   let r;
   if(!n||n.local||n.node_id==='local'||!IS_HUB){
@@ -669,18 +709,18 @@ document.getElementById('deck-serve').onclick=async()=>{
     r=await api('/hub/nodes/'+encodeURIComponent(n.node_id)+'/servers',{method:'POST',body:JSON.stringify({model,host:'127.0.0.1',port})});
   }
   const d=await r.json().catch(()=>({}));
-  if(r.ok) flash('ok','Serving '+model);
-  else flash('err',d.error||('serve failed ('+r.status+')'));
+  if(r.ok) flash('ok',model+' is starting on '+String(n&&n.name||'this node')+'.');
+  else flash('err',d.error||('Could not start model ('+r.status+').'));
   tickDeck(); loadServers();
 };
 function refresh(){loadGpus();loadServers();loadPlayground();tickDeck();}
 let booted=false;
 async function boot(){
   try{const r=await fetch('/healthz'); const d=await r.json(); IS_HUB=!!d.hub;
-    if(IS_HUB){document.querySelector('.tagline').textContent='every node · GPU · VRAM · who is using it';
-      document.title='Cameo Fleet'; showView('deck');}
+    if(IS_HUB){document.querySelector('.tagline').textContent='nodes · GPUs · models · agents';
+      document.title='Cameo Mesh'; showView('deck');}
   }catch(e){}
-  loadModels(); refresh();
+  loadModels(); loadCapabilities(); refresh();
   if(!booted){ booted=true; setInterval(()=>{loadServers();loadPlayground();tickDeck();},4000); }
 }
 boot();

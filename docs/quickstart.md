@@ -1,7 +1,7 @@
 # Cameo quickstart
 
 Flash the image. Boot the box. Chat. After that it does not need the internet.
-Network is only for extra models and attaching a node to a fleet.
+Network is only for extra models and attaching a node to Cameo Mesh.
 
 ## 1. Download the image
 
@@ -11,7 +11,7 @@ those are not flashable. If the newest tag has no ISO, use the last tag that
 lists one. Today the last flashable lite image is
 [v0.1.0-beta.2](https://github.com/sadlowskik/Cameo/releases/tag/v0.1.0-beta.2).
 
-- **Universal** (`cameo-*.iso`) — every AMD card. Unsure? This one.
+- **Universal** (`cameo-*.iso`) — Vulkan + ROCm stack. Unsure? Start here, then verify the detected tier.
 - **Lite** (`cameo-lite-*.iso`) — Vulkan only, known old card (RX 580, APU).
 
 Verify against `SHA256SUMS` before flashing.
@@ -53,10 +53,10 @@ test (~0.5B). Extra GGUFs: drop them in `/var/lib/cameo/models`.
 Live USB (without installing): the console key **changes every reboot**.
 Install to disk to keep it.
 
-## Fleet: that’s when a node gets a network
+## Cameo Mesh: that’s when a node gets a network
 
 A single box stays air-gapped after you flash. To attach this machine as a
-**node** in a fleet, give it a network:
+**Cameo Link node** in a Mesh, give it a network:
 
 - Ethernet: plug in (DHCP is automatic).
 - Wi-Fi, on that node only:
@@ -69,8 +69,10 @@ iwctl
   station wlan0 connect 'YourSSID'
 ```
 
-Then point it at the hub (`CAMEO_HUB_URL` / `cameo fleet`). Extra models from
-the internet are `cameo pull` — also later, not required to chat.
+Then pair Cameo Link to the hub with a one-time code; see
+[Cameo Mesh](cameo-mesh.md). The legacy `cameo fleet` command remains for static
+node lists. Extra models from the internet are `cameo pull` — also later, not
+required to chat.
 
 ## Developers
 
@@ -78,10 +80,15 @@ Container path: host owns the GPU driver. Not the appliance.
 
 ```bash
 podman build -f containers/Containerfile -t cameo:vulkan .
-podman run --rm -p 9090:9090 -v cameo-models:/var/lib/cameo/models \
+podman run --rm -e CAMEO_CONSOLE_HOST=0.0.0.0 -p 127.0.0.1:9090:9090 \
+  -v cameo-models:/var/lib/cameo/models \
   --device=/dev/kfd --device=/dev/dri --group-add video --group-add render \
   cameo:vulkan
 ```
+
+The port is deliberately published on host loopback only because cameod's
+built-in listener is HTTP. Use an SSH/VPN tunnel or a TLS reverse proxy for
+access from another machine.
 
 Build the ISO yourself on an Arch host (`mkarchiso`, root):
 

@@ -1,0 +1,100 @@
+{
+  "contract_version": "cameo-capabilities/v1",
+  "protocol_major": 1,
+  "inference": {
+    "openai_compatible_gateway": {
+      "maturity": "stable",
+      "available": true,
+      "detail": "Authenticated /v1 gateway for chat completions, completions, and embeddings."
+    },
+    "streaming": {
+      "maturity": "stable",
+      "available": true,
+      "detail": "Server-sent event streaming is proxied without response buffering."
+    },
+    "native_tool_calls": {
+      "maturity": "unsupported",
+      "available": false,
+      "detail": "Tool orchestration is currently owned by the agent harness."
+    }
+  },
+  "harness": {
+    "knossos_session_control": {
+      "maturity": "stable",
+      "available": true,
+      "detail": "Authenticated session board and Knossos control routes are available."
+    },
+    "vram_leases": {
+      "maturity": "stable",
+      "available": true,
+      "detail": "Session-owned VRAM leases prevent surprise eviction by default."
+    },
+    "context_discovery": {
+      "maturity": "stable",
+      "available": true,
+      "detail": "Per-model context limits are exposed in engine profiles."
+    }
+  },
+  "models": {
+    "verified_downloads": {
+      "maturity": "stable",
+      "available": true,
+      "detail": "Known aliases are pinned by SHA-256 and incomplete downloads are isolated."
+    },
+    "hardware_recommendation": {
+      "maturity": "preview",
+      "available": true,
+      "detail": "Detected accelerator and host headroom select the highest-ranked checksum-pinned profile for chat, coding, or agent work."
+    },
+    "one_action_setup": {
+      "maturity": "preview",
+      "available": true,
+      "detail": "cameo setup preflights policy and runtime, downloads a pinned model, verifies SHA-256, configures serving arguments, and starts on loopback by default."
+    }
+  },
+  "mesh": {
+    "scheduling": {
+      "maturity": "preview",
+      "available": true,
+      "detail": "Trust, health, locality, affinity, deadline, warm-model, and load-aware admission is available on /hub/dispatch."
+    },
+    "enrollment_transport": "paired_bearer_or_legacy_farm_token",
+    "device_pairing": {
+      "maturity": "preview",
+      "available": true,
+      "detail": "An operator creates a ten-minute one-time code; redemption issues a per-node 256-bit credential stored only as a hub-side digest. Node and hub identity state survives restart; removal durably revokes it. Certificate binding remains pending."
+    },
+    "mutual_tls": {
+      "maturity": "planned",
+      "available": false,
+      "detail": "Hub-to-node callbacks require HTTPS but are not yet mutually authenticated with device certificates."
+    },
+    "distributed_model_sharding": {
+      "maturity": "planned",
+      "available": false,
+      "detail": "Cameo routes whole inference requests; it does not shard one model execution across LAN nodes."
+    }
+  },
+  "security": {
+    "role_scoped_keys": {
+      "maturity": "stable",
+      "available": true,
+      "detail": "Consumer and operator credentials are separated and compared in constant time."
+    },
+    "local_harness_bypass": {
+      "maturity": "stable",
+      "available": true,
+      "detail": "Keyless harness control is restricted to local transport in self-host posture."
+    },
+    "request_rate_limits": {
+      "maturity": "stable",
+      "available": true,
+      "detail": "Bounded per-client fixed-window admission protects pairing, invalid credentials, inference, control, and public HTTP routes."
+    },
+    "release_security_review": {
+      "maturity": "preview",
+      "available": true,
+      "detail": "Security regression tests exist; independent release review and platform certification remain pending."
+    }
+  }
+}

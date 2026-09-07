@@ -11,7 +11,7 @@
 
 <!-- wordmark + tagline, bottom-left -->
 <text x="40" y="430" fill="#F6F4F2" font-family="'DejaVu Sans','Helvetica Neue',Arial,sans-serif" font-size="58" font-weight="700" letter-spacing="1">cameo</text>
-<text x="44" y="460" fill="#9A958C" font-family="'DejaVu Sans Mono','DejaVu Sans',monospace" font-size="16" letter-spacing="1">any AMD card <tspan fill="#FF7A1A">&#8594;</tspan> a working LLM box</text>
+<text x="44" y="460" fill="#9A958C" font-family="'DejaVu Sans Mono','DejaVu Sans',monospace" font-size="16" letter-spacing="1">supported AMD card <tspan fill="#FF7A1A">&#8594;</tspan> a working LLM box</text>
 
 <!-- the mark, bottom-right -->
 <g transform="translate(486,372) scale(0.2083)">

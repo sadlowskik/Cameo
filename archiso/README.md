@@ -59,12 +59,10 @@ sudo dd if=archiso/out/cameo-*.iso of=/dev/sdX bs=4M status=progress oflag=sync
   `build/models/` across rebuilds.
 - **The CLI** — `cameo` is on `PATH` in the image, wordmark and all.
 - **The console** — `cameod.service` starts the browser control plane on boot.
-  `cameo-console-init` generates a random key and binds all interfaces each boot,
-  so out of the box it's a **key-protected home console** you open from your own
-  machine's browser (the URL + key are printed on first boot). Override in
-  `/etc/cameo/cameod.env` — e.g. `CAMEO_CONSOLE_HOST=127.0.0.1` to force
-  loopback-only, or pin a fixed key. A non-loopback bind without a key is refused
-  on purpose, so the GPU is never published unauthenticated.
+  `cameo-console-init` generates a random key and binds to loopback each boot.
+  The built-in listener is HTTP-only, so use an SSH/VPN tunnel or terminate TLS
+  at a reverse proxy before exposing it to a LAN. Override settings in
+  `/etc/cameo/cameod.env`; a non-loopback bind without a key is always refused.
 
 ## What's in the image
 `packages.x86_64`: kernel + amdgpu + Vulkan userspace (every tier), ROCm runtime

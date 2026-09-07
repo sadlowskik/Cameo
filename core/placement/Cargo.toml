@@ -14,6 +14,9 @@ cameo-moe-harness.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 
+[dev-dependencies]
+serde_json.workspace = true
+
 # Only for `PR_SET_PDEATHSIG` at the execution boundary, so a killed `cameo`
 # does not leave `llama-server` holding VRAM. Linux-gated: no other target
 # has the call, and no other target has the boundary.
