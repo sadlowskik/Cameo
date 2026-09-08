@@ -1,0 +1,390 @@
+#!/usr/bin/env python3
+"""Installed-Linux adapter for the Cameo A/B transaction state machine."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import shutil
+import stat
+import subprocess
+import sys
+import urllib.request
+from pathlib import Path
+
+from update_host_transaction import (
+    HostTransaction,
+    UpdateError,
+    sha256_file,
+    state_support_from_manifest,
+    validate_state_support,
+)
+
+
+LAYOUT = Path("/etc/cameo/update-layout.json")
+STATE = Path("/var/lib/cameo/update")
+JOURNAL = STATE / "transaction.json"
+SLOT_STATE_SCHEMA = Path("/usr/share/cameo/state-schema.json")
+PERSISTENT_STATE_SCHEMA = Path("/var/lib/cameo/state-schema.json")
+INACTIVE = Path("/run/cameo-update/inactive")
+ALLOWED_TARGETS = (
+    "/usr/local/bin/",
+    "/usr/local/lib/cameo/",
+    "/etc/systemd/system/cameo-",
+    "/usr/share/cameo/",
+)
+
+
+def run(arguments: list[str], *, capture: bool = False, ok=(0,)) -> str:
+    result = subprocess.run(
+        arguments,
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE if capture else None,
+        stderr=subprocess.PIPE if capture else None,
+    )
+    if result.returncode not in ok:
+        detail = (result.stderr or "").strip() if capture else ""
+        raise UpdateError(f"command failed ({result.returncode}): {arguments[0]} {detail}")
+    return (result.stdout or "").strip()
+
+
+def part_device(partuuid: str) -> Path:
+    path = Path("/dev/disk/by-partuuid") / partuuid
+    if path.is_symlink():
+        resolved = path.resolve()
+    else:
+        resolved = path
+    try:
+        mode = resolved.stat().st_mode
+    except OSError as exc:
+        raise UpdateError(f"partition {partuuid} is unavailable: {exc}") from exc
+    if not stat.S_ISBLK(mode):
+        raise UpdateError(f"partition {partuuid} is not a block device")
+    return resolved
+
+
+def mounted_source(target: str) -> Path:
+    source = run(["findmnt", "-n", "-o", "SOURCE", "--target", target], capture=True)
+    if not source:
+        raise UpdateError(f"{target} is not mounted")
+    return Path(source).resolve()
+
+
+def safe_release(value: str) -> str:
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", value):
+        raise UpdateError("release_id is unsafe for a boot entry")
+    return value
+
+
+def safe_target(root: Path, target: str) -> Path:
+    if not target.startswith(ALLOWED_TARGETS) or ".." in Path(target).parts:
+        raise UpdateError(f"unsafe install target: {target}")
+    destination = root / target.lstrip("/")
+    cursor = destination.parent
+    while cursor != root:
+        if cursor.is_symlink():
+            raise UpdateError(f"linked install target: {target}")
+        cursor = cursor.parent
+    destination.resolve(strict=False).relative_to(root.resolve())
+    return destination
+
+
+class LinuxOperations:
+    def __init__(self):
+        if sys.platform != "linux" or os.geteuid() != 0:
+            raise UpdateError("host updates require root on installed Linux")
+        metadata = LAYOUT.lstat()
+        if LAYOUT.is_symlink() or not LAYOUT.is_file():
+            raise UpdateError("installed update layout must be a regular file")
+        if metadata.st_uid != 0 or stat.S_IMODE(metadata.st_mode) & 0o022:
+            raise UpdateError("installed update layout must be root-owned and not group/world writable")
+
+    def observed_active_slot(self, layout: dict) -> str:
+        command_line = Path("/proc/cmdline").read_text(encoding="ascii")
+        matches = re.findall(r"(?:^|\s)cameo\.slot=([AB])(?:\s|$)", command_line)
+        if len(matches) != 1:
+            raise UpdateError("kernel command line must identify exactly one Cameo slot")
+        slot = matches[0]
+        expected = part_device(layout["slots"][slot]["partuuid"])
+        if mounted_source("/") != expected:
+            raise UpdateError("booted root device does not match its recorded slot")
+        return slot
+
+    def preflight(self, layout: dict, manifest: dict, inactive: str) -> None:
+        if mounted_source("/boot") != part_device(layout["boot"]["partuuid"]):
+            raise UpdateError("boot partition identity changed")
+        persistent = part_device(layout["persistent"]["partuuid"])
+        if mounted_source("/.cameo-state") != persistent:
+            raise UpdateError("persistent partition identity changed")
+        inactive_device = part_device(layout["slots"][inactive]["partuuid"])
+        if run(["findmnt", "-n", "-o", "TARGET", "--source", str(inactive_device)], capture=True, ok=(0, 1)):
+            raise UpdateError("inactive slot is already mounted")
+        required = sum(
+            (Path(manifest["_bundle"]) / item["source"]).stat().st_size
+            for item in manifest["files"]
+        ) * 2 + 512 * 1024 * 1024
+        capacity = int(run(["blockdev", "--getsize64", str(inactive_device)], capture=True))
+        if required > capacity:
+            raise UpdateError(f"inactive slot is too small; need {required} bytes")
+
+    def drain(self) -> None:
+        run(["systemctl", "stop", "cameod.service"])
+        run(["systemctl", "is-active", "--quiet", "cameod.service"], ok=(3,))
+
+    def snapshot_state(self, destination: Path) -> str:
+        endpoints = Path("/var/lib/cameo/endpoints")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if endpoints.exists():
+            run(["cameod", "state", "backup", str(endpoints), str(destination)])
+        else:
+            descriptor = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+                json.dump({"schema": "cameo-empty-state/v1"}, stream)
+                stream.write("\n")
+                stream.flush()
+                os.fsync(stream.fileno())
+        return sha256_file(destination)
+
+    def write_inactive(self, layout: dict, manifest: dict, bundle: Path, inactive: str) -> str:
+        device = part_device(layout["slots"][inactive]["partuuid"])
+        INACTIVE.mkdir(parents=True, exist_ok=True)
+        run(["mkfs.ext4", "-F", "-L", f"CAMEO-{inactive}", str(device)])
+        run(["mount", str(device), str(INACTIVE)])
+        try:
+            run(
+                [
+                    "rsync", "-aHAX", "--numeric-ids", "--delete", "--one-file-system",
+                    "--exclude=/boot/***", "--exclude=/.cameo-state/***",
+                    "--exclude=/dev/***", "--exclude=/proc/***", "--exclude=/run/***",
+                    "--exclude=/sys/***", "--exclude=/tmp/***", "--exclude=/mnt/***",
+                    "/", str(INACTIVE) + "/",
+                ]
+            )
+            for item in manifest["files"]:
+                source = bundle / item["source"]
+                if source.is_symlink() or not source.is_file():
+                    raise UpdateError(f"unsafe component source: {item['source']}")
+                expected = item.get("sha256", "").lower()
+                if len(expected) != 64 or sha256_file(source) != expected:
+                    raise UpdateError(f"component changed after verification: {item['source']}")
+                destination = safe_target(INACTIVE, item["target"])
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                if destination.exists() and destination.is_symlink():
+                    raise UpdateError(f"linked install target: {item['target']}")
+                temporary = destination.with_name(destination.name + ".cameo-next")
+                with source.open("rb") as read, temporary.open("xb") as write:
+                    shutil.copyfileobj(read, write, 1024 * 1024)
+                    write.flush()
+                    os.fsync(write.fileno())
+                os.chmod(temporary, int(item.get("mode", "0644"), 8))
+                os.replace(temporary, destination)
+            self._rewrite_fstab(layout["slots"][inactive]["partuuid"])
+            marker = INACTIVE / "etc/cameo/slot"
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text(inactive + "\n", encoding="ascii")
+            support = state_support_from_manifest(manifest)
+            schema_path = INACTIVE / "usr/share/cameo/state-schema.json"
+            schema_path.parent.mkdir(parents=True, exist_ok=True)
+            schema_path.write_text(
+                json.dumps(
+                    {"schema": "cameo-state-support/v1", **support},
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            run(["sync", "-f", str(INACTIVE)])
+        except BaseException:
+            run(["umount", str(INACTIVE)], ok=(0, 32))
+            raise
+        return hashlib.sha256(
+            (manifest["release_id"] + inactive).encode("utf-8")
+        ).hexdigest()
+
+    def _rewrite_fstab(self, partuuid: str) -> None:
+        path = INACTIVE / "etc/fstab"
+        lines = path.read_text(encoding="utf-8").splitlines()
+        roots = 0
+        output = []
+        for line in lines:
+            fields = line.split()
+            if len(fields) >= 2 and fields[1] == "/" and not line.lstrip().startswith("#"):
+                fields[0] = f"PARTUUID={partuuid}"
+                line = "\t".join(fields)
+                roots += 1
+            output.append(line)
+        if roots != 1:
+            raise UpdateError("inactive fstab must contain exactly one root mount")
+        path.write_text("\n".join(output) + "\n", encoding="utf-8")
+
+    def stage_boot_trial(self, layout: dict, manifest: dict, inactive: str, generation: str) -> str:
+        release = safe_release(manifest["release_id"])
+        boot_mount = INACTIVE / "boot"
+        boot_mount.mkdir(parents=True, exist_ok=True)
+        run(["mount", "--bind", "/boot", str(boot_mount)])
+        try:
+            module_roots = sorted((INACTIVE / "usr/lib/modules").glob("*"))
+            candidates = [path for path in module_roots if path.is_dir() and (path / "vmlinuz").is_file()]
+            if not candidates:
+                raise UpdateError("inactive slot contains no kernel with matching modules")
+            kernel_version = candidates[-1].name
+            stem = f"cameo-{release}-{inactive}-{generation[:12]}"
+            kernel = Path("/boot") / f"vmlinuz-{stem}"
+            initramfs = Path("/boot") / f"initramfs-{stem}.img"
+            shutil.copy2(candidates[-1] / "vmlinuz", kernel)
+            run(["arch-chroot", str(INACTIVE), "mkinitcpio", "-k", kernel_version, "-g", str(initramfs)])
+            if layout["bootloader"] == "systemd-boot":
+                entry_id = f"{stem}+3"
+                entry = Path("/boot/loader/entries") / f"{entry_id}.conf"
+                entry.write_text(
+                    "\n".join(
+                        [
+                            f"title Cameo {release} slot {inactive} trial",
+                            "sort-key cameo",
+                            f"version {release}-{inactive}",
+                            f"linux /{kernel.name}",
+                            f"initrd /{initramfs.name}",
+                            f"options root=PARTUUID={layout['slots'][inactive]['partuuid']} rw cameo.slot={inactive}",
+                            "",
+                        ]
+                    ),
+                    encoding="utf-8",
+                )
+                run(["bootctl", "set-oneshot", entry_id])
+                return entry_id
+            entry_id = f"cameo-{inactive}-{release}"
+            fragment = Path("/boot/grub") / f"{entry_id}.cfg"
+            fragment.write_text(
+                f"menuentry 'Cameo slot {inactive} trial {release}' --id '{entry_id}' {{\n"
+                f"  linux /{kernel.name} root=PARTUUID={layout['slots'][inactive]['partuuid']} rw cameo.slot={inactive}\n"
+                f"  initrd /{initramfs.name}\n}}\n",
+                encoding="utf-8",
+            )
+            grub_cfg = Path("/boot/grub/grub.cfg")
+            with grub_cfg.open("a", encoding="utf-8") as stream:
+                stream.write(f"\nsource /grub/{fragment.name}\n")
+            run(["grub-reboot", entry_id])
+            return entry_id
+        finally:
+            run(["umount", str(boot_mount)], ok=(0, 32))
+            run(["umount", str(INACTIVE)], ok=(0, 32))
+
+    def health_check(self, journal: dict) -> None:
+        run(["systemctl", "is-active", "--quiet", "cameod.service"])
+        for endpoint in ("healthz", "readyz"):
+            try:
+                with urllib.request.urlopen(f"http://127.0.0.1:9090/{endpoint}", timeout=10) as response:
+                    body = json.load(response)
+            except Exception as exc:
+                raise UpdateError(f"{endpoint} probe failed: {exc}") from exc
+            if response.status != 200 or body.get("status") != "ok":
+                raise UpdateError(f"{endpoint} probe did not report ok")
+
+    def bless(self, journal: dict) -> None:
+        if Path("/sys/firmware/efi").is_dir():
+            run(["systemd-bless-boot"])
+        else:
+            run(["grub-set-default", journal["boot_entry"]])
+
+    def select_prior(self, journal: dict) -> None:
+        if Path("/sys/firmware/efi").is_dir():
+            run(["bootctl", "set-oneshot", journal["prior_boot_entry"]])
+        else:
+            run(["grub-reboot", journal["prior_boot_entry"]])
+
+    def discard_inactive(self, journal: dict) -> None:
+        run(["umount", str(INACTIVE)], ok=(0, 32))
+
+    def _read_state_support(self, path: Path, *, require_reads: bool) -> dict:
+        try:
+            metadata = path.lstat()
+        except OSError as exc:
+            raise UpdateError(f"state schema file missing: {path}: {exc}") from exc
+        if path.is_symlink() or not path.is_file() or metadata.st_size > 4096:
+            raise UpdateError(f"unsafe state schema file: {path}")
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise UpdateError(f"invalid state schema file {path}: {exc}") from exc
+        if not isinstance(value, dict) or value.get("schema") != "cameo-state-support/v1":
+            raise UpdateError(f"unsupported state schema file {path}")
+        return validate_state_support(value, require_reads=require_reads)
+
+    def installed_state_support(self) -> dict:
+        return self._read_state_support(SLOT_STATE_SCHEMA, require_reads=True)
+
+    def persistent_state_schema(self) -> dict:
+        if not PERSISTENT_STATE_SCHEMA.exists():
+            installed = self.installed_state_support()
+            return {"writes": installed["writes"], "reads": [installed["writes"]]}
+        return self._read_state_support(PERSISTENT_STATE_SCHEMA, require_reads=False)
+
+    def restore_state(self, backup: Path) -> None:
+        endpoints = Path("/var/lib/cameo/endpoints")
+        endpoints.parent.mkdir(parents=True, exist_ok=True)
+        run(["cameod", "state", "restore", str(backup), str(endpoints)])
+
+    def record_persistent_schema(self, writes: int) -> None:
+        PERSISTENT_STATE_SCHEMA.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "schema": "cameo-state-support/v1",
+            "writes": writes,
+            "reads": [writes],
+        }
+        temporary = PERSISTENT_STATE_SCHEMA.with_name(
+            PERSISTENT_STATE_SCHEMA.name + ".next"
+        )
+        if temporary.exists():
+            temporary.unlink()
+        with temporary.open("x", encoding="utf-8") as stream:
+            json.dump(payload, stream, sort_keys=True, separators=(",", ":"))
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, PERSISTENT_STATE_SCHEMA)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(prog="cameo-update")
+    parser.add_argument(
+        "command",
+        choices=("status", "apply", "commit", "auto-commit", "rollback", "recover"),
+    )
+    parser.add_argument("bundle", nargs="?")
+    parser.add_argument("manifest", nargs="?")
+    arguments = parser.parse_args()
+    operations = LinuxOperations()
+    transaction = HostTransaction(LAYOUT, JOURNAL, STATE, operations)
+    if arguments.command == "apply":
+        if not arguments.bundle or not arguments.manifest:
+            parser.error("apply requires bundle and verified manifest")
+        result = transaction.apply(Path(arguments.bundle), Path(arguments.manifest))
+    elif arguments.command == "commit":
+        result = transaction.commit()
+    elif arguments.command == "auto-commit":
+        current = transaction.status()
+        result = (
+            transaction.commit()
+            if current.get("phase") in {"boot_trial", "health_checked"}
+            else current
+        )
+    elif arguments.command == "rollback":
+        result = transaction.rollback()
+    elif arguments.command == "recover":
+        result = transaction.recover()
+    else:
+        result = transaction.status()
+    print(json.dumps(result, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except (UpdateError, OSError, ValueError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"cameo-update: {exc}")

@@ -116,7 +116,8 @@ complete merely because a similarly named module exists.
 | KNS-RTN-001 | Partial | Durable cron subset and skip-overlap implemented; durable minute claims, UTC next-run/history UI and restart tests added; queue-one and persisted cooldown added with restart/configuration/claim tests; replace and parallel overlap added with cancel/concurrent fixtures; non-UTC zones and multi-mission fairness remain open. |
 | KNS-REP-001 | Implemented locally | Field exists in nested Knossos release tree and CI/package tools; dirty submodule changes are not a published release commit. |
 | KNS-LOOP-001 | Partial | `mission.rs` contract/state and runtime wiring exist; full amendments and operator contract UI acceptance unverified. |
-| KNS-LOOP-002 / 003 / 004 / 005 | Unverified as complete | Gate, serve, result and memory primitives exist; progressive autonomy, grouped approvals, lineage, accepted-capability metrics need end-to-end qualification. |
+| KNS-LOOP-002 / 003 / 005 | Unverified as complete | Gate, result and memory primitives exist; progressive autonomy, grouped approvals, and accepted-capability metrics need end-to-end qualification. |
+| KNS-LOOP-004 | Partial | Task, Serve, ACP and REPL checkpoint wiring exists; fresh-process CLI, Serve and ACP continuation tests pass with policy/environment checks. Accept/revise/revert lineage, unsupported tool capsules, uncertain-action reconciliation and live-provider recovery remain. |
 | KNS-LOOP-006 | Partial | Journal/snapshot/replay and live wiring tested; schema migration and power-failure qualification remain. |
 | KNS-LOOP-007 | Partial | Context budgets/compaction tested; full semantic invariant suite and long-mission proof remain. |
 | KNS-LOOP-008 / 009 / 010 | Partial | Tool dispatch, planning, cancellation and recovery primitives; complete action protocol, plan DAG and resource-lock scheduler unverified. |
@@ -141,7 +142,7 @@ complete merely because a similarly named module exists.
 | CAM-MDL-001 | Partial | SHA-256 downloads/cache lifecycle exist; content-addressed catalogue, model-license policy, quarantine/offline bundle and full supply-chain gate remain. |
 | CAM-STATE-001 | Partial production blocker | Versioned, checksummed, locked endpoint intent snapshots and bounded restart recovery now implemented; offline endpoint-intent check/backup/restore now pass; durable lease ownership and v1-to-v2 migration now pass; bounded orphan expiry now passes; session identity recovery now passes; process adoption and hardware/power recovery remain. |
 | CAM-STO-001 | Partial | Offline guided installer/persistence exist; encryption, quotas, verified backups/restores and granular factory reset remain. |
-| CAM-UPD-001 | Open production blocker | `cameo-update` verifies signed offline bundles and preflights compatibility; host apply remains disabled. A/B filesystem fixtures now bind exact inputs, lock mutations, and discard interrupted promotion; bootable staging/health commit/automatic rollback remain open. |
+| CAM-UPD-001 | Partial | The installer provisions A/B roots and separate persistent state; signed application bundles are built deterministically and the host journal stages a boot trial, health-commits it, restores incompatible state before fallback, and recovers the layout-rename crash window. Full-OS payload construction plus observed Linux interruption/signing/hardware evidence remain. |
 | CAM-ISO-001 | Partial | Full/lite builds and QEMU step exist; release integrity fixed here. Reproducibility, installation and power-interruption tests remain unexecuted here. |
 | CAM-HW-001 | Partial/external evidence | Detection/recommendation and Phase-1 runbook exist; no certified hardware matrix or calibrated fit results established. |
 | CAM-MESH-001 | Partial | Pairing and request scheduler preview exist; manifest explicitly says no mTLS or sharding; discovery, mixed-version/failure/owner-reclaim qualification remain. |
@@ -154,9 +155,11 @@ complete merely because a similarly named module exists.
 
 ## Verification and limits
 
-- Cameo: baseline 258 Rust tests passed; **289 test results pass after changes**. Full
-  workspace test, format and strict all-target Clippy checks all pass.
-- Knossos: 561 Rust test results passed, including harness/serve/mock integration.
+- Cameo: baseline 258 Rust tests passed; **293 test results pass after changes**
+  and were revalidated on 2026-09-07. Full workspace test, format and strict
+  all-target Clippy checks all pass.
+- Knossos: 568 Rust test results passed on 2026-09-07, including
+  harness/serve/mock integration.
   Live-engine tests can return early without configured providers: this is **not**
   cloud/local live-provider qualification.
 - Field: all scripted suites passed, including 100,004-event stress fixture;
@@ -181,7 +184,7 @@ complete merely because a similarly named module exists.
    update work; never adopt or kill unknown processes by PID alone.
 3. Complete serving capability negotiation and cancellation against a pinned
    runtime, then mesh mTLS enrollment/revocation and failure qualification.
-4. Complete model/storage/update transactions and signed release manifests.
+4. Complete model/storage transactions and the full-OS update payload; execute the configured signed release path on Linux.
 5. Finish the Knossos mission/environment/delivery gaps above, UI/accessibility,
    and hardware/live-provider/upgrade RC acceptance with retained evidence.
 

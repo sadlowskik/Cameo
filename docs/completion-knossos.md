@@ -4,7 +4,8 @@
 
 This plan covers only `daedalus/knossos-rs` and its release-facing documentation. It is
 an implementation plan, not release qualification. The 2026-09-05 audit is
-correct that the locally passing 554-test Rust suite cannot qualify providers:
+correct that the locally passing 568-test Rust suite, revalidated 2026-09-07,
+cannot qualify providers:
 `daedalus/knossos-rs/tests/live_engine.rs` returns successfully without contacting a model when
 `KNOSSOS_LIVE_OLLAMA` is absent (unless its strict opt-in flag is set).
 
@@ -100,15 +101,23 @@ modules merely exist:
 
 ## LOOP-004/006 recovery boundary
 
-`knossos task --persist-conversation` / `--resume-mission` restore a portable
-checkpoint into Talos after `MissionStore::open_for_resume`, refuse MCP,
-delegation, and dry-run restore, and recheck environment drift. Serve and ACP
-still do not expose that path. A complete LOOP-004/006 implementation must also
-restore original contract/policy/budgets, provider capability state, and
-unresolved action intents across those interfaces. It must refuse to execute
-when that capsule is absent, an intent is uncertain, or environment evidence
-has drifted; historical replay remains read-only. CLI helper coverage is not
-crash-recovery or live-provider evidence.
+`knossos task`, `serve`, and `repl` expose `--persist-conversation` and
+`--resume-mission`; ACP enables persistence at startup and accepts
+`resumeMission` on `session/new`, where the editor supplies the workspace.
+All routes restore through `MissionStore::open_for_resume`, refuse MCP,
+delegation and dry-run restore, and recheck environment drift. Fresh-process
+CLI, Serve and ACP tests preserve mission identity; the CLI test also proves
+the accepted contract, execution-policy hash, accumulated quota and prior
+conversation survive without replaying an earlier write. REPL uses the same
+Talos restore path and has command-line wiring coverage.
+
+This is a partial LOOP-004/006 closure, not release qualification. A complete
+implementation still needs accept/revise/revert lineage, MCP/delegation and
+preview capsules, provider capability state, unresolved-action reconciliation,
+schema migration and power-failure coverage, plus live-provider recovery. It
+must continue to refuse execution when a capsule is absent, an intent is
+uncertain, or environment evidence has drifted; historical replay remains
+read-only.
 
 The Cameo adapter now applies advertised native-tool, context, completion-token,
 and request-byte ceilings from v1 discovery instead of claiming generic OpenAI

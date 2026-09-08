@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 MAX_MANIFEST = 1024 * 1024
-ALLOWED = ("/usr/local/bin/", "/usr/local/lib/cameo/", "/etc/cameo/", "/usr/share/cameo/")
+ALLOWED = ("/usr/local/bin/", "/usr/local/lib/cameo/", "/etc/systemd/system/cameo-", "/usr/share/cameo/")
 
 def die(message): raise SystemExit(f"cameo-update: {message}")
 
@@ -18,7 +18,13 @@ def load(path):
     except (OSError, UnicodeError, json.JSONDecodeError) as exc: die(f"invalid manifest: {exc}")
     if not isinstance(data, dict) or data.get("schema") != "cameo-update/v1": die("unsupported manifest schema")
     if not isinstance(data.get("release_id"), str) or not data["release_id"]: die("missing release_id")
-    if not isinstance(data.get("compatibility"), dict) or not isinstance(data["compatibility"].get("id"), str): die("missing compatibility id")
+    if not isinstance(data.get("compatibility"), dict) or not isinstance(data["compatibility"].get("id"), str) or not data["compatibility"]["id"].strip(): die("missing compatibility id")
+    state = data["compatibility"].get("state")
+    if not isinstance(state, dict): die("missing persistent-state schema contract")
+    writes, reads = state.get("writes"), state.get("reads")
+    if not isinstance(writes, int) or isinstance(writes, bool) or writes < 1: die("invalid state schema writes")
+    if not isinstance(reads, list) or not reads or writes not in reads: die("invalid state schema reads")
+    if any(not isinstance(value, int) or isinstance(value, bool) or value < 1 for value in reads): die("invalid state schema reads")
     if not isinstance(data.get("files"), list) or not data["files"]: die("manifest has no files")
     return data
 
@@ -69,6 +75,20 @@ def main():
         try: installed = compatibility_file.read_text(encoding="ascii").strip()
         except (OSError, UnicodeError) as exc: die(f"installed compatibility identity unavailable: {exc}")
         if installed != manifest["compatibility"]["id"]: die("bundle is incompatible with this installation")
+        state = manifest["compatibility"]["state"]
+        persistent = root / "var/lib/cameo/state-schema.json"
+        if persistent.is_file() and not persistent.is_symlink():
+            try:
+                current = json.loads(persistent.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+                die(f"persistent state schema unreadable: {exc}")
+            current_writes = current.get("writes")
+            if isinstance(current_writes, bool) or not isinstance(current_writes, int):
+                die("persistent state schema lacks valid writes")
+            if current_writes not in state["reads"]:
+                die(
+                    f"bundle cannot read persistent state schema {current_writes}"
+                )
         if shutil.disk_usage(root).free < required: die(f"insufficient free space; need {required} bytes")
         return
     die("unknown verifier command")

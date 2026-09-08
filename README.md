@@ -50,11 +50,11 @@ After that the machine does not need the internet. Full walkthrough:
 
 ### ISO appliance
 
-Flash an `.iso` from [Cameo v0.5.0](https://github.com/sadlowskik/Cameo/releases/tag/v0.5.0)
+Flash an `.iso` from [GitHub Releases](https://github.com/sadlowskik/Cameo/releases/latest)
 (not the Source code zip). **Universal** includes Vulkan and ROCm; **lite** is the
 smaller Vulkan-only image. Both editions also include the Rust-native Knossos
-agentic harness. Standalone Linux, Windows, and Apple silicon builds are published
-from the [Knossos Harness releases](https://github.com/sadlowskik/Knossos-Harness/releases/tag/v0.1.0).
+agentic harness. Standalone Windows Knossos is on
+[cameoconstruct.xyz](https://cameoconstruct.xyz/).
 Rufus **DD Image mode**, Etcher, or `dd`. **Disable Secure Boot** if the stick is
 ignored. Boot **Install Cameo to disk**. Log in, open `http://cameo.local:9090`,
 press **Start qwen2.5-0.5b and chat**. No Wi-Fi for that. Network is later: extra
@@ -179,6 +179,13 @@ scripts/phase1/       automated Phase 1 hardware validation
 docs/                 architecture, tiers, API, definition-of-done
 ```
 
+## Testers
+
+Cameo is open source. The people who run it on real AMD hardware before v1 get
+a permanent line in git: [the roll](docs/testers.md). File a
+[hardware report](.github/ISSUE_TEMPLATE/hardware-report.yml) and check consent
+if you want your name there.
+
 ## Documentation
 
 - [Production roadmap audit](docs/production-audit.md) — implemented work, fixes, and remaining release blockers.
@@ -204,6 +211,11 @@ certificate-bound mesh identity, distributed model sharding, and Kubernetes are
 still in progress. Request-level Cameo Mesh scheduling and pairing are preview.
 See
 [`CAMEO_PROJECT_PLAN.md`](CAMEO_PROJECT_PLAN.md) for the full plan.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Private security reports:
+[SECURITY.md](SECURITY.md).
 
 ## License
 

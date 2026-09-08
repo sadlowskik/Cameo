@@ -22,31 +22,58 @@ release public key at `/etc/cameo/update-root.pem`. Preflight also requires an
 installed `/etc/cameo/compatibility-id` matching the signed manifest. Release
 ISOs ship that public key from `archiso/airootfs/etc/cameo/update-root.pem`.
 GitHub Actions can overwrite it with the `CAMEO_UPDATE_ROOT_PEM` repository
-secret. The matching private key is the `CAMEO_UPDATE_PRIVATE_PEM` secret; the
-ISO publish job signs `SHA256SUMS` with it. Never put the private key in git or
+secret. The matching private key is the `CAMEO_UPDATE_PRIVATE_PEM` secret; tagged
+ISO publication now fails closed unless it can sign both the application-update
+manifest and `SHA256SUMS`. Never put the private key in git or
 on the image. A public key supplied inside an untrusted bundle is not a trust
 root.
 
 To provision signing on GitHub: Settings → Secrets and variables → Actions →
 New repository secret. Name `CAMEO_UPDATE_PRIVATE_PEM`, paste
 `cameo-update-private.pem`. Then tag `v*` or run the ISO workflow. The runner
-builds the OS and, on a tag, attaches signed checksums to the GitHub Release.
+builds the OS and, on a tag, attaches the signed application bundle and signed
+checksums to the GitHub Release.
+
+`scripts/build_update_bundle.py` is the keyless producer used by CI. It creates
+a deterministic directory, sorts targets, hashes the bytes it copied, rejects
+links/duplicates/unsafe modes, and refuses to replace an existing output. A
+release job signs the resulting canonical `manifest.json` only after the build;
+the producer never accepts or reads a private key.
 
 Verification checks the signature, manifest structure, file destinations and
 component digests. Preflight additionally checks installed compatibility and
 available space. Success does not install anything or certify that the system
-can boot the bundle. The current file-bundle schema is an initial increment;
-full OS/runtime/model component provenance and migration policy remain open.
+can boot the bundle. The published application bundle covers the Cameo
+CLI/daemon, Knossos binary, update runtime, and its systemd units. `/etc/cameo`
+is deliberately excluded because it is persistent operator/appliance state, not
+an inactive-slot target. A separately built full-OS payload (kernel, firmware, GPU/runtime packages
+and installed root) is still missing, so application-bundle success must not be
+described as a full appliance operating-system update. Models remain persistent
+data rather than slot payloads.
 
-`apply`, `commit`, and `rollback` reject the current single-root installation.
-The installer uses ext4 with separate boot storage; a filesystem snapshot alone
-cannot guarantee rollback of the kernel, bootloader and package database together.
-No automatic repartition or destructive migration is provided.
+Installed systems now have two 24 GiB OS slots plus separate boot and
+persistent-state partitions. `cameo-update apply` stages the inactive slot and a
+systemd-boot assessed trial; `commit` / `rollback` / `recover` follow the host
+transaction journal. Legacy single-root images still report apply as unavailable.
 
-The [Cameo completion plan](completion-cameo.md) specifies the pending A/B design:
-separate OS slots, persistent identity/configuration/models/state, bounded trial
-boots, representative health probes, and prior-slot fallback. The regular-file
-simulator exercises proposed decisions; it is not a bootable implementation.
+A signed bundle must name identities for os, kernel, firmware, mesa_vulkan,
+rocm, llama, cameo, knossos, starter_model, and schemas. That is the product
+payload contract; overlay files remain allowlisted product paths. Installed
+systems record `/etc/cameo/compatibility-id` and
+`/etc/cameo/component-identities.json` at install.
+
+Persistent Cameo state is not in either OS slot. Each release declares the
+schema it writes and the schemas it can still read (`compatibility.state` in
+the signed manifest, `/usr/share/cameo/state-schema.json` on the slot,
+`/var/lib/cameo/state-schema.json` on the persistent partition). Apply is
+refused if the new release cannot read the live persistent schema. If the new
+release writes a schema the prior slot cannot read, rollback and
+assessment-fallback restore the pre-update state snapshot *before* selecting
+the old slot. A failed restore does not boot the old slot against unreadable
+state.
+
+Linux interruption, Secure Boot signing, and hardware soak remain qualification
+gates. The regular-file simulator is not a substitute for those runs.
 
 ## Containers
 

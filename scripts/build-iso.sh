@@ -521,6 +521,8 @@ install -Dm755 "$CARGO_TARGET/release/cameo" "$BUILD/airootfs/usr/local/bin/came
 install -Dm755 "$CARGO_TARGET/release/cameod" "$BUILD/airootfs/usr/local/bin/cameod"
 install -Dm644 "$REPO/contracts/cameo-capabilities-v1.json" "$BUILD/airootfs/etc/cameo/capabilities.json"
 install -Dm755 "$KNOSSOS_TARGET/release/knossos" "$BUILD/airootfs/usr/local/bin/knossos"
+install -Dm644 "$REPO/scripts/update_host_transaction.py" \
+  "$BUILD/airootfs/usr/local/lib/cameo/update_host_transaction.py"
 
 # Trust root for `cameo-update verify`. The private half never enters the image.
 # CAMEO_UPDATE_ROOT_PEM may be a PEM blob or a file path (GitHub Actions secret

@@ -1,6 +1,6 @@
 # Production completion and final-testing plan
 
-Updated 2026-09-06. Owner: coordinating agent. Execution is active.
+Updated 2026-09-07. Owner: coordinating agent. Execution is active.
 
 ## Scope and evidence rules
 
@@ -126,6 +126,10 @@ The companion [issue checklist](completion-issues.md) preserves every numbered
 roadmap issue with its owner. Detailed lane plans refine scope and tests without
 removing requirements. Mark an issue complete only after the coordinator checks
 each acceptance item against retained evidence and records it in the ledger.
+The 2026-09-07 evidence reconciliation distinguishes 6 issues implemented locally,
+47 partial, 7 unverified as complete, 0 open production blockers, and the blocked
+release candidate; none is yet release-accepted. This replaces the earlier generic
+"Open acceptance" label without weakening the release evidence rule.
 The whole goal remains active until the full final-testing/candidate scope is
 proven; neither a plan nor three completed first jobs establishes completion.
 
@@ -134,16 +138,16 @@ proven; neither a plan nor three completed first jobs establishes completion.
 | Job | Current review result | Required next evidence |
 |---|---|---|
 | Shared release gates | Four workflow YAML files parse; ISO Docker option ordering corrected; 61 unique issue IDs accounted for; capability docs/site/JSON generation now drift-checked | Actual CI matrix, container and ISO runs |
-| Sol H12 | Signed verify/preflight remain; filesystem transaction engine now binds exact layout/manifest bytes, owns the writer lock on every mutation, refuses journal clobber, and discards interrupted promotion | Bootable A/B installer layout, host apply, and Linux interruption proof at every journal phase |
-| Terra environment | Streaming SHA-256 environment evidence and CLI `--persist-conversation` / `--resume-mission` restore exist; serve/ACP still do not restore | Serve/ACP restore, MCP/delegation capsules, and production restore preserving contract, policy, budget and uncertain-action state |
+| Sol H12 | A/B install, signed application-bundle producer/consumer, host apply, health promotion, automatic fallback, journal recovery, and schema-aware state restore have local fixtures | Full-OS component payload, observed Linux interruption at every journal phase, signing-secret run, and hardware soak |
+| Terra environment | Streaming SHA-256 environment evidence plus task, Serve, ACP, and REPL checkpoint wiring exist; fresh-process CLI, Serve, and ACP continuation tests preserve the supported mission contract/policy/quota | Accept/revise/revert lineage, MCP/delegation and preview capsules, uncertain-action reconciliation, schema/power-failure coverage, and live-provider recovery |
 | Luna pagination and routines | Bounded traces, queue-one recovery, and replace/parallel overlap are implemented and unit-tested | Timezone/DST expansion, multi-mission fairness, browser acceptance and broader runtime integration |
 | Coordinator discovery | Malformed v1 cannot provision; gateway and Cameo adapter now enforce advertised features/limits | Live pinned-backend and cloud black-box conformance |
 
 Agent reports are inputs to review, not automatic acceptance. These jobs remain
 open until the coordinator checks the requested evidence and production wiring.
 
-All three delegated agents stopped at the account usage limit on 2026-09-06.
-The coordinator continued local H12, gateway, Knossos negotiation, Field overlap,
-and capability-claim work. No reset credit was redeemed. Hardware, Linux ISO,
-signing, and soak gates stay blocked on this host. Field artwork rights are
-recorded from the owner's 2026-09-06 attestation.
+ChatGPT/Codex usage credits were exhausted on 2026-09-07. This coordinator
+continues the same completion goal: A/B host apply is real code, schema-aware
+rollback is in fixtures, and signed manifests now require the full OS/runtime
+identity set. Hardware, observed Linux interruption, ISO signing-secret runs,
+and soak stay blocked on this host.

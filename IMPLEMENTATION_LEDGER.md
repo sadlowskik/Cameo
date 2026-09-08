@@ -1897,7 +1897,8 @@ Knossos environment records now use bounded streaming SHA-256 hashes of project
 instructions, manifests and lockfiles, compare host facts, and reject drift at
 verification. Historical journal inspection remains available when records are
 legacy or drifted. IMPORTANT: open_for_resume is a guarded store helper; no
-production CLI/serve/ACP path restores a persisted Talos conversation yet. A
+production CLI/serve/ACP path restored a persisted Talos conversation at that
+review point. This historical finding is superseded by the LOOP-004 entries below. A
 portable checkpoint, original policy/budget restoration and uncertain-action
 reconciliation remain LOOP-004/006 implementation gates. Do not count helper
 restart tests as completed cross-process agent continuation.
@@ -1973,14 +1974,107 @@ Timezone/DST expansion and multi-mission fairness remain open.
 
 Verification: `server/test/routines.test.mjs` and `routine-queue-recovery.test.mjs`
 pass. Full Field scripted suite passes after the overlap changes, including the
-100,004-event stress fixture. Production Vite build was not re-run for this
-slice; `npm run release:audit` remains a failing artwork-rights gate.
+100,004-event stress fixture. The 2026-09-07 checklist reconciliation reran the
+production Vite build and `npm run release:audit`; both pass after the owner's
+artwork-rights attestation.
 
 ## KNS-LOOP-004 correction - CLI conversation restore (2026-09-06)
 
 The 2026-09-06 environment review overstated the resume gap. `knossos task
 --persist-conversation` and `--resume-mission` restore a portable checkpoint
 into Talos, recheck environment drift, and refuse MCP/delegation/dry-run
-restore. Serve and ACP still do not expose that path. Cross-process CLI
-evidence lives in `tests/conversation_recovery.rs`. This does not close
-LOOP-004/006.
+restore. Serve and ACP did not expose that path at this review point; the
+2026-09-07 follow-up below supersedes that gap. Cross-process CLI evidence lives
+in `tests/conversation_recovery.rs`. This did not close LOOP-004/006.
+
+## Completion checklist reconciliation (2026-09-07)
+
+The 61-row checklist was rechecked against production source, this ledger, the
+lane plans, retained audit evidence, and fresh local commands. The prior generic
+`Open acceptance` label obscured completed local slices. The reconciled states
+are: 6 implemented locally, 46 partial, 7 unverified as complete, 1 open
+production blocker, 1 blocked release candidate, and 0 release-accepted.
+
+The six locally implemented issues are KNS-SEC-002, KNS-SEC-003,
+KNS-DATA-001, KNS-DATA-002, KNS-DATA-003, and KNS-REP-001. Each still names
+its release/environment qualification gap in `docs/completion-issues.md`; local
+completion does not waive those gates. Every other checklist row now records its
+verified production slice and the specific missing implementation or evidence.
+
+Fresh verification passed:
+
+- Cameo `cargo test --workspace --locked`: 293 test results.
+- Knossos `cargo test --all-targets --locked`: 568 test results after the
+  LOOP-004 follow-up.
+- Field `npm test`: all scripted suites, including the 100,004-event/30-agent
+  stress case.
+- Field `npm run build`: 1,912 modules, 92.49 kB gzip initial JavaScript,
+  95.07 kB gzip deferred Workspace chunk, and 26.09 kB gzip CSS.
+- Field `npm run release:audit`: six referenced assets, hashes and release
+  provenance approved.
+- `node scripts/render-capabilities.mjs --check`: 17 manifest entries verified.
+
+The Knossos live-engine tests returned in zero seconds without a configured
+provider, so they remain skip-equivalent rather than live evidence. No Linux ISO,
+real AMD, three-node mesh, update interruption, signing, soak, dogfood, or actual
+cross-platform CI qualification was inferred. This reconciliation changes only
+documentation/accounting; rollback is the documentation diff and there is no
+runtime or persisted-schema compatibility impact.
+
+## KNS-LOOP-004 follow-up - All interactive checkpoint entry points (2026-09-07)
+
+Status: partially implemented and locally verified; lineage and unsupported
+runtime capsules remain open.
+
+Task, Serve and REPL now share `--persist-conversation` and
+`--resume-mission`. ACP enables checkpointing at process startup and accepts a
+workspace-specific `resumeMission` in `session/new`. Restore occurs only after
+the interface approval policy is attached, preserving the policy-hash check.
+ACP prompt responses now return the durable mission ID needed for a later
+session. Existing task checkpoint identities are unchanged.
+
+Fresh-process acceptance tests create a checkpoint, release its execution lock,
+open a new Serve or ACP process boundary, restore the same mission and continue
+it. The existing CLI process test continues to prove contract, policy, quota and
+conversation preservation, exclusive execution, corruption refusal and no
+duplicate prior write. MCP, delegation, preview overlays, accept/revise/revert
+lineage, uncertain-action reconciliation, schema migration, power-failure and
+live-provider recovery remain explicitly open.
+
+Verification: `cargo test --all-targets --locked` passed 568 test results;
+`cargo clippy --all-targets --locked -- -D warnings` and
+`cargo fmt --all -- --check` passed. One current-toolchain Clippy finding in the
+mission journal tail reader was corrected with an equivalent reverse search.
+No persisted schema changed. At that point, the reconciled 61-row accounting was 6
+implemented locally, 46 partial, 7 unverified as complete, 1 open blocker and 1
+blocked release candidate.
+
+## CAM-UPD-001 follow-up - Installed A/B host path and release bundle producer (2026-09-07)
+
+Status: partial; the open production blocker was converted into a tested local
+implementation, while installed-Linux and release qualification remain open.
+
+The installer now owns two fixed root slots, boot and persistent-state partitions,
+stable identities, slot-specific boot entries, and recovery/health units. The
+installed host adapter stages verified application components into the inactive
+slot, creates bounded UEFI/BIOS trials, health-commits atomically, and selects the
+prior entry on rollback. Its journal covers the health-check/layout-rename crash
+window. Signed state read/write contracts refuse incompatible downgrades and
+restore the verified pre-update endpoint snapshot before an older slot can run
+against a breaking forward migration.
+
+The outer verifier now requires that state contract instead of treating it as
+optional. `scripts/build_update_bundle.py` deterministically produces the
+unsigned, content-bound application bundle without access to signing keys. The
+tag publication workflow fails closed without `CAMEO_UPDATE_PRIVATE_PEM`, signs
+both the canonical update manifest and aggregate checksums, and publishes the
+bundle. Local updater/installer coverage passed 30 tests with the one actual
+OpenSSL wrapper case skipped on Windows; Python compilation, workflow YAML parse,
+and diff checks pass.
+
+This does not yet provide a full operating-system payload: kernel, firmware,
+GPU/runtime packages and installed-root provenance remain a coding gap. Actual
+Linux partition/boot interruption, configured-secret publication, prior-version
+upgrade, Secure Boot and hardware soak remain external evidence. The truthful
+61-row accounting is therefore 6 implemented locally, 47 partial, 7 unverified,
+0 open blockers and 1 blocked release candidate.

@@ -1,0 +1,14 @@
+[Unit]
+Description=Recover an interrupted Cameo A/B update
+DefaultDependencies=no
+After=local-fs.target
+Before=cameod.service
+ConditionPathExists=/etc/cameo/update-layout.json
+ConditionPathExists=/var/lib/cameo/update/transaction.json
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/cameo-update recover
+
+[Install]
+WantedBy=multi-user.target

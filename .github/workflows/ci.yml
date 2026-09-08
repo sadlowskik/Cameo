@@ -89,7 +89,12 @@ jobs:
           PYTHONDONTWRITEBYTECODE: "1"
         run: |
           command -v openssl
-          python -m unittest tests.test_update_bundle tests.test_update_ab_simulator -v
+          python -m py_compile scripts/build_update_bundle.py \
+            scripts/update_host_transaction.py \
+            archiso/airootfs/usr/local/lib/cameo/update-host \
+            archiso/airootfs/usr/local/lib/cameo/update-verify
+          python -m unittest tests.test_build_update_bundle tests.test_update_bundle tests.test_update_ab_simulator \
+            tests.test_update_host_transaction tests.test_installer_ab_contract -v
 
   # Build the Vulkan container image (F1) and smoke it: the binaries must run and
   # the serving dependencies must be present. Real GPU/serving is a Phase-1

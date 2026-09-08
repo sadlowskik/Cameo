@@ -1,5 +1,6 @@
 import importlib.machinery
 import importlib.util
+import json
 import unittest
 import os
 import shutil
@@ -17,6 +18,22 @@ update = importlib.util.module_from_spec(spec); loader.exec_module(update)
 class UpdateBundleTests(unittest.TestCase):
     def manifest(self): return update.load(FIXTURE / "manifest.json")
     def test_valid_bundle(self): self.assertEqual(update.verify(FIXTURE)["release_id"], "1.2.3")
+    def test_state_compatibility_contract_is_mandatory(self):
+        manifest = self.manifest()
+        del manifest["compatibility"]["state"]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "manifest.json"
+            path.write_text(json.dumps(manifest), encoding="utf-8")
+            with self.assertRaisesRegex(SystemExit, "persistent-state"):
+                update.load(path)
+    def test_boolean_state_version_is_rejected(self):
+        manifest = self.manifest()
+        manifest["compatibility"]["state"] = {"writes": True, "reads": [True]}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "manifest.json"
+            path.write_text(json.dumps(manifest), encoding="utf-8")
+            with self.assertRaisesRegex(SystemExit, "state schema writes"):
+                update.load(path)
     def test_digest_mismatch_fails(self):
         data = self.manifest(); data["files"][0]["sha256"] = "0" * 64
         with self.assertRaises(SystemExit): list(update.entries(FIXTURE, data))
@@ -43,12 +60,25 @@ class UpdateBundleTests(unittest.TestCase):
             verify[verify.index(str(manifest))]=str(tampered)
             self.assertNotEqual(subprocess.run(verify).returncode,0)
             transaction=ROOT/"archiso/airootfs/usr/local/lib/cameo/update-transaction"
-            verifier=d/"verifier"; verifier.write_text(f"#!/bin/sh\nexec python3 '{SCRIPT}' \"$@\"\n"); verifier.chmod(0o700)
-            env=dict(os.environ,CAMEO_UPDATE_TEST_KEY=str(public),CAMEO_UPDATE_TEST_VERIFIER=str(verifier))
+            verifier=d/"verifier"; verifier.write_text(f"#!/bin/sh\n[ \"$1\" = preflight ] && exit 0\nexec python3 '{SCRIPT}' \"$@\"\n"); verifier.chmod(0o700)
+            host=d/"host"
+            host.write_text("#!/bin/sh\n[ \"$1\" = apply ] && [ -d \"$2\" ] && [ -r \"$3\" ]\n")
+            host.chmod(0o700)
+            layout=d/"layout.json"; layout.write_text("{}\n")
+            env=dict(
+                os.environ,
+                CAMEO_UPDATE_TEST_KEY=str(public),
+                CAMEO_UPDATE_TEST_VERIFIER=str(verifier),
+                CAMEO_UPDATE_TEST_HOST=str(host),
+                CAMEO_UPDATE_TEST_LAYOUT=str(layout),
+            )
             shutil.copy2(sig,FIXTURE/"manifest.sig")
             try:
                 result=subprocess.run(["bash",str(transaction),"verify",str(FIXTURE)],env=env,capture_output=True,text=True)
                 self.assertEqual(result.returncode,0,result.stderr)
+                applied=subprocess.run(["bash",str(transaction),"apply",str(FIXTURE)],env=env,capture_output=True,text=True)
+                self.assertEqual(applied.returncode,0,applied.stderr)
+                self.assertIn("reboot required",applied.stdout)
                 (FIXTURE/"manifest.sig").write_bytes(b"tampered")
                 self.assertNotEqual(subprocess.run(["bash",str(transaction),"verify",str(FIXTURE)],env=env,capture_output=True).returncode,0)
             finally: (FIXTURE/"manifest.sig").unlink(missing_ok=True)

@@ -86,18 +86,13 @@ header{position:sticky;top:0;z-index:30;background:rgba(26,24,18,.86);
   .nav>.gh .ico{margin-right:0;width:17px;height:17px}
 }
 
-.hero{padding:64px 0 40px}
-.hero-grid{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,1fr);gap:48px;align-items:center}
-@media(max-width:900px){.hero-grid{grid-template-columns:1fr;gap:32px}}
+.hero{padding:72px 0 48px}
 h1{font-family:var(--disp);font-weight:700;letter-spacing:-.04em;line-height:.95;
   font-size:clamp(44px,7.4vw,84px);margin:16px 0 0;text-wrap:balance}
-h1 .w{display:inline-block}
 .sub{font-size:18px;line-height:1.6;color:var(--body);max-width:42em;margin:20px 0 0}
 .cards{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}
 .cards span{font-family:var(--mono);font-size:12px;color:var(--muted);border:1px solid var(--line);
   border-radius:999px;padding:5px 11px}
-@keyframes wordin{from{opacity:0;transform:translateY(.45em)}to{opacity:1;transform:none}}
-body.anim h1 .w{opacity:0;animation:wordin .55s cubic-bezier(.2,.8,.2,1) forwards}
 @keyframes blink{50%{opacity:.2}}
 .actions{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start;margin-top:28px}
 .cta-stack{display:flex;flex-direction:column;gap:7px;align-items:flex-start}
@@ -113,86 +108,28 @@ body.anim h1 .w{opacity:0;animation:wordin .55s cubic-bezier(.2,.8,.2,1) forward
 .btn-primary:hover{filter:brightness(1.06)}
 .chip,.btn,.btn-primary{backdrop-filter:blur(10px)}
 .ico{width:15px;height:15px;flex:none}
+.console-shot{margin:36px 0 0;border:1px solid var(--line);border-radius:12px;overflow:hidden;
+  box-shadow:0 1px 0 rgba(255,255,255,.035) inset,0 18px 48px rgba(0,0,0,.42);background:#0a0a0a}
+.console-shot img{width:100%;height:auto;display:block;vertical-align:top}
 
-/* Hero: a faithful, static slice of the real Cameo Deck. Crisp 2D rendering
-   replaces the old perspective-transformed appliance mockup. */
-.hero-visual{position:relative;min-width:0;padding:12px 0 28px 14px}
-.deck-preview{position:relative;overflow:hidden;min-height:416px;border:1px solid #5d4038;border-radius:13px;
-  background:#0a0a0a;font-family:var(--mono);color:#e5e2e1;
-  box-shadow:0 34px 80px rgba(0,0,0,.62),0 0 0 1px rgba(255,122,26,.12),0 0 55px rgba(255,86,37,.11)}
-.deck-preview::before,.deck-preview::after{content:"";position:absolute;width:12px;height:12px;z-index:6;pointer-events:none;border:2px solid #ff5625;opacity:.8}
-.deck-preview::before{left:-1px;top:-1px;border-width:2px 0 0 2px}.deck-preview::after{right:-1px;bottom:-1px;border-width:0 2px 2px 0}
-.dp-head{height:48px;padding:0 15px;display:flex;align-items:center;gap:10px;background:#0d0c0b;border-bottom:1px solid #3f3f46}
-.dp-brand{font-family:var(--disp);font-size:15px;font-weight:700;letter-spacing:.04em}.dp-brand em{color:#ff5625;font-style:normal}
-.dp-host{font-size:9px;letter-spacing:.07em;color:#8b857c}.dp-status{margin-left:auto;display:flex;align-items:center;gap:6px;padding:4px 7px;border:1px solid #3f3f46;background:#1a1812;font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:#e7bdb2}
-.dp-dot{width:6px;height:6px;border-radius:50%;background:#4ade80;box-shadow:0 0 7px rgba(74,222,128,.75);flex:none}
-.dp-tabs{height:37px;display:flex;align-items:end;gap:2px;padding:0 13px;border-bottom:1px solid #3f3f46;background:#0a0a0a}
-.dp-tab{height:37px;padding:11px 9px 8px;font-family:var(--sans);font-size:9px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:#8b857c;border-bottom:2px solid transparent}
-.dp-tab.on{color:#ffb5a0;border-bottom-color:#ff5625}.dp-url{margin:0 1px 9px auto;font-size:8px;color:#8b857c}
-.dp-screen{display:grid;grid-template-columns:minmax(0,1fr) 154px;min-height:330px}
-.dp-field{position:relative;padding:16px;background:radial-gradient(ellipse at 45% 20%,#211a14 0%,#0a0a0a 70%);
-  background-image:linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.025) 1px,transparent 1px),radial-gradient(ellipse at 45% 20%,#211a14 0%,#0a0a0a 70%);background-size:16px 16px,16px 16px,auto}
-.dp-field-label,.dp-rail-title{font-family:var(--sans);font-weight:600;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:#8b857c;margin-bottom:10px}
-.dp-node{position:relative;border:1px solid #3f3f46;background:#1a1812;padding:11px 12px;margin-bottom:10px;box-shadow:0 10px 24px rgba(0,0,0,.24)}
-.dp-node.on{border-color:#ff5625;box-shadow:0 0 0 1px rgba(255,86,37,.2),0 12px 30px rgba(0,0,0,.32)}
-.dp-node-head{display:flex;align-items:center;gap:7px;font-size:10px;font-weight:500}.dp-node-head .addr{margin-left:auto;color:#8b857c;font-size:8px;font-weight:400}
-.dp-badge{padding:1px 5px;border:1px solid #3f3f46;background:#161311;color:#8b857c;font-size:7px;font-weight:700;letter-spacing:.05em;text-transform:uppercase}
-.dp-badge.run{color:#4ade80;border-color:rgba(74,222,128,.42);background:rgba(74,222,128,.09)}
-.dp-chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}.dp-chip{padding:4px 6px;border:1px solid #3f3f46;background:#201f1f;color:#e7bdb2;font-size:8px}
-.dp-chip b{font-weight:500;color:#e5e2e1}.dp-who{margin-top:8px;color:#e7bdb2;font-size:8px}
-.dp-rail{padding:15px 13px;background:#1a1812;border-left:1px solid #3f3f46}.dp-rail h3{margin:0 0 10px;font-family:var(--sans);font-size:12px;color:#e5e2e1}
-.dp-kv{display:grid;grid-template-columns:auto 1fr;gap:4px 8px;font-size:8px;color:#8b857c}.dp-kv b{font-weight:500;color:#e5e2e1}
-.dp-session{margin-top:15px;padding:9px;border:1px solid #3f3f46;background:#201f1f;font-size:8px;color:#8b857c}.dp-session strong{display:block;margin-bottom:4px;color:#e5e2e1;font-size:9px}
-.dp-pass{display:flex;align-items:center;gap:5px;margin-top:7px;color:#4ade80}.dp-pass i{width:5px;height:5px;border-radius:50%;background:#4ade80;box-shadow:0 0 6px rgba(74,222,128,.7)}
-.gpu-float{position:absolute;left:-10px;bottom:0;width:250px;z-index:8;padding:12px 13px;border:1px solid #5d4038;border-radius:9px;
-  background:rgba(22,19,17,.97);font-family:var(--mono);box-shadow:0 18px 42px rgba(0,0,0,.58),0 0 28px rgba(255,86,37,.1)}
-.gf-head{display:flex;align-items:center;gap:7px}.gf-head b{font-size:10px;color:#f6f4f2}.gf-head span{margin-left:auto;color:#4ade80;border:1px solid rgba(74,222,128,.36);background:rgba(74,222,128,.08);padding:1px 5px;font-size:7px;text-transform:uppercase;letter-spacing:.07em}
-.gf-meta{display:flex;justify-content:space-between;margin-top:9px;font-size:8px;color:#8b857c}.gf-meta b{font-weight:500;color:#e7bdb2}
-.gf-meter{height:6px;margin-top:6px;background:#0a0a0a;overflow:hidden}.gf-meter i{display:block;width:41%;height:100%;background:linear-gradient(90deg,#ff5625,#ffb5a0)}
-.gf-foot{display:flex;gap:12px;margin-top:9px;font-size:8px;color:#8b857c}.gf-foot b{color:#e5e2e1;font-weight:500}
-@media(max-width:900px){.hero-visual{max-width:640px;margin-inline:auto;padding-top:0}}
-@media(max-width:520px){
-  .hero-visual{padding:0 0 10px}.deck-preview{min-height:0}.dp-screen{grid-template-columns:1fr}.dp-rail{border-left:0;border-top:1px solid #3f3f46}.dp-node.secondary{display:none}.dp-url{display:none}
-  .gpu-float{position:relative;left:auto;bottom:auto;width:auto;margin:-18px 12px 0}.dp-host{display:none}
-}
-
-/* the real firstboot printout — proof, shown in the tiers section */
-.term.boot{margin-top:22px;background:var(--inset)}
-.term.boot pre{font-size:13px;line-height:1.78;white-space:pre-wrap;overflow-wrap:anywhere;overflow-x:hidden}
-.term.boot .ln{padding-left:2ch;text-indent:-2ch}
+.term.boot{margin:0;background:var(--inset)}
+.term.boot pre{font-size:13px;line-height:1.78;white-space:pre-wrap;overflow-wrap:anywhere}
 .term .em{color:var(--amber)}
 .term .tt{color:var(--ember)}
 .term b{color:var(--ink);font-weight:600}
-.boot-note{margin:14px 0 0}
 
 section{padding:64px 0;border-top:1px solid var(--line);position:relative}
-#deck{isolation:isolate;overflow:hidden}
-#deck::before{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;
-  background:
-    linear-gradient(90deg,rgba(26,24,18,.96),rgba(26,24,18,.64) 55%,rgba(26,24,18,.9)),
-    url("assets/cameo-praetor-map.webp") center / cover no-repeat;
-  opacity:.3;filter:grayscale(.2) sepia(.3) saturate(.72) contrast(1.04);
-  mask-image:linear-gradient(180deg,transparent,#000 18%,#000 82%,transparent)}
 .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:var(--faint);margin:0 0 14px;
   display:flex;align-items:center;gap:14px}
 .eyebrow .ix{color:var(--ember)}
 .eyebrow::after{content:"";flex:1;height:1px;background:linear-gradient(90deg,var(--line-2),transparent)}
 h2{font-family:var(--disp);font-weight:700;letter-spacing:-.03em;font-size:clamp(26px,4vw,36px);margin:0 0 12px;line-height:1.15;scroll-margin-top:80px}
+h2 code{font-family:var(--mono);font-size:.72em;color:var(--amber);letter-spacing:-.02em}
 .lede{color:var(--body);max-width:48em;margin:0 0 28px}
 
-.steps{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-bottom:22px}
-#deck .steps{grid-template-columns:repeat(6,minmax(0,1fr))}
-#deck .step:nth-child(1),#deck .step:nth-child(2){grid-column:span 3}
-#deck .step:nth-child(3){grid-column:span 4}
-#deck .step:nth-child(4){grid-column:span 2}
-@media(max-width:980px){.steps,#deck .steps{grid-template-columns:1fr 1fr}.step:nth-child(n),#deck .step:nth-child(n){grid-column:auto}}
+.steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-bottom:22px}
+@media(max-width:980px){.steps{grid-template-columns:1fr 1fr}}
 @media(max-width:640px){.steps{grid-template-columns:1fr}}
-.caps{width:100%;border-collapse:collapse;font-size:15px;margin:8px 0 0}
-.caps th,.caps td{text-align:left;vertical-align:top;padding:10px 12px;border-bottom:1px solid var(--line);font-family:var(--sans)}
-.caps th{color:var(--muted);font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase}
-.caps td:first-child{font-family:var(--mono);font-size:13px;white-space:nowrap}
-.caps .yes{color:#86efac}.caps .no{color:var(--muted)}
-@media(max-width:720px){.caps td:first-child{white-space:normal}}
 .step{border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:18px 18px 16px;backdrop-filter:blur(10px)}
 .step .n{font-family:var(--mono);font-size:12px;color:var(--ember);letter-spacing:.08em}
 .step h3{font-family:var(--disp);font-size:18px;margin:8px 0 6px;letter-spacing:-.02em}
@@ -202,56 +139,18 @@ h2{font-family:var(--disp);font-weight:700;letter-spacing:-.03em;font-size:clamp
   font-family:var(--mono);font-size:11px;color:var(--faint)}
 .step-foot i{width:6px;height:6px;border-radius:50%;background:var(--ember);box-shadow:0 0 8px rgba(255,122,26,.68)}
 
-.term,.ladder,.console-frame,.install{position:relative;border:1px solid var(--line);border-radius:12px;overflow:hidden}
-.term::after,.ladder::after,.console-frame::after,.install::after{content:"";position:absolute;top:0;left:7%;right:7%;height:1px;
+.term,.install{position:relative;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.term::after,.install::after{content:"";position:absolute;top:0;left:7%;right:7%;height:1px;
   pointer-events:none;background:linear-gradient(90deg,transparent,rgba(255,176,90,.38),transparent)}
 .term{background:var(--inset)}
-.term .bar,.console-frame .bar{display:flex;align-items:center;gap:9px;padding:11px 15px;border-bottom:1px solid var(--line);
+.term .bar{display:flex;align-items:center;gap:9px;padding:11px 15px;border-bottom:1px solid var(--line);
   font-family:var(--mono);font-size:12px;color:var(--faint)}
-.term .bar i,.console-frame .bar i{width:10px;height:10px;border-radius:50%;background:var(--line-2);display:block}
+.term .bar i{width:10px;height:10px;border-radius:50%;background:var(--line-2);display:block}
 .term pre{margin:0;padding:20px 22px 24px;font-family:var(--mono);font-size:13.5px;line-height:1.9;overflow-x:auto;color:var(--ink)}
 .term .p{color:var(--muted)}.term .o{color:var(--body)}
 .term .ln{display:block;min-height:1.2em}
-.term.typing .ln{opacity:0;animation:lnin .28s ease forwards}
-@keyframes lnin{from{opacity:0;transform:translateX(-5px)}to{opacity:1;transform:none}}
 .term .cur{display:inline-block;width:8px;height:1em;background:var(--ember);vertical-align:-1px;margin-left:3px;animation:blink 1.1s step-end infinite}
-
-.ladder{display:flex;flex-direction:column;gap:1px;background:var(--line)}
-.trow{display:grid;grid-template-columns:auto 1fr auto;gap:18px;align-items:center;background:var(--panel);padding:18px 22px}
-.trow .tn{font-family:var(--disp);font-weight:700;font-size:32px;line-height:1;width:1ch}
-.trow .tc{font-family:var(--mono);font-size:13px;color:var(--body)}
-.trow .tc em{display:block;font-style:normal;color:var(--muted);font-size:12px;margin-top:4px}
-.trow .cap{font-family:var(--mono);font-size:12px;color:var(--muted);text-align:right}
-.tbar{height:8px;border-radius:6px;background:var(--inset);overflow:hidden;margin-top:10px;grid-column:1/-1}
-.tbar i{display:block;height:100%;width:0;border-radius:6px;background:var(--ember);transition:width 1.1s cubic-bezier(.2,.8,.2,1)}
-.trow.in .tbar i{width:var(--w)}
-.trow.t3 .tbar i{background:var(--line-2)}
 .note{font-family:var(--mono);font-size:12.5px;color:var(--muted);margin:14px 0 0}
-
-.console-frame{background:var(--panel);backdrop-filter:blur(10px)}
-.console-frame .bar .ttl{margin-left:6px;color:var(--muted)}
-.console-body{padding:16px;display:grid;gap:12px}
-.csec{font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--faint);margin:0 0 8px}
-.gcards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
-@media(max-width:700px){.gcards{grid-template-columns:1fr}}
-.gcard{border:1px solid var(--line);border-radius:10px;background:var(--inset);padding:12px 14px}
-.gcard h3{margin:0 0 8px;font-size:14px;display:flex;align-items:center;gap:8px;font-family:var(--sans);font-weight:500}
-.badge{font-family:var(--mono);font-size:10px;font-weight:500;padding:2px 7px;border-radius:20px;letter-spacing:.04em}
-.t1{background:rgba(255,122,26,.16);color:var(--amber)}
-.t2{background:rgba(255,208,138,.1);color:var(--amber)}
-.t3{background:rgba(163,156,145,.12);color:var(--muted)}
-.kv{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;font-family:var(--mono);font-size:12px;color:var(--faint)}
-.kv b{color:var(--body);font-weight:500}
-.ep{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;border:1px solid var(--line);border-radius:10px;
-  background:var(--inset);padding:12px 14px;font-family:var(--mono);font-size:13px}
-.ep .on{width:7px;height:7px;border-radius:50%;background:#3fb950}
-.ep .model{color:var(--ink)}
-.ep .meta{color:var(--muted)}
-
-.flow{width:100%;height:auto}
-.flow-line{stroke-dasharray:2 7;animation:dash 1.2s linear infinite}
-@keyframes dash{to{stroke-dashoffset:-18}}
-.flow-m{display:none}
 
 .installs{display:grid;grid-template-columns:1fr;gap:14px}
 .install{background:var(--panel);padding:22px 22px 18px;backdrop-filter:blur(10px);margin-bottom:14px}
@@ -293,69 +192,31 @@ footer{border-top:1px solid var(--line);padding:44px 0 54px}
 .foot-legal{margin-top:24px;font-family:var(--mono);font-size:11px;line-height:1.75;color:var(--faint);max-width:78ch}
 .foot-legal a{color:var(--muted)}.foot-legal a:hover{color:var(--ink)}
 
-.rise{opacity:0;transform:translateY(14px);transition:opacity .6s ease,transform .6s cubic-bezier(.2,.8,.2,1)}
-.rise.in{opacity:1;transform:none}
-
 @media(max-width:640px){
-  .flow{display:none}
-  .flow-m{display:block;max-width:330px;margin-inline:auto}
   .term pre,.install pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12.5px}
   .term .ln{padding-left:2ch;text-indent:-2ch}
   .sub{font-size:16.5px}
-  .trow{grid-template-columns:auto 1fr;gap:12px}
-  .trow .cap{grid-column:2;text-align:left}
 }
-/* Reduced-motion skips ENTRANCE animations (scroll-reveal, headline stagger,
-   typing) but keeps the ambient backdrop and small status loops alive — a
-   deliberate call so the page never reads as "frozen". */
 @media(prefers-reduced-motion:reduce){
   html{scroll-behavior:auto}
-  .rise{opacity:1;transform:none;transition:none}
-  body.anim h1 .w,.term.typing .ln{animation:none!important;opacity:1;transform:none}
 }
 
-/* ---- component polish: depth, edge-light, hover microinteractions ---- */
-.chip,.btn,.btn-primary{transition:transform .18s ease,border-color .18s ease,box-shadow .25s ease,filter .18s ease}
 .chip,.btn{box-shadow:0 1px 0 rgba(255,255,255,.035) inset,0 4px 14px rgba(0,0,0,.28)}
-.chip:hover,.btn:hover{transform:translateY(-1px);box-shadow:0 1px 0 rgba(255,255,255,.06) inset,0 9px 22px rgba(0,0,0,.42)}
-.btn-primary{position:relative;overflow:hidden;background:linear-gradient(180deg,#FF9138,#FF7A1A);
-  box-shadow:0 0 0 1px rgba(255,122,26,.35),0 8px 22px rgba(255,122,26,.26)}
-.btn-primary:hover{transform:translateY(-1px);filter:brightness(1.05);
-  box-shadow:0 0 0 1px rgba(255,122,26,.55),0 13px 32px rgba(255,122,26,.42)}
-.btn-primary::after{content:"";position:absolute;top:0;left:-60%;width:38%;height:100%;pointer-events:none;
-  background:linear-gradient(100deg,transparent,rgba(255,255,255,.35),transparent);transform:skewX(-18deg);
-  animation:sheen 5s ease-in-out infinite}
-@keyframes sheen{0%,74%{left:-60%}88%{left:135%}100%{left:135%}}
+.btn-primary{background:var(--ember);color:var(--ember-ink);border-color:transparent}
 .cards span{transition:color .18s ease,border-color .18s ease,background .18s ease}
 .cards span:hover{color:var(--ink);border-color:var(--line-2);background:var(--inset)}
-
-/* cards lift off the animated backdrop */
-.step,.install,.gcard,.term,.console-frame,.ladder{
+.step,.install,.term{
   box-shadow:0 1px 0 rgba(255,255,255,.035) inset,0 14px 36px rgba(0,0,0,.32)}
-.step,.install,.gcard{transition:transform .2s ease,border-color .2s ease,box-shadow .25s ease}
 .step{position:relative;overflow:hidden;background:linear-gradient(180deg,rgba(60,56,48,.55),rgba(44,43,39,.5))}
 .step::before{content:"";position:absolute;inset:0 0 auto 0;height:1px;
   background:linear-gradient(90deg,transparent,rgba(255,176,90,.32),transparent)}
-.step:hover,.install:hover{transform:translateY(-3px);border-color:var(--line-2);
-  box-shadow:0 1px 0 rgba(255,176,90,.12) inset,0 20px 46px rgba(0,0,0,.44),0 0 30px rgba(255,122,26,.10)}
-.gcard{transition:transform .18s ease,border-color .2s ease,box-shadow .25s ease}
-.gcard:hover{transform:translateY(-2px);border-color:var(--line-2);box-shadow:0 12px 28px rgba(0,0,0,.36)}
-.trow{transition:background .2s ease}
-.trow:hover{background:var(--raised)}
-.ep .on{box-shadow:0 0 10px rgba(63,185,80,.7);animation:blink 2.4s ease-in-out infinite}
-
-/* boxes get character: HUD corner brackets on the instrument screens, and a
-   warm gradient edge on the cards instead of a flat gray hairline. */
-.term::before,.console-frame::before{content:"";position:absolute;inset:0;pointer-events:none;z-index:4;
+.term::before{content:"";position:absolute;inset:0;pointer-events:none;z-index:4;
   border:10px solid transparent;border-radius:12px;
   border-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40' fill='none' stroke='%23FFB05A' stroke-opacity='0.5' stroke-width='1.4'%3E%3Cpath d='M2 13V2h11'/%3E%3Cpath d='M27 2h11v11'/%3E%3Cpath d='M38 27v11H27'/%3E%3Cpath d='M13 38H2V27'/%3E%3C/svg%3E") 13 stretch}
-.step,.install,.gcard{border:1px solid transparent}
+.step,.install{border:1px solid transparent}
 .install{background:
   linear-gradient(var(--panel),var(--panel)) padding-box,
   linear-gradient(150deg,rgba(255,176,90,.30),var(--line-2) 46%,var(--line)) border-box}
-.gcard{background:
-  linear-gradient(var(--inset),var(--inset)) padding-box,
-  linear-gradient(150deg,rgba(255,176,90,.22),var(--line) 55%) border-box}
 .step{background:
   linear-gradient(180deg,rgba(60,56,48,.55),rgba(44,43,39,.5)) padding-box,
   linear-gradient(150deg,rgba(255,176,90,.32),var(--line-2) 46%,var(--line)) border-box}
@@ -369,8 +230,7 @@ footer{border-top:1px solid var(--line);padding:44px 0 54px}
   border:1px solid transparent;backdrop-filter:blur(10px);
   box-shadow:0 1px 0 rgba(255,255,255,.035) inset,0 14px 36px rgba(0,0,0,.32);
   transition:transform .2s ease,box-shadow .25s ease}
-.tier:hover{transform:translateY(-3px);
-  box-shadow:0 1px 0 rgba(255,176,90,.12) inset,0 20px 46px rgba(0,0,0,.44),0 0 30px rgba(255,122,26,.10)}
+
 .tier .tk{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--faint);margin:0 0 8px}
 .tier.t1 .tk{color:var(--ember)}
 .tier h3{font-family:var(--disp);font-size:24px;letter-spacing:-.03em;margin:0 0 6px;font-weight:700}
@@ -382,66 +242,10 @@ footer{border-top:1px solid var(--line);padding:44px 0 54px}
 .tviz .dots i{width:8px;height:8px;border-radius:50%;background:var(--line-2)}
 .tviz .dots i.lit{background:var(--ember);box-shadow:0 0 8px rgba(255,122,26,.7)}
 .tviz .bar{height:7px;border-radius:6px;background:var(--inset);overflow:hidden}
-.tviz .bar i{display:block;height:100%;width:0;border-radius:6px;background:var(--ember);transition:width 1.1s cubic-bezier(.2,.8,.2,1)}
-.tier.in .tviz .bar i{width:var(--w)}
+.tviz .bar i{display:block;height:100%;width:var(--w);border-radius:6px;background:var(--ember)}
 .tier.t3 .tviz .bar i{background:var(--line-2)}
 .tgpus{display:flex;gap:6px;margin:2px 0 8px}
 .tgpus svg{width:48px;height:28px}
-
-/* ---- cameod dashboard mock ---- */
-#console .wrap{max-width:1180px}
-.dash{border:1px solid var(--line-2);border-radius:14px;overflow:hidden;background:#14120e;
-  box-shadow:0 28px 70px rgba(0,0,0,.55),0 0 0 1px rgba(255,176,90,.12),0 0 50px rgba(255,122,26,.08)}
-.dash-chrome{display:flex;align-items:center;gap:10px;padding:10px 12px;background:#1a1812;border-bottom:1px solid var(--line);
-  font-family:var(--mono);font-size:11.5px;color:var(--faint)}
-.dash-chrome .d{display:flex;gap:6px}
-.dash-chrome .d i{width:10px;height:10px;border-radius:50%;display:block}
-.dash-chrome .d i:nth-child(1){background:#c94c3a}
-.dash-chrome .d i:nth-child(2){background:#c9a03a}
-.dash-chrome .d i:nth-child(3){background:#3a8f4a}
-.dash-chrome .url{flex:1;background:var(--inset);border:1px solid var(--line);border-radius:6px;padding:5px 10px;color:var(--muted);display:flex;align-items:center;gap:8px}
-.dash-chrome .url svg{width:11px;height:11px;flex:none;opacity:.7}
-.dash-app{display:grid;grid-template-columns:168px minmax(0,1fr);min-height:480px}
-@media(max-width:800px){
-  .dash-app{grid-template-columns:1fr}
-  .dash-nav{flex-direction:row;flex-wrap:wrap;gap:6px;border-right:0;border-bottom:1px solid var(--line)}
-  .dash-nav .nm{padding:4px 8px 4px;width:100%}
-}
-.dash-nav{background:#16140f;border-right:1px solid var(--line);padding:16px 12px;display:flex;flex-direction:column;gap:4px}
-.dash-nav .nm{font-family:var(--disp);font-weight:700;font-size:15px;letter-spacing:-.02em;color:var(--ink);padding:4px 10px 14px}
-.dash-nav .nm em{color:var(--ember);font-style:normal}
-.dash-nav .ni{font-family:var(--mono);font-size:12px;color:var(--muted);padding:8px 10px;border-radius:6px}
-.dash-nav .ni.on{background:rgba(255,122,26,.12);color:var(--amber)}
-.dash-main{padding:16px;display:grid;gap:14px;background:linear-gradient(180deg,#1a1812,#14120e)}
-.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
-@media(max-width:800px){.stats{grid-template-columns:1fr 1fr}}
-.stat{border:1px solid var(--line);border-radius:10px;background:var(--inset);padding:12px 14px}
-.stat .k{font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--faint);margin:0 0 6px}
-.stat .v{font-family:var(--disp);font-weight:600;font-size:18px;letter-spacing:-.02em;color:var(--ink);margin:0;line-height:1.15}
-.stat .s{font-family:var(--mono);font-size:11px;color:var(--muted);margin:4px 0 0}
-.stat .meter{height:5px;border-radius:4px;background:#0e0d0b;overflow:hidden;margin-top:10px}
-.stat .meter i{display:block;height:100%;background:linear-gradient(90deg,#FF7A1A,#FFD08A);border-radius:4px}
-.dash-split{display:grid;grid-template-columns:1.12fr .88fr;gap:12px}
-@media(max-width:800px){.dash-split{grid-template-columns:1fr}}
-.panel{border:1px solid var(--line);border-radius:10px;background:var(--inset);padding:12px 14px}
-.panel h4{font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--faint);margin:0 0 10px;font-weight:500}
-.mrow{display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid var(--line);font-family:var(--mono);font-size:12.5px}
-.mrow:first-of-type{border-top:0;padding-top:0}
-.mrow .dot{width:7px;height:7px;border-radius:50%;background:var(--line-2);flex:none}
-.mrow .dot.live{background:#3fb950;box-shadow:0 0 10px rgba(63,185,80,.7);animation:blink 2.4s ease-in-out infinite}
-.mrow .mn{color:var(--ink);flex:1;min-width:0}
-.mrow .mm{color:var(--muted);font-size:11px}
-.mock{font-family:var(--mono);font-size:11px;border-radius:6px;padding:5px 10px;border:1px solid var(--line-2);color:var(--body);background:var(--raised);flex:none}
-.mock.go{background:var(--ember);color:var(--ember-ink);border-color:transparent;font-weight:500}
-.ep-line{font-family:var(--mono);font-size:12.5px;color:var(--ink);margin:0 0 6px}
-.ep-line span{color:var(--muted)}
-.chat{display:flex;flex-direction:column;gap:8px;min-height:168px}
-.bubble{border-radius:8px;padding:8px 10px;font-size:13px;line-height:1.45;max-width:94%}
-.bubble.u{background:rgba(255,122,26,.12);color:var(--ink);align-self:flex-end}
-.bubble.a{background:#0e0d0b;color:var(--body);border:1px solid var(--line)}
-.chat-in{display:flex;gap:8px;margin-top:auto;padding-top:8px;border-top:1px solid var(--line)}
-.chat-in .field{flex:1;background:#0e0d0b;border:1px solid var(--line);border-radius:6px;padding:7px 10px;font-family:var(--mono);font-size:12px;color:var(--faint)}
-.dash-foot{font-family:var(--mono);font-size:11px;color:var(--faint);padding:8px 16px;border-top:1px solid var(--line);background:#16140f;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
 
 /* ---- disk-erase warning ---- */
 .warn{border-radius:12px;padding:18px;margin:0 0 16px;
@@ -460,28 +264,7 @@ footer{border-top:1px solid var(--line);padding:44px 0 54px}
 .install .confirm-term:hover{transform:none}
 .install .confirm-term pre{background:transparent;border:0;padding:16px 18px;border-radius:0;font-size:12.5px}
 
-/* Hermes-class motion, in Cameo ember: structured grid, scanlines, live product */
-#grid{position:fixed;inset:0;z-index:-1;pointer-events:none;
-  background-image:radial-gradient(rgba(255,176,90,.075) 1px, transparent 1px);
-  background-size:32px 32px;
-  mask-image:radial-gradient(ellipse 90% 70% at 50% 28%, #000 38%, transparent 78%)}
-#cursor{position:fixed;width:320px;height:320px;border-radius:50%;pointer-events:none;z-index:6;
-  background:radial-gradient(circle, rgba(255,122,26,.14), transparent 70%);
-  transform:translate(-50%,-50%);mix-blend-mode:screen;opacity:0;transition:opacity .35s ease}
-body.glow #cursor{opacity:1}
-.dash,.term{position:relative}
-.scan::after{content:"";position:absolute;inset:0;pointer-events:none;z-index:5;
-  background:repeating-linear-gradient(180deg,transparent 0 2px,rgba(0,0,0,.09) 2px 3px);
-  opacity:.4;mix-blend-mode:multiply}
-@keyframes sweep{from{transform:translateY(-100%)}to{transform:translateY(220%)}}
-.dash .sweep{position:absolute;left:0;right:0;height:28%;pointer-events:none;z-index:4;
-  background:linear-gradient(180deg,transparent,rgba(255,176,90,.07),transparent);
-  animation:sweep 4.8s ease-in-out infinite}
-.fan{transform-box:fill-box;transform-origin:center;animation:spin 1.8s linear infinite}
-@keyframes spin{to{transform:rotate(360deg)}}
-@keyframes breath{0%,100%{width:38%}50%{width:54%}}
-.stat .meter i{animation:breath 3.8s ease-in-out infinite}
-.eyebrow .ix{text-shadow:0 0 16px rgba(255,122,26,.45)}
+.term{position:relative}
 .cmdbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:22px;padding:11px 14px;
   background:var(--inset);border:1px solid var(--line);border-radius:10px;
   font-family:var(--mono);font-size:13px;color:var(--muted)}
@@ -494,25 +277,11 @@ header{box-shadow:0 1px 0 rgba(255,176,90,.06)}
 .nav a.l:hover::after{transform:scaleX(1)}
 .nav a.l[aria-current="true"]{color:var(--amber)}
 .nav a.l[aria-current="true"]::after{transform:scaleX(1)}
-
-/* Aceternity-inspired depth, translated into Cameo's quieter instrument-panel
-   language. One lightweight overlay follows the pointer; no content depends on it. */
-.edge-glow{position:absolute;inset:0;border-radius:inherit;pointer-events:none;z-index:5;opacity:0;
-  background:radial-gradient(190px circle at var(--gx,50%) var(--gy,50%),rgba(255,176,90,.13),transparent 72%);
-  transition:opacity .2s ease}
-.has-edge-glow:hover>.edge-glow{opacity:1}
-@media(prefers-reduced-motion:reduce){
-  .stat .meter i,.dash .sweep,.btn-primary::after{animation:none!important}
-  #cursor,.edge-glow{display:none}
-}
 </style>
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
 <div id="vignette" aria-hidden="true"></div>
-<div id="grain" aria-hidden="true"></div>
-<div id="grid" aria-hidden="true"></div>
-<div id="cursor" aria-hidden="true"></div>
 
 <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
 <g id="mark" transform="scale(0.05417)">
@@ -552,20 +321,17 @@ header{box-shadow:0 1px 0 rgba(255,176,90,.06)}
   <nav class="links" aria-label="Sections">
     <a class="l" href="#how">how</a>
     <a class="l" href="#tiers">tiers</a>
-    <a class="l" href="#console">console</a>
-    <a class="l" href="#deck">deck</a>
-    <a class="l" href="#scale">mesh</a>
     <a class="l" href="#install">download</a>
+    <a class="l" href="#testers">testers</a>
   </nav>
   <a class="l gh" href="https://github.com/sadlowskik/Cameo" rel="noopener">
     <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg>github</a>
 </div></header>
 
 <main id="main">
-  <section class="hero" id="top" style="border:0"><div class="wrap hero-grid">
-    <div>
-      <h1 id="h1"><span class="w">your</span> <span class="w">AMD</span> <span class="w">card.</span><br><span class="w">serves</span> <span class="w">LLMs.</span></h1>
-      <p class="sub">Flash Cameo to a USB, boot an AMD machine, and open the local web app. Models run offline.</p>
+  <section class="hero" id="top" style="border:0"><div class="wrap">
+      <h1 id="h1">your AMD card.<br>serves LLMs.</h1>
+      <p class="sub">Flash a USB, boot the AMD box, open the local web app. Models run offline.</p>
       <div class="cards" aria-label="Example AMD GPUs">
         <span>RX 580</span><span>RX 6800</span><span>7900 XTX</span><span>MI210</span><span>APUs</span>
       </div>
@@ -583,64 +349,23 @@ header{box-shadow:0 1px 0 rgba(255,176,90,.06)}
           GitHub
         </a>
       </div>
-    </div>
-    <div class="hero-visual">
-      <div class="deck-preview" role="img" aria-label="The real Cameo Deck showing two online nodes, their AMD GPUs, a running local model, an active Knossos lease, and passed verification">
-        <div class="dp-head">
-          <span class="dp-brand">CAM<em>EO</em></span>
-          <span class="dp-host">forge-01 · local control plane</span>
-          <span class="dp-status"><i class="dp-dot"></i>2 nodes online</span>
-        </div>
-        <div class="dp-tabs">
-          <span class="dp-tab">Console</span><span class="dp-tab on">Deck</span><span class="dp-url">cameo.local:9090</span>
-        </div>
-        <div class="dp-screen">
-          <div class="dp-field">
-            <div class="dp-field-label">Cameo Mesh / this house</div>
-            <div class="dp-node on">
-              <div class="dp-node-head"><i class="dp-dot"></i>forge-01 <span class="dp-badge">this box</span><span class="addr">192.168.1.40</span></div>
-              <div class="dp-chips"><span class="dp-chip"><b>RX 7900 XTX</b> · T1 · 24 GB</span><span class="dp-chip"><b>qwen2.5-0.5b</b> <span class="dp-badge run">running</span></span></div>
-              <div class="dp-who">Agent: Knossos · 2 reservations</div>
-            </div>
-            <div class="dp-node secondary">
-              <div class="dp-node-head"><i class="dp-dot"></i>drawer-580 <span class="addr">192.168.1.44</span></div>
-              <div class="dp-chips"><span class="dp-chip"><b>RX 580</b> · T3 · 8 GB</span><span class="dp-chip">Vulkan ready</span></div>
-              <div class="dp-who">idle · available to Mesh</div>
-            </div>
-          </div>
-          <aside class="dp-rail">
-            <div class="dp-rail-title">Node details</div>
-            <h3>forge-01</h3>
-            <div class="dp-kv"><span>backend</span><b>rocm</b><span>endpoint</span><b>/v1</b><span>context</span><b>32k</b><span>state</span><b>serving</b></div>
-            <div class="dp-session"><strong>Active agent · Knossos</strong>Mode: write · Reservation: active<div class="dp-pass"><i></i>verification passed</div></div>
-          </aside>
-        </div>
-      </div>
-      <div class="gpu-float" aria-hidden="true">
-        <div class="gf-head"><i class="dp-dot"></i><b>GPU 0 · RX 7900 XTX</b><span>Tier 1</span></div>
-        <div class="gf-meta"><span>VRAM</span><b>9.8 / 24 GB</b></div><div class="gf-meter"><i></i></div>
-        <div class="gf-foot"><span>backend <b>rocm</b></span><span>temp <b>62°C</b></span><span>util <b>41%</b></span></div>
-      </div>
-    </div>
+    <figure class="console-shot">
+      <img src="assets/console.png" width="1904" height="978" alt="Cameo console: GPU list, endpoints, start a smoke-test model">
+    </figure>
   </div>
   </section>
 
   <section id="how"><div class="wrap">
-    <p class="eyebrow rise"><span class="ix">01</span>how it works</p>
-    <h2 class="rise">Four steps. Then it’s local.</h2>
-    <div class="steps">
-      <article class="step rise"><span class="n">01</span><h3>Download</h3><p>One bootable ISO.</p></article>
-      <article class="step rise"><span class="n">02</span><h3>Flash</h3><p>Write it to USB.</p></article>
-      <article class="step rise"><span class="n">03</span><h3>Boot</h3><p>Install on the AMD box.</p></article>
-      <article class="step rise"><span class="n">04</span><h3>Open</h3><p><code>cameo.local:9090</code></p></article>
-    </div>
+    <p class="eyebrow"><span class="ix">01</span>how</p>
+    <h2>ISO. Flash. Boot. <code>cameo.local:9090</code></h2>
+    <p class="lede">That’s the product. After login the box prints that URL. The screenshot above is the real console, not a mock.</p>
   </div></section>
 
   <section id="tiers"><div class="wrap">
-    <p class="eyebrow rise"><span class="ix">02</span>what your card does</p>
-    <h2 class="rise">Three tiers. Vulkan on all of them.</h2>
+    <p class="eyebrow"><span class="ix">02</span>tiers</p>
+    <h2>Vulkan on every card. ROCm when it helps.</h2>
     <div class="tiers">
-      <article class="tier t1 rise">
+      <article class="tier t1">
         <p class="tk">Tier 1</p>
         <h3>Train + Serve</h3>
         <p class="ex">7900 XTX · MI210</p>
@@ -651,7 +376,7 @@ header{box-shadow:0 1px 0 rgba(255,176,90,.06)}
           <div class="bar"><i style="--w:100%"></i></div>
         </div>
       </article>
-      <article class="tier t2 rise">
+      <article class="tier t2">
         <p class="tk">Tier 2</p>
         <h3>Serve</h3>
         <p class="ex">RX 6800 · 6700 XT</p>
@@ -662,7 +387,7 @@ header{box-shadow:0 1px 0 rgba(255,176,90,.06)}
           <div class="bar"><i style="--w:64%"></i></div>
         </div>
       </article>
-      <article class="tier t3 rise">
+      <article class="tier t3">
         <p class="tk">Tier 3</p>
         <h3>Vulkan Inference</h3>
         <p class="ex">RX 580 · APUs</p>
@@ -676,185 +401,10 @@ header{box-shadow:0 1px 0 rgba(255,176,90,.06)}
     </div>
   </div></section>
 
-  <section id="console"><div class="wrap">
-    <p class="eyebrow rise"><span class="ix">03</span>the console</p>
-    <h2 class="rise">Administer it from a browser.</h2>
-    <div class="dash scan rise" role="img" aria-label="Cameo web console at cameo.local:9090 showing GPU status, VRAM, backend, running models, endpoints, temperature, utilization, start and stop, and a chat playground">
-      <div class="sweep" aria-hidden="true"></div>
-      <div class="dash-chrome">
-        <div class="d"><i></i><i></i><i></i></div>
-        <div class="url">
-          <svg viewBox="0 0 12 14" fill="none" aria-hidden="true"><rect x="2" y="6" width="8" height="6.5" rx="1.2" stroke="currentColor" stroke-width="1.3"/><path d="M4 6V4.2a2 2 0 0 1 4 0V6" stroke="currentColor" stroke-width="1.3"/></svg>
-          http://cameo.local:9090
-        </div>
-      </div>
-      <div class="dash-app">
-        <div class="dash-nav" aria-hidden="true">
-          <div class="nm">cam<em>eo</em>d</div>
-          <div class="ni on">Overview</div>
-          <div class="ni">Models</div>
-          <div class="ni">Endpoints</div>
-          <div class="ni">Deck</div>
-          <div class="ni">Playground</div>
-        </div>
-        <div class="dash-main">
-          <div class="stats">
-            <div class="stat">
-              <p class="k">GPU 0</p>
-              <p class="v">RX 7900 XTX</p>
-              <p class="s">Tier 1 · gfx1100</p>
-            </div>
-            <div class="stat">
-              <p class="k">VRAM</p>
-              <p class="v">9.8 / 24 GB</p>
-              <p class="s">41% in use</p>
-              <div class="meter"><i style="width:41%"></i></div>
-            </div>
-            <div class="stat">
-              <p class="k">Backend</p>
-              <p class="v">rocm</p>
-              <p class="s">Vulkan fallback ready</p>
-            </div>
-            <div class="stat">
-              <p class="k">Util / temp</p>
-              <p class="v">41% · 62°C</p>
-              <p class="s">fan 1800 rpm</p>
-              <div class="meter"><i style="width:41%"></i></div>
-            </div>
-          </div>
-          <div class="dash-split">
-            <div class="panel">
-              <h4>Running models</h4>
-              <div class="mrow">
-                <span class="dot live"></span>
-                <span class="mn">qwen2.5-0.5b<br><span class="mm">starter · already on disk</span></span>
-                <span class="mock">Stop</span>
-              </div>
-              <div class="mrow">
-                <span class="dot"></span>
-                <span class="mn">drop a GGUF<br><span class="mm">/var/lib/cameo/models</span></span>
-                <span class="mock go">Start</span>
-              </div>
-              <h4 style="margin-top:16px">Endpoints</h4>
-              <p class="ep-line">POST /v1/chat/completions</p>
-              <p class="ep-line"><span>127.0.0.1:8080 · OpenAI-compatible · LAN only</span></p>
-            </div>
-            <div class="panel">
-              <h4>Playground</h4>
-              <div class="chat">
-                <div class="bubble u">What GPU is this?</div>
-                <div class="bubble a">GPU 0 is an RX 7900 XTX, 24 GB, ROCm. qwen2.5-0.5b is serving on /v1. No internet required.</div>
-                <div class="chat-in">
-                  <span class="field">Message the local model…</span>
-                  <span class="mock go">Send</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-      <div class="dash-foot">
-        <span>cameod · forge-01 · 0.0.0.0:9090</span>
-        <span>offline · key required</span>
-      </div>
-    </div>
-  </div></section>
-
-  <section id="deck"><div class="wrap">
-    <p class="eyebrow rise"><span class="ix">04</span>the Deck</p>
-    <h2 class="rise">Model. Owner. Proof.</h2>
-    <div class="steps">
-      <article class="step rise"><span class="n">RUNNING</span><h3>Model status</h3><div class="step-foot"><i></i>/v1 · serving</div></article>
-      <article class="step rise"><span class="n">MEMORY</span><h3>Capacity</h3><div class="step-foot"><i></i>18.2 GB · available</div></article>
-      <article class="step rise"><span class="n">RESULT</span><h3>Verification</h3><div class="step-foot"><i></i>12 checks · passed</div></article>
-      <article class="step rise"><span class="n">ACCESS</span><h3>Permissions</h3><div class="step-foot"><i></i>scoped keys</div></article>
-    </div>
-    <details class="devbox rise">
-      <summary>API contract</summary>
-      <div class="term">
-      <div class="bar"><i></i><i></i><i></i>&nbsp;&nbsp;Cameo Engine Contract v1</div>
-<pre><span class="ln"><span class="p">consumer</span>  GET /api/engines  -&gt; models, profiles, limits, capabilities</span><span class="ln"><span class="p">consumer</span>  POST /v1/chat/completions  -&gt; OpenAI JSON + SSE streaming</span><span class="ln"><span class="p">operator</span>  POST /api/servers  -&gt; deliberately provision a cold model</span><span class="ln"><span class="p">session</span>   POST /api/sessions/{id}/lease  -&gt; protect a running model</span><span class="ln"><span class="p">tools</span>     agent-managed fallback  -&gt; no assumed server-specific dialect</span><span class="ln"><span class="o">Cameo observes the work. Knossos owns the agent loop.</span><span class="cur"></span></pre>
-      </div>
-    </details>
-  </div></section>
-
-  <section id="scale"><div class="wrap">
-    <p class="eyebrow rise"><span class="ix">05</span>one card → Cameo Mesh</p>
-    <h2 class="rise">Pair machines. Route each request where it fits.</h2>
-    <svg class="flow rise" viewBox="0 0 1000 240" role="img" aria-label="One AMD card scaling out to a box, then Cameo Mesh">
-      <ellipse cx="156" cy="120" rx="115" ry="62" fill="url(#ug)"/>
-      <ellipse cx="530" cy="122" rx="135" ry="78" fill="url(#ug)"/>
-      <ellipse cx="908" cy="126" rx="155" ry="92" fill="url(#ug)"/>
-      <path class="flow-line" d="M235,120 H430" fill="none" stroke="#6A5C48" stroke-width="1.5"/>
-      <path class="flow-line" d="M600,120 H795" fill="none" stroke="#6A5C48" stroke-width="1.5"/>
-      <use href="#gpuHot" x="130" y="103"/>
-      <text x="156" y="176" fill="#B8B1A6" font-family="IBM Plex Mono,monospace" font-size="13" text-anchor="middle">one card</text>
-      <text x="156" y="196" fill="#FF7A1A" font-family="IBM Plex Mono,monospace" font-size="11" text-anchor="middle">×1</text>
-      <use href="#gpuHot" x="474" y="82"/><use href="#gpu" x="534" y="82"/>
-      <use href="#gpu" x="474" y="124"/><use href="#gpuHot" x="534" y="124"/>
-      <text x="530" y="196" fill="#B8B1A6" font-family="IBM Plex Mono,monospace" font-size="13" text-anchor="middle">a box</text>
-      <text x="530" y="216" fill="#FF7A1A" font-family="IBM Plex Mono,monospace" font-size="11" text-anchor="middle">×4</text>
-      <use href="#gpuHot" x="820" y="66"/><use href="#gpu" x="878" y="66"/><use href="#gpu" x="936" y="66"/>
-      <use href="#gpu" x="820" y="106"/><use href="#gpuHot" x="878" y="106"/><use href="#gpu" x="936" y="106"/>
-      <use href="#gpu" x="820" y="146"/><use href="#gpu" x="878" y="146"/><use href="#gpuHot" x="936" y="146"/>
-      <text x="908" y="206" fill="#B8B1A6" font-family="IBM Plex Mono,monospace" font-size="13" text-anchor="middle">Cameo Mesh</text>
-      <text x="908" y="226" fill="#FF7A1A" font-family="IBM Plex Mono,monospace" font-size="11" text-anchor="middle">×9</text>
-    </svg>
-    <svg class="flow-m rise" viewBox="0 0 360 560" role="img" aria-label="One AMD card scaling to a box, then Cameo Mesh">
-      <ellipse cx="180" cy="60" rx="120" ry="55" fill="url(#ug)"/>
-      <ellipse cx="180" cy="222" rx="130" ry="72" fill="url(#ug)"/>
-      <ellipse cx="180" cy="430" rx="145" ry="92" fill="url(#ug)"/>
-      <use href="#gpuHot" x="152" y="26"/>
-      <text x="180" y="96" fill="#B8B1A6" font-family="IBM Plex Mono,monospace" font-size="13" text-anchor="middle">one card</text>
-      <text x="180" y="114" fill="#FF7A1A" font-family="IBM Plex Mono,monospace" font-size="11" text-anchor="middle">×1</text>
-      <path class="flow-line" d="M180,126 V160" fill="none" stroke="#6A5C48" stroke-width="1.5"/>
-      <use href="#gpuHot" x="122" y="172"/><use href="#gpu" x="182" y="172"/>
-      <use href="#gpu" x="122" y="214"/><use href="#gpuHot" x="182" y="214"/>
-      <text x="180" y="284" fill="#B8B1A6" font-family="IBM Plex Mono,monospace" font-size="13" text-anchor="middle">a box</text>
-      <text x="180" y="302" fill="#FF7A1A" font-family="IBM Plex Mono,monospace" font-size="11" text-anchor="middle">×4</text>
-      <path class="flow-line" d="M180,314 V348" fill="none" stroke="#6A5C48" stroke-width="1.5"/>
-      <use href="#gpuHot" x="92" y="360"/><use href="#gpu" x="152" y="360"/><use href="#gpu" x="212" y="360"/>
-      <use href="#gpu" x="92" y="402"/><use href="#gpuHot" x="152" y="402"/><use href="#gpu" x="212" y="402"/>
-      <use href="#gpu" x="92" y="444"/><use href="#gpu" x="152" y="444"/><use href="#gpuHot" x="212" y="444"/>
-      <text x="180" y="512" fill="#B8B1A6" font-family="IBM Plex Mono,monospace" font-size="13" text-anchor="middle">Cameo Mesh</text>
-      <text x="180" y="530" fill="#FF7A1A" font-family="IBM Plex Mono,monospace" font-size="11" text-anchor="middle">×9</text>
-    </svg>
-  </div></section>
-
-  <section id="capabilities"><div class="wrap">
-    <p class="eyebrow rise"><span class="ix">06</span>v1 capabilities</p>
-    <h2 class="rise">The typed contract, not marketing copy.</h2>
-    <p class="rise" style="color:var(--body);max-width:46rem">Every public claim is generated from <code>contracts/cameo-capabilities-v1.json</code>. Planned and unsupported rows stay visible so absence is not mistaken for an old server.</p>
-    <!-- CAPABILITIES:BEGIN -->
-    <table class="caps">
-      <thead><tr><th>Capability</th><th>Maturity</th><th>Available</th><th>Scope</th></tr></thead>
-      <tbody>
-    <tr><td>inference.openai_compatible_gateway</td><td>stable</td><td class="yes">yes</td><td>Authenticated /v1 gateway for chat completions, completions, and embeddings.</td></tr>
-    <tr><td>inference.streaming</td><td>stable</td><td class="yes">yes</td><td>Server-sent event streaming is proxied without response buffering.</td></tr>
-    <tr><td>inference.native_tool_calls</td><td>unsupported</td><td class="no">no</td><td>Tool orchestration is currently owned by the agent harness.</td></tr>
-    <tr><td>harness.knossos_session_control</td><td>stable</td><td class="yes">yes</td><td>Authenticated session board and Knossos control routes are available.</td></tr>
-    <tr><td>harness.vram_leases</td><td>stable</td><td class="yes">yes</td><td>Session-owned VRAM leases prevent surprise eviction by default.</td></tr>
-    <tr><td>harness.context_discovery</td><td>stable</td><td class="yes">yes</td><td>Per-model context limits are exposed in engine profiles.</td></tr>
-    <tr><td>models.verified_downloads</td><td>stable</td><td class="yes">yes</td><td>Known aliases are pinned by SHA-256 and incomplete downloads are isolated.</td></tr>
-    <tr><td>models.hardware_recommendation</td><td>preview</td><td class="yes">yes</td><td>Detected accelerator and host headroom select the highest-ranked checksum-pinned profile for chat, coding, or agent work.</td></tr>
-    <tr><td>models.one_action_setup</td><td>preview</td><td class="yes">yes</td><td>cameo setup preflights policy and runtime, downloads a pinned model, verifies SHA-256, configures serving arguments, and starts on loopback by default.</td></tr>
-    <tr><td>mesh.scheduling</td><td>preview</td><td class="yes">yes</td><td>Trust, health, locality, affinity, deadline, warm-model, and load-aware admission is available on /hub/dispatch.</td></tr>
-    <tr><td>mesh.device_pairing</td><td>preview</td><td class="yes">yes</td><td>An operator creates a ten-minute one-time code; redemption issues a per-node 256-bit credential stored only as a hub-side digest. Node and hub identity state survives restart; removal durably revokes it. Certificate binding remains pending.</td></tr>
-    <tr><td>mesh.mutual_tls</td><td>planned</td><td class="no">no</td><td>Hub-to-node callbacks require HTTPS but are not yet mutually authenticated with device certificates.</td></tr>
-    <tr><td>mesh.distributed_model_sharding</td><td>planned</td><td class="no">no</td><td>Cameo routes whole inference requests; it does not shard one model execution across LAN nodes.</td></tr>
-    <tr><td>security.role_scoped_keys</td><td>stable</td><td class="yes">yes</td><td>Consumer and operator credentials are separated and compared in constant time.</td></tr>
-    <tr><td>security.local_harness_bypass</td><td>stable</td><td class="yes">yes</td><td>Keyless harness control is restricted to local transport in self-host posture.</td></tr>
-    <tr><td>security.request_rate_limits</td><td>stable</td><td class="yes">yes</td><td>Bounded per-client fixed-window admission protects pairing, invalid credentials, inference, control, and public HTTP routes.</td></tr>
-    <tr><td>security.release_security_review</td><td>preview</td><td class="yes">yes</td><td>Security regression tests exist; independent release review and platform certification remain pending.</td></tr>
-      </tbody>
-    </table>
-    <!-- CAPABILITIES:END -->
-  </div></section>
-
   <section id="install"><div class="wrap">
-    <p class="eyebrow rise"><span class="ix">07</span>get it</p>
-    <h2 class="rise">Image. Flash. Done.</h2>
-    <div class="cmdbar rise">
+    <p class="eyebrow"><span class="ix">03</span>get it</p>
+    <h2>Image. Flash. Done.</h2>
+    <div class="cmdbar">
       <span>flash</span>
       <kbd>cameo-*.iso</kbd>
       <span>→ boot</span>
@@ -867,39 +417,39 @@ header{box-shadow:0 1px 0 rgba(255,176,90,.06)}
       </button>
     </div>
 
-    <article class="install rise">
+    <article class="install">
       <h3>1 · Download the image</h3>
       <p>Choose Universal unless you specifically want the smaller Vulkan-only image.</p>
       <div class="eds">
         <div class="ed rec">
           <div class="ed-h"><span class="ed-name">Universal</span><span class="tag-rec">Vulkan + ROCm</span></div>
           <p>Vulkan + ROCm.</p>
-          <a class="btn-primary" href="https://github.com/sadlowskik/Cameo/releases/download/v0.1.0-beta.1/cameo-2026.08.20.gunknown-x86_64.iso" rel="noopener">
+          <a class="btn-primary" href="https://github.com/sadlowskik/Cameo/releases/latest" rel="noopener">
             <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
             Download Universal ISO
           </a>
-          <p><a href="https://github.com/sadlowskik/Cameo/releases/download/v0.1.0-beta.1/SHA256SUMS" rel="noopener" style="color:var(--amber)">SHA-256 checksum</a></p>
+          <p><a href="https://github.com/sadlowskik/Cameo/releases/latest" rel="noopener" style="color:var(--amber)">GitHub Releases · SHA-256 on the release</a></p>
         </div>
         <div class="ed">
           <div class="ed-h"><span class="ed-name">Lite</span><span class="tag-s">smaller · vulkan only</span></div>
           <p>Vulkan only.</p>
-          <a class="btn" href="https://github.com/sadlowskik/Cameo/releases/download/v0.1.0-beta.2/cameo-lite-2026.08.20.gunknown-x86_64.iso" rel="noopener">Download Lite ISO</a>
-          <p><a href="https://github.com/sadlowskik/Cameo/releases/download/v0.1.0-beta.2/SHA256SUMS" rel="noopener" style="color:var(--amber)">SHA-256 checksum</a></p>
+          <a class="btn" href="https://github.com/sadlowskik/Cameo/releases/latest" rel="noopener">Download Lite ISO</a>
+          <p><a href="https://github.com/sadlowskik/Cameo/releases/latest" rel="noopener" style="color:var(--amber)">GitHub Releases · SHA-256 on the release</a></p>
         </div>
       </div>
     </article>
 
-    <details class="devbox rise">
+    <details class="devbox">
       <summary>Knossos standalone for Windows</summary>
       <article class="install">
       <h3>Standalone harness</h3>
-      <p>Run the Rust-native <code style="font-family:var(--mono);font-size:.9em;color:var(--amber)">knossos</code> harness on an existing Windows workstation. The v0.1 archive below retains the original filename; v0.2 and later use Knossos throughout.</p>
+      <p>Current Windows beta: <code style="font-family:var(--mono);font-size:.9em;color:var(--amber)">knossos.exe</code>. Needs a model — Ollama, Anthropic, or a running Cameo box. Not a certified release; replace this zip when you cut the next one.</p>
       <div class="eds">
         <div class="ed rec">
-          <div class="ed-h"><span class="ed-name">Windows</span><span class="tag-rec">x86_64</span></div>
-          <p>Standalone v0.1 harness plus documentation.</p>
-          <a class="btn-primary" href="/downloads/daedalus-v0.1.0-windows-x86_64.zip">Download Windows zip</a>
-          <p><a href="/downloads/daedalus-v0.1.0-windows-x86_64.zip.sha256" style="color:var(--amber)">SHA-256 checksum</a></p>
+          <div class="ed-h"><span class="ed-name">Windows</span><span class="tag-rec">x86_64 · beta</span></div>
+          <p>Knossos 0.2.0-beta.1 CLI plus constitution and license.</p>
+          <a class="btn-primary" href="/downloads/knossos-0.2.0-beta.1-windows-x86_64.zip">Download Windows zip</a>
+          <p><a href="/downloads/knossos-0.2.0-beta.1-windows-x86_64.zip.sha256" style="color:var(--amber)">SHA-256 checksum</a></p>
         </div>
         <div class="ed">
           <div class="ed-h"><span class="ed-name">Linux + macOS</span><span class="tag-s">coming later</span></div>
@@ -909,7 +459,7 @@ header{box-shadow:0 1px 0 rgba(255,176,90,.06)}
       </article>
     </details>
 
-    <details class="devbox rise">
+    <details class="devbox">
       <summary>Installation guide · USB to local chat · erases the selected disk</summary>
       <div class="body installs">
     <article class="install">
@@ -969,7 +519,7 @@ header{box-shadow:0 1px 0 rgba(255,176,90,.06)}
       </div>
     </details>
 
-    <details class="devbox rise">
+    <details class="devbox">
       <summary>Developers: container or build the ISO yourself</summary>
       <div class="body install">
         <p class="mini">Container — host owns the GPU driver:</p>
@@ -990,7 +540,16 @@ sudo CAMEO_EDITION=lite ./scripts/build-iso.sh</pre>
       </div>
     </details>
 
-    <p class="note rise">Beta, pre-v1. Flash an <code style="color:var(--amber)">.iso</code>, not Source code. Check <code style="color:var(--amber)">SHA256SUMS</code>. The disk installer erases the drive you pick. Source: <a href="https://github.com/sadlowskik/Cameo" rel="noopener" style="color:var(--amber)">github.com/sadlowskik/Cameo</a>.</p>
+    <p class="note">Beta, pre-v1. Flash an <code style="color:var(--amber)">.iso</code>, not Source code. Check <code style="color:var(--amber)">SHA256SUMS</code>. The disk installer erases the drive you pick. Source: <a href="https://github.com/sadlowskik/Cameo" rel="noopener" style="color:var(--amber)">github.com/sadlowskik/Cameo</a>.</p>
+  </div></section>
+
+  <section id="testers"><div class="wrap">
+    <p class="eyebrow"><span class="ix">04</span>the roll</p>
+    <h2>The first people to boot it on metal.</h2>
+    <p style="color:var(--body);max-width:42rem">Cameo is Apache-2.0. A name lands here only if someone asked to be listed after they actually ran it.</p>
+    <p id="tester-empty" style="color:var(--muted);font-family:var(--mono);font-size:14px">No names yet. The first consented hardware report becomes row one.</p>
+    <div class="steps" id="tester-list" hidden></div>
+    <p style="margin-top:18px"><a class="btn-primary" href="https://github.com/sadlowskik/Cameo/issues/new?template=hardware-report.yml">File a hardware report</a></p>
   </div></section>
 </main>
 
@@ -1002,6 +561,7 @@ sudo CAMEO_EDITION=lite ./scripts/build-iso.sh</pre>
       <a href="legal.html#terms">terms</a>
       <a href="legal.html#privacy">privacy</a>
       <a href="legal.html">legal</a>
+      <a href="#testers">testers</a>
       <a class="gh" href="https://github.com/sadlowskik/Cameo" rel="noopener">github</a>
     </div>
   </div>
@@ -1010,28 +570,7 @@ sudo CAMEO_EDITION=lite ./scripts/build-iso.sh</pre>
 
 <script>
 (function(){
-  var d=document, reduce=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  function reveal(el){
-    el.classList.add('in');
-    if(el.classList.contains('term') && !reduce){
-      el.classList.add('typing');
-      el.querySelectorAll('.ln').forEach(function(ln,i){ln.style.animationDelay=(0.12+i*0.14)+'s';});
-    }
-  }
-  if(!reduce){
-    d.body.classList.add('anim');
-    d.querySelectorAll('#h1 .w').forEach(function(w,i){w.style.animationDelay=(0.08+i*0.06)+'s';});
-  }
-  var rises=d.querySelectorAll('.rise');
-  if(reduce){rises.forEach(reveal);}
-  else if('IntersectionObserver' in window){
-    var io=new IntersectionObserver(function(es){es.forEach(function(e){
-      if(e.isIntersecting){reveal(e.target);io.unobserve(e.target);}
-    });},{threshold:.12});
-    rises.forEach(function(el){io.observe(el);});
-    setTimeout(function(){rises.forEach(function(el){if(!el.classList.contains('in'))reveal(el);});},2000);
-  } else {rises.forEach(reveal);}
-
+  var d=document;
   var navLinks=Array.prototype.slice.call(d.querySelectorAll('.nav .links a.l'));
   var navTargets=navLinks.map(function(a){return d.querySelector(a.getAttribute('href'));}).filter(Boolean);
   if(navTargets.length&&'IntersectionObserver' in window){
@@ -1063,146 +602,20 @@ sudo CAMEO_EDITION=lite ./scripts/build-iso.sh</pre>
     });
   });
 
-  if(!reduce){
-    var cur=d.getElementById('cursor');
-    if(cur){
-      d.body.classList.add('glow');
-      var cx=innerWidth/2,cy=innerHeight/2,tx=cx,ty=cy;
-      d.addEventListener('pointermove',function(e){tx=e.clientX;ty=e.clientY;},{passive:true});
-      (function loop(){
-        cx+=(tx-cx)*.12;cy+=(ty-cy)*.12;
-        cur.style.left=cx+'px';cur.style.top=cy+'px';
-        requestAnimationFrame(loop);
-      })();
-    }
-    if(matchMedia('(hover:hover) and (pointer:fine)').matches){
-      d.querySelectorAll('.step,.tier,.install,.gcard').forEach(function(card){
-        card.classList.add('has-edge-glow');
-        var edge=d.createElement('span');edge.className='edge-glow';edge.setAttribute('aria-hidden','true');card.appendChild(edge);
-        card.addEventListener('pointermove',function(e){
-          var box=card.getBoundingClientRect();
-          card.style.setProperty('--gx',(e.clientX-box.left)+'px');
-          card.style.setProperty('--gy',(e.clientY-box.top)+'px');
-        },{passive:true});
-      });
-    }
-  }
-})();
-
-// ---- living backdrop: amber nebula (WebGL) with a 2D starfield fallback ----
-(function(){
-  var cv=document.getElementById('stars');if(!cv)return;
-  var reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
-  var gl=null;try{gl=cv.getContext('webgl')||cv.getContext('experimental-webgl');}catch(e){}
-  if(gl&&initGL())return;
-  init2D();
-
-  function initGL(){
-    var vs='attribute vec2 p;void main(){gl_Position=vec4(p,0.,1.);}';
-    var fs=[
-      'precision highp float;uniform vec2 r;uniform float t;',
-      'float hash(vec2 p){p=fract(p*vec2(123.34,456.21));p+=dot(p,p+45.32);return fract(p.x*p.y);}',
-      'float noise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);',
-      'float a=hash(i),b=hash(i+vec2(1,0)),c=hash(i+vec2(0,1)),d=hash(i+vec2(1,1));',
-      'return mix(mix(a,b,f.x),mix(c,d,f.x),f.y);}',
-      'float fbm(vec2 p){float v=0.,a=.5;mat2 m=mat2(1.6,1.2,-1.2,1.6);',
-      'for(int i=0;i<5;i++){v+=a*noise(p);p=m*p;a*=.5;}return v;}',
-      'void main(){',
-      'vec2 uv=gl_FragCoord.xy/r;',
-      'vec2 p=(gl_FragCoord.xy-0.5*r)/r.y;',
-      'float tt=t*0.013;',
-      'vec2 q=p*2.0+vec2(tt,tt*0.5);',
-      'float n=fbm(q+fbm(q*1.3+tt));',
-      'n=smoothstep(0.30,1.05,n);',
-      'float band=smoothstep(0.95,0.0,abs(p.x*0.5-p.y*0.62+0.12));',
-      'n*=mix(0.45,1.0,band);',
-      'vec3 base=vec3(0.075,0.066,0.045);',
-      'vec3 rust=vec3(0.50,0.18,0.11);',
-      'vec3 amber=vec3(1.0,0.56,0.20);',
-      'vec3 col=base;',
-      'col=mix(col,rust,n*0.50);',
-      'col=mix(col,amber,pow(n,2.3)*0.36);',
-      'vec2 g=gl_FragCoord.xy/40.0;vec2 gi=floor(g);float h=hash(gi);',
-      'float star=0.0;',
-      'if(h>0.87){vec2 gf=fract(g)-0.5;float d=length(gf);',
-      'float tw=0.55+0.45*sin(t*1.4+h*90.0);star=smoothstep(0.15,0.0,d)*tw;}',
-      'vec3 sc=mix(vec3(1.0,0.96,0.88),amber,step(0.62,fract(h*17.0)));',
-      'col+=star*sc*0.9;',
-      'float vig=smoothstep(1.25,0.35,length(p*vec2(0.82,1.0)));',
-      'col*=mix(0.68,1.0,vig);',
-      'gl_FragColor=vec4(col,1.0);}'
-    ].join('\n');
-    function sh(ty,src){var s=gl.createShader(ty);gl.shaderSource(s,src);gl.compileShader(s);
-      if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)){return null;}return s;}
-    var v=sh(gl.VERTEX_SHADER,vs),f=sh(gl.FRAGMENT_SHADER,fs);if(!v||!f)return false;
-    var prog=gl.createProgram();gl.attachShader(prog,v);gl.attachShader(prog,f);gl.linkProgram(prog);
-    if(!gl.getProgramParameter(prog,gl.LINK_STATUS))return false;
-    gl.useProgram(prog);
-    var b=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,b);
-    gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,-1,1,1,-1,1,1]),gl.STATIC_DRAW);
-    var loc=gl.getAttribLocation(prog,'p');gl.enableVertexAttribArray(loc);gl.vertexAttribPointer(loc,2,gl.FLOAT,false,0,0);
-    var uR=gl.getUniformLocation(prog,'r'),uT=gl.getUniformLocation(prog,'t');
-    var D=Math.min(devicePixelRatio||1,1.5);
-    function size(){cv.width=Math.max(1,innerWidth)*D;cv.height=Math.max(1,innerHeight)*D;gl.viewport(0,0,cv.width,cv.height);}
-    size();addEventListener('resize',size);
-    var start=performance.now();
-    function frame(){var tt=(performance.now()-start)/1000;
-      gl.uniform2f(uR,cv.width,cv.height);gl.uniform1f(uT,tt);
-      gl.drawArrays(gl.TRIANGLES,0,6);requestAnimationFrame(frame);}
-    requestAnimationFrame(frame);
-    return true;
-  }
-
-  function init2D(){
-    var x=cv.getContext('2d');if(!x)return;
-    var DPR=Math.min(devicePixelRatio||1,2),W=0,H=0,stars=[];
-    var pal=['#F6F4F2','#F6F4F2','#FFD08A','#FFB877','#FF7A1A','#C9A98A'];
-    function build(){W=cv.width=Math.max(1,innerWidth)*DPR;H=cv.height=Math.max(1,innerHeight)*DPR;
-      var n=Math.max(80,Math.min(220,Math.round(innerWidth*innerHeight/8600)));stars=[];
-      for(var i=0;i<n;i++){var b=Math.random()<0.14;
-        stars.push({x:Math.random()*W,y:Math.random()*H,r:((b?Math.random()*1.4+1:Math.random()*1+0.3))*DPR,
-          a:Math.random()*0.45+(b?0.35:0.12),tw:Math.random()*6.28,ts:Math.random()*0.018+0.004,
-          vy:(Math.random()*0.05+0.015)*DPR,c:pal[Math.random()<0.62?(Math.random()<0.5?0:1):2+((Math.random()*4)|0)]});}}
-    build();addEventListener('resize',build);
-    function paint(anim){x.clearRect(0,0,W,H);
-      for(var i=0;i<stars.length;i++){var s=stars[i];var tw=anim?(0.55+0.45*Math.sin(s.tw+=s.ts)):0.85;
-        if(anim){s.y+=s.vy;if(s.y>H+3){s.y=-3;s.x=Math.random()*W;}}
-        if(s.r>1.3*DPR){x.globalAlpha=s.a*tw*0.22;x.beginPath();x.arc(s.x,s.y,s.r*3.2,0,6.2832);x.fillStyle=s.c;x.fill();}
-        x.globalAlpha=Math.min(1,s.a*tw);x.beginPath();x.arc(s.x,s.y,s.r,0,6.2832);x.fillStyle=s.c;x.fill();}
-      x.globalAlpha=1;}
-    (function loop(){paint(true);requestAnimationFrame(loop);})();
-  }
-})();
-
-// ---- shooting stars: occasional amber streaks ----
-(function(){
-  var cv=document.getElementById('streaks');if(!cv)return;
-  var x=cv.getContext('2d');if(!x)return;
-  var DPR=Math.min(devicePixelRatio||1,2),W=0,H=0,ms=[],next=performance.now()+2600;
-  function size(){W=cv.width=Math.max(1,innerWidth)*DPR;H=cv.height=Math.max(1,innerHeight)*DPR;}
-  size();addEventListener('resize',size);
-  function spawn(){
-    var dir=Math.random()<0.5?1:-1,a=Math.random()*0.22+0.34,sp=(Math.random()*8+12)*DPR;
-    ms.push({x:dir>0?Math.random()*W*0.55:W*0.45+Math.random()*W*0.55,y:Math.random()*H*0.42,
-      vx:Math.cos(a)*sp*dir,vy:Math.sin(a)*sp,life:0,max:Math.random()*22+30,len:(Math.random()*80+110)*DPR});
-  }
-  (function loop(ts){
-    x.clearRect(0,0,W,H);
-    if(ts>next){spawn();next=ts+4200+Math.random()*7000;}
-    for(var i=ms.length-1;i>=0;i--){var m=ms[i];m.life++;m.x+=m.vx;m.y+=m.vy;var p=m.life/m.max;
-      if(p>=1||m.x<-250||m.x>W+250||m.y>H+250){ms.splice(i,1);continue;}
-      var al=Math.sin(p*3.1416),v=Math.hypot(m.vx,m.vy),nx=m.vx/v,ny=m.vy/v;
-      var g=x.createLinearGradient(m.x,m.y,m.x-nx*m.len,m.y-ny*m.len);
-      g.addColorStop(0,'rgba(255,222,168,'+(0.85*al).toFixed(3)+')');
-      g.addColorStop(0.3,'rgba(255,122,26,'+(0.4*al).toFixed(3)+')');
-      g.addColorStop(1,'rgba(255,122,26,0)');
-      x.strokeStyle=g;x.lineWidth=1.5*DPR;x.lineCap='round';
-      x.beginPath();x.moveTo(m.x,m.y);x.lineTo(m.x-nx*m.len,m.y-ny*m.len);x.stroke();
-      x.fillStyle='rgba(255,244,225,'+(0.95*al).toFixed(3)+')';
-      x.beginPath();x.arc(m.x,m.y,1.5*DPR,0,6.2832);x.fill();
-    }
-    requestAnimationFrame(loop);
-  })(performance.now());
+  fetch('testers.json').then(function(r){return r.ok?r.json():null;}).then(function(data){
+    var people=data&&data.testers||[];
+    var empty=d.getElementById('tester-empty');
+    var list=d.getElementById('tester-list');
+    if(!people.length||!list) return;
+    empty.hidden=true;
+    list.hidden=false;
+    list.innerHTML=people.map(function(t){
+      var name=String(t.name||'').replace(/[<>&]/g,function(c){return ({'<':'&lt;','>':'&gt;','&':'&amp;'})[c];});
+      var machine=String(t.machine||'').replace(/[<>&]/g,function(c){return ({'<':'&lt;','>':'&gt;','&':'&amp;'})[c];});
+      var proved=String(t.proved||'').replace(/[<>&]/g,function(c){return ({'<':'&lt;','>':'&gt;','&':'&amp;'})[c];});
+      return '<article class="step"><span class="n">'+(t.date||'')+'</span><h3>'+name+'</h3><div class="step-foot"><i></i>'+machine+(proved?' · '+proved:'')+'</div></article>';
+    }).join('');
+  }).catch(function(){});
 })();
 </script>
 </body>

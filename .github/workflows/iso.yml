@@ -117,10 +117,10 @@ jobs:
       - name: Verify toolchain
         run: docker exec arch bash -euo pipefail -c "mkarchiso -h >/dev/null && cargo --version && rustc --version"
 
-      - name: Build Cameo + Daedalus
+      - name: Build Cameo + Knossos
         run: |
           docker exec arch bash -euo pipefail -c "CARGO_TARGET_DIR=/repo/build/cargo-target cargo build --release --locked -p cameo-cli -p cameo-daemon"
-          docker exec arch bash -euo pipefail -c "CARGO_TARGET_DIR=/repo/build/daedalus-target cargo build --release --locked --manifest-path daedalus/knossos-rs/Cargo.toml --bin daedalus"
+          docker exec arch bash -euo pipefail -c "CARGO_TARGET_DIR=/repo/build/daedalus-target cargo build --release --locked --manifest-path daedalus/knossos-rs/Cargo.toml --bin knossos"
 
       # pacman 7 runs downloads under an unprivileged DownloadUser confined by
       # landlock. That sandbox cannot be set up inside a container and aborts
@@ -315,10 +315,27 @@ jobs:
           fi
           echo "OK: signed-update trust root is on the image"
 
-          echo "--- Daedalus agentic harness ---"
-          sudo test -x "$A/usr/local/bin/daedalus" \
-            || { echo "FAIL: daedalus binary missing"; exit 1; }
-          echo "OK: Daedalus shipped"
+          echo "--- transactional update runtime ---"
+          for f in \
+            usr/local/bin/cameo-update \
+            usr/local/lib/cameo/update-transaction \
+            usr/local/lib/cameo/update-host \
+            usr/local/lib/cameo/update_host_transaction.py \
+            etc/cameo/compatibility-id \
+            etc/systemd/system/cameo-update-recover.service \
+            etc/systemd/system/cameo-update-health.service \
+            etc/systemd/system/cameo-update-fallback.service; do
+            sudo test -e "$A/$f" || { echo "FAIL: update runtime missing /$f"; exit 1; }
+          done
+          sudo python3 -m py_compile \
+            "$A/usr/local/lib/cameo/update_host_transaction.py" \
+            "$A/usr/local/lib/cameo/update-host"
+          echo "OK: A/B update runtime is staged"
+
+          echo "--- Knossos agentic harness ---"
+          sudo test -x "$A/usr/local/bin/knossos" \
+            || { echo "FAIL: knossos binary missing"; exit 1; }
+          echo "OK: Knossos shipped"
 
           # Starter GGUF: first chat with no internet. Seed unit must run
           # before cameod, and the baked file must be in /usr/share/cameo/models.
@@ -532,6 +549,33 @@ jobs:
           sha256sum ./*.iso > "SHA256SUMS.${EDITION}"
           ls -lh
 
+      - name: Build deterministic offline application update bundle
+        if: ${{ !cancelled() && matrix.edition == 'full' }}
+        run: |
+          set -euo pipefail
+          release="${GITHUB_REF_NAME#v}"
+          case "$release" in
+            *[!A-Za-z0-9._-]*|'') release="0.0.0-${GITHUB_SHA::12}" ;;
+          esac
+          root=build/profile/airootfs
+          out="archiso/out/cameo-update-$release"
+          python3 scripts/build_update_bundle.py \
+            --output "$out" \
+            --release-id "$release" \
+            --compatibility-id "$(tr -d '\r\n' < "$root/etc/cameo/compatibility-id")" \
+            --state-writes 3 --state-reads 1 --state-reads 2 --state-reads 3 \
+            --component "$root/usr/local/bin/cameo" /usr/local/bin/cameo 0755 \
+            --component "$root/usr/local/bin/cameod" /usr/local/bin/cameod 0755 \
+            --component "$root/usr/local/bin/knossos" /usr/local/bin/knossos 0755 \
+            --component "$root/usr/local/lib/cameo/update-transaction" /usr/local/lib/cameo/update-transaction 0755 \
+            --component "$root/usr/local/lib/cameo/update-host" /usr/local/lib/cameo/update-host 0755 \
+            --component "$root/usr/local/lib/cameo/update-verify" /usr/local/lib/cameo/update-verify 0755 \
+            --component "$root/usr/local/lib/cameo/update_host_transaction.py" /usr/local/lib/cameo/update_host_transaction.py 0644 \
+            --component "$root/etc/systemd/system/cameo-update-recover.service" /etc/systemd/system/cameo-update-recover.service 0644 \
+            --component "$root/etc/systemd/system/cameo-update-health.service" /etc/systemd/system/cameo-update-health.service 0644 \
+            --component "$root/etc/systemd/system/cameo-update-fallback.service" /etc/systemd/system/cameo-update-fallback.service 0644
+          python3 "$root/usr/local/lib/cameo/update-verify" verify "$out"
+
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
         with:
@@ -539,6 +583,7 @@ jobs:
           path: |
             archiso/out/*.iso
             archiso/out/SHA256SUMS.*
+            archiso/out/cameo-update-*/**
           if-no-files-found: warn
           retention-days: 14
 
@@ -598,21 +643,27 @@ jobs:
             notes+=$'\n`'"$name"$'` is split. Assemble, then flash:\n'
             notes+=$'```\n# Linux/macOS\ncat '"$name"'.part* > '"$name"$'\n# Windows (cmd)\ncopy /b '"$win"' '"$name"$'\n```\n'
           done
-          if [ -n "${CAMEO_UPDATE_PRIVATE_PEM:-}" ]; then
-            umask 077
-            printf '%s\n' "$CAMEO_UPDATE_PRIVATE_PEM" > /tmp/cameo-update-private.pem
-            if grep -q "PRIVATE KEY" /tmp/cameo-update-private.pem; then
-              openssl pkeyutl -sign -inkey /tmp/cameo-update-private.pem -rawin \
-                -in dist/upload/SHA256SUMS -out dist/upload/SHA256SUMS.sig
-              echo "signed SHA256SUMS"
-            else
-              echo "CAMEO_UPDATE_PRIVATE_PEM is not a private key PEM" >&2
-              exit 1
-            fi
-            rm -f /tmp/cameo-update-private.pem
-          else
-            echo "CAMEO_UPDATE_PRIVATE_PEM secret is unset; SHA256SUMS is unsigned"
+          bundles=(dist/cameo-update-*)
+          if [ ${#bundles[@]} -ne 1 ] || [ ! -d "${bundles[0]}" ]; then
+            echo "release requires exactly one application update bundle" >&2; exit 1
           fi
+          if [ -z "${CAMEO_UPDATE_PRIVATE_PEM:-}" ]; then
+            echo "CAMEO_UPDATE_PRIVATE_PEM is required for a tagged release" >&2; exit 1
+          fi
+          umask 077
+          printf '%s\n' "$CAMEO_UPDATE_PRIVATE_PEM" > /tmp/cameo-update-private.pem
+          if ! grep -q "PRIVATE KEY" /tmp/cameo-update-private.pem; then
+            echo "CAMEO_UPDATE_PRIVATE_PEM is not a private key PEM" >&2; exit 1
+          fi
+          openssl pkeyutl -sign -inkey /tmp/cameo-update-private.pem -rawin \
+            -in "${bundles[0]}/manifest.json" -out "${bundles[0]}/manifest.sig"
+          bundle_name="$(basename "${bundles[0]}").tar.gz"
+          tar -C dist -czf "dist/upload/$bundle_name" "$(basename "${bundles[0]}")"
+          sha256sum "dist/upload/$bundle_name" | awk -v n="$bundle_name" '{print $1"  "n}' >> dist/upload/SHA256SUMS
+          openssl pkeyutl -sign -inkey /tmp/cameo-update-private.pem -rawin \
+            -in dist/upload/SHA256SUMS -out dist/upload/SHA256SUMS.sig
+          rm -f /tmp/cameo-update-private.pem
+          echo "signed update manifest and SHA256SUMS"
           gh release create "${GITHUB_REF_NAME}" \
             --title "Cameo ${GITHUB_REF_NAME}" \
             --prerelease \

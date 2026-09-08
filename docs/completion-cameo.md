@@ -85,11 +85,12 @@ identities belong to one signed manifest. The bootloader grants a bounded trial 
 the inactive slot and restores the prior slot automatically unless local hardware,
 model and API probes commit it. Models and mutable state live outside both slots.
 
-This increment does not apply updates and does not complete H12. H12 remains open
-until the A/B layout and state machine exist and are exercised on installed Linux at
-every interruption boundary, release signing keys are managed by the publication
-pipeline, schema migrations declare downgrade compatibility, and all supported
-prior-version upgrades preserve models and state.
+The host path now applies signed application-component bundles to an inactive
+slot and does not complete H12 by itself. H12 remains partial until a full-OS
+payload covers the kernel, firmware, GPU/runtime packages and installed root;
+the state machine is exercised on installed Linux at every interruption boundary;
+the configured signing secret is observed in the publication pipeline; and all
+supported prior-version upgrades preserve models and state.
 
 ### Boot trial and interruption model
 
@@ -133,15 +134,24 @@ creation beneath Python-created test directories.
 ## Coordinator review, 2026-09-06
 
 The filesystem simulator is accepted as a regular-file transaction fixture, not
-as a host update engine. Mutation entry points re-parse bound layout and
+as installed-Linux evidence. Mutation entry points re-parse bound layout and
 manifest bytes under the exclusive writer lock, `begin` cannot clobber an
 in-flight journal, nested/persistent aliases fail closed, and a crash after
 atomic promotion but before journal commit is discarded on recover. BIOS is
 accepted only as a layout label; the fixture still does not render Boot Loader
-Specification entries. Windows: 19 unittest checks plus one skipped Linux
-wrapper-signature check. Linux CI is configured, not observed. Real host
-`apply` remains disabled until the installer owns an A/B layout.
+Specification entries. The later host adapter and installer fixtures supersede
+the old disabled-apply boundary. Linux CI is configured, not observed.
 
 Gateway follow-up: `/v1` now rejects unadvertised OpenAI parameters and caps
 `max_tokens` to the served context window. This is local contract enforcement,
 not pinned-backend conformance.
+
+## Coordinator review, 2026-09-07
+
+The installer provisions A/B 24 GiB slots, separate boot/state partitions, and
+systemd-boot assessed trials. The host transaction journal covers the
+health-checked / layout-rename power-loss window. Persistent-state schema
+contracts now refuse a downgrade or rollback that would boot an older slot
+against schema it cannot read; breaking forward migrations restore the
+pre-update snapshot first. Linux boot/interrupt evidence and signing-pipeline
+observation remain open.

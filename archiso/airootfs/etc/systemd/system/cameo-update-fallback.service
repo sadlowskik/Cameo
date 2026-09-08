@@ -1,0 +1,7 @@
+[Unit]
+Description=Return to the prior Cameo slot after a failed health check
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/cameo-update rollback
+ExecStart=/usr/bin/systemctl reboot

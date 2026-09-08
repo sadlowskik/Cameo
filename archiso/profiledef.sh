@@ -63,5 +63,7 @@ file_permissions=(
   ["/usr/local/bin/cameo-install-guided"]="0:0:755"
   ["/usr/local/bin/cameo-update"]="0:0:755"
   ["/usr/local/lib/cameo/update-transaction"]="0:0:755"
+  ["/usr/local/lib/cameo/update-host"]="0:0:755"
+  ["/usr/local/lib/cameo/update_host_transaction.py"]="0:0:644"
   ["/usr/local/lib/cameo/update-verify"]="0:0:755"
 )

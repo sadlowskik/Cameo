@@ -1,0 +1,57 @@
+name: Hardware report
+description: Record what happened when you actually ran Cameo. This is the most useful contribution.
+title: "hardware: "
+labels: ["hardware"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for flashing this. Names go on [the roll](https://github.com/sadlowskik/Cameo/blob/main/docs/testers.md) only if you check consent below.
+  - type: input
+    id: name
+    attributes:
+      label: How should we list you?
+      description: GitHub handle, nickname, or leave blank to stay off the roll.
+      placeholder: "@handle"
+  - type: checkboxes
+    id: consent
+    attributes:
+      label: Public credit
+      options:
+        - label: I want this name on the testers roll in git and on the site.
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU
+      placeholder: RX 6800, 7900 XTX, RX 580, …
+    validations:
+      required: true
+  - type: input
+    id: host
+    attributes:
+      label: Machine
+      description: Enough to be useful. No address, no serial you care about.
+      placeholder: desktop, 32 GB RAM, UEFI
+    validations:
+      required: true
+  - type: input
+    id: artifact
+    attributes:
+      label: What you booted
+      description: Release tag, Actions run, or commit. ISO edition if you know it.
+      placeholder: v0.5.0 universal / main ISO run 12345
+    validations:
+      required: true
+  - type: textarea
+    id: proved
+    attributes:
+      label: What you proved
+      description: Boot, install, console, starter chat, offline, update verify, soak. Only what you actually did.
+      placeholder: Installed to disk, console came up, qwen2.5-0.5b answered offline.
+    validations:
+      required: true
+  - type: textarea
+    id: broke
+    attributes:
+      label: What broke
+      description: Logs, exact command, screenshot of the console error. Optional if nothing broke.

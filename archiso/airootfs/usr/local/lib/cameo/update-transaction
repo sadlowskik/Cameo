@@ -1,12 +1,20 @@
 #!/usr/bin/env bash
-# Verification is production-active. Apply remains fail-closed until the installed
-# image provides the versioned A/B layout consumed by the next transaction layer.
+# Signed verification is always required. Mutations are delegated only when the
+# installer-provisioned A/B layout contract exists.
 set -euo pipefail
 verifier=/usr/local/lib/cameo/update-verify
+host=/usr/local/lib/cameo/update-host
+layout=/etc/cameo/update-layout.json
+if [ "$(id -u)" -ne 0 ]; then
+  host="${CAMEO_UPDATE_TEST_HOST:-$host}"
+  layout="${CAMEO_UPDATE_TEST_LAYOUT:-$layout}"
+fi
 command="${1:-status}"; [ "$#" -eq 0 ] || shift
 case "$command" in
-  status) echo "idle: no transactional update applied" ;;
-  verify|preflight)
+  status)
+    if [ -f "$layout" ]; then exec "$host" status; fi
+    echo "legacy single-root installation: transactional apply unavailable" ;;
+  verify|preflight|apply)
     [ "$#" -eq 1 ] || { echo "usage: cameo-update $command <bundle-directory>" >&2; exit 2; }
     bundle="$1"; key=/etc/cameo/update-root.pem
     # Unprivileged test execution may supply fixture paths. Root always uses the
@@ -26,9 +34,18 @@ case "$command" in
     openssl pkeyutl -verify -pubin -inkey "$key" -rawin -in "$staged/manifest.json" -sigfile "$staged/manifest.sig" >/dev/null
     "$verifier" verify "$bundle" / "$staged/manifest.json"
     [ "$command" = verify ] || "$verifier" preflight "$bundle" / "$staged/manifest.json"
+    if [ "$command" = apply ]; then
+      [ -f "$layout" ] && [ -x "$host" ] \
+        || { echo "cameo-update: installed A/B layout is unavailable" >&2; exit 1; }
+      "$host" apply "$bundle" "$staged/manifest.json"
+      echo "cameo-update: signed offline bundle apply staged; reboot required"
+      exit 0
+    fi
     echo "cameo-update: signed offline bundle $command passed" ;;
-  apply|commit|rollback)
-    echo "cameo-update: transactional apply requires a qualified Cameo A/B installation; this host has the legacy single-root layout" >&2
-    exit 1 ;;
-  *) echo "usage: cameo-update verify|preflight <bundle-directory> | status" >&2; exit 2 ;;
+  commit|auto-commit|rollback|recover)
+    [ "$#" -eq 0 ] || { echo "usage: cameo-update $command" >&2; exit 2; }
+    [ -f "$layout" ] && [ -x "$host" ] \
+      || { echo "cameo-update: installed A/B layout is unavailable" >&2; exit 1; }
+    exec "$host" "$command" ;;
+  *) echo "usage: cameo-update verify|preflight|apply <bundle-directory> | status|commit|rollback|recover" >&2; exit 2 ;;
 esac

@@ -6,6 +6,7 @@ Files the landing page actually loads:
 |------|------------|
 | `favicon.svg` / `favicon-32.png` / `apple-touch-icon.png` | Mark |
 | `og.png` | Open Graph / Twitter card (1200×630) |
+| `console.png` | Real Cameo console screenshot used in the hero (1904×978) |
 | `fonts/*.woff2` | Self-hosted Plus Jakarta Sans, IBM Plex Sans, IBM Plex Mono (latin) |
 
 Licenses for the typefaces sit next to the WOFF2 files as `LICENSE-*`.

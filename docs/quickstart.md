@@ -5,11 +5,10 @@ Network is only for extra models and attaching a node to Cameo Mesh.
 
 ## 1. Download the image
 
-From [GitHub Releases](https://github.com/sadlowskik/Cameo/releases), take a file
+From [GitHub Releases](https://github.com/sadlowskik/Cameo/releases/latest), take a file
 named `cameo-*.iso` (or `.iso.part*` if split). Ignore “Source code” zip/tar —
-those are not flashable. If the newest tag has no ISO, use the last tag that
-lists one. Today the last flashable lite image is
-[v0.1.0-beta.2](https://github.com/sadlowskik/Cameo/releases/tag/v0.1.0-beta.2).
+those are not flashable. If the newest tag has no ISO yet (the ISO workflow is
+still running), use the last tag that lists one.
 
 - **Universal** (`cameo-*.iso`) — Vulkan + ROCm stack. Unsure? Start here, then verify the detected tier.
 - **Lite** (`cameo-lite-*.iso`) — Vulkan only, known old card (RX 580, APU).

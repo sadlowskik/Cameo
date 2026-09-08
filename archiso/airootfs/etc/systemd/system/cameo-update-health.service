@@ -1,0 +1,15 @@
+[Unit]
+Description=Commit a healthy Cameo A/B trial boot
+After=cameod.service network-online.target
+Wants=cameod.service network-online.target
+ConditionPathExists=/etc/cameo/update-layout.json
+ConditionPathExists=/var/lib/cameo/update/transaction.json
+OnFailure=cameo-update-fallback.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/cameo/update-host auto-commit
+TimeoutStartSec=90
+
+[Install]
+WantedBy=multi-user.target

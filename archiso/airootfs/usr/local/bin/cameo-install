@@ -65,7 +65,7 @@ done
 [ "$(id -u)" -eq 0 ] || die "run as root."
 [ "$(uname -m)" = "x86_64" ] || die "this build targets x86_64."
 
-for tool in sgdisk mkfs.ext4 genfstab arch-chroot lsblk findmnt; do
+for tool in sgdisk mkfs.ext4 genfstab arch-chroot lsblk findmnt blkid blockdev python3; do
   command -v "$tool" >/dev/null 2>&1 \
     || die "missing '$tool'. The live image must ship arch-install-scripts and gptfdisk."
 done
@@ -146,6 +146,21 @@ partdev() {
 
 DISK_SIZE="$(lsblk -dno SIZE "$TARGET" 2>/dev/null | tr -d ' ')"
 DISK_MODEL="$(lsblk -dno MODEL "$TARGET" 2>/dev/null | sed 's/[ \t]*$//')"
+DISK_BYTES="$(blockdev --getsize64 "$TARGET")"
+ROOT_SLOT_GIB=24
+MIN_DISK_BYTES=$((54 * 1024 * 1024 * 1024))
+[ "$DISK_BYTES" -ge "$MIN_DISK_BYTES" ] \
+  || die "$TARGET is too small for two ${ROOT_SLOT_GIB} GiB system slots plus persistent state (need at least 54 GiB)."
+
+if [ "$FIRMWARE" = "uefi" ]; then
+  EFI_PART="$(partdev 1)"; BOOT_PART="$EFI_PART"
+  ROOT_A_PART="$(partdev 2)"; ROOT_B_PART="$(partdev 3)"; STATE_PART="$(partdev 4)"
+  BOOTLOADER="systemd-boot"
+else
+  BIOS_PART="$(partdev 1)"; BOOT_PART="$(partdev 2)"
+  ROOT_A_PART="$(partdev 3)"; ROOT_B_PART="$(partdev 4)"; STATE_PART="$(partdev 5)"
+  BOOTLOADER="grub"
+fi
 
 # ---- gather settings --------------------------------------------------------
 detect_timezone() {
@@ -209,11 +224,11 @@ fi
 echo
 say "Cameo install plan  (offline — copies the live image, downloads nothing)"
 info "Target disk:   ${C_BOLD}${TARGET}${C_OFF}  (${DISK_SIZE:-?}  ${DISK_MODEL:-unknown})"
-info "Firmware:      ${FIRMWARE^^}  →  GRUB $( [ "$FIRMWARE" = uefi ] && echo 'x86_64-efi' || echo 'i386-pc' )"
+info "Firmware:      ${FIRMWARE^^}  →  ${BOOTLOADER}"
 if [ "$FIRMWARE" = "uefi" ]; then
-  info "Partitions:    $(partdev 1)  512M  EFI (FAT32)      +  $(partdev 2)  rest  root (ext4)"
+  info "Partitions:    ${EFI_PART} 1G EFI + ${ROOT_A_PART}/${ROOT_B_PART} ${ROOT_SLOT_GIB}G A/B roots + ${STATE_PART} persistent state"
 else
-  info "Partitions:    $(partdev 1)  1M  BIOS-boot         +  $(partdev 2)  rest  root (ext4)"
+  info "Partitions:    ${BIOS_PART} 2M BIOS + ${BOOT_PART} 1G boot + ${ROOT_A_PART}/${ROOT_B_PART} ${ROOT_SLOT_GIB}G A/B roots + ${STATE_PART} persistent state"
 fi
 info "Source:        ${COPY_METHOD} $( [ "$COPY_METHOD" = unsquashfs ] && echo "$SFS_SRC" || echo '(live root)' )"
 info "Edition:       ${EDITION_DESC}"
@@ -251,21 +266,28 @@ udevadm settle 2>/dev/null || true
 wipefs -af "$TARGET"
 sgdisk --zap-all "$TARGET"
 if [ "$FIRMWARE" = "uefi" ]; then
-  sgdisk -n1:0:+512M -t1:ef00 -c1:EFI "$TARGET"
-  sgdisk -n2:0:0     -t2:8300 -c2:cameo-root "$TARGET"
-  partprobe "$TARGET" 2>/dev/null || true; sleep 1
-  mkfs.fat -F32 "$(partdev 1)"
-  mkfs.ext4 -F "$(partdev 2)"
-  mount "$(partdev 2)" /mnt
-  mkdir -p /mnt/boot
-  mount "$(partdev 1)" /mnt/boot
+  sgdisk -n1:0:+1G                 -t1:ef00 -c1:CAMEO-ESP "$TARGET"
+  sgdisk -n2:0:+${ROOT_SLOT_GIB}G  -t2:8300 -c2:CAMEO-A   "$TARGET"
+  sgdisk -n3:0:+${ROOT_SLOT_GIB}G  -t3:8300 -c3:CAMEO-B   "$TARGET"
+  sgdisk -n4:0:0                   -t4:8300 -c4:CAMEO-STATE "$TARGET"
 else
-  sgdisk -n1:0:+1M   -t1:ef02 -c1:BIOSboot "$TARGET"
-  sgdisk -n2:0:0     -t2:8300 -c2:cameo-root "$TARGET"
-  partprobe "$TARGET" 2>/dev/null || true; sleep 1
-  mkfs.ext4 -F "$(partdev 2)"
-  mount "$(partdev 2)" /mnt
+  sgdisk -n1:0:+2M                 -t1:ef02 -c1:CAMEO-BIOS "$TARGET"
+  sgdisk -n2:0:+1G                 -t2:8300 -c2:CAMEO-BOOT "$TARGET"
+  sgdisk -n3:0:+${ROOT_SLOT_GIB}G  -t3:8300 -c3:CAMEO-A    "$TARGET"
+  sgdisk -n4:0:+${ROOT_SLOT_GIB}G  -t4:8300 -c4:CAMEO-B    "$TARGET"
+  sgdisk -n5:0:0                   -t5:8300 -c5:CAMEO-STATE "$TARGET"
 fi
+partprobe "$TARGET" 2>/dev/null || true; udevadm settle 2>/dev/null || true; sleep 1
+
+[ "$FIRMWARE" != "uefi" ] || mkfs.fat -F32 -n CAMEO-ESP "$BOOT_PART"
+[ "$FIRMWARE" = "uefi" ] || mkfs.ext4 -F -L CAMEO-BOOT "$BOOT_PART"
+mkfs.ext4 -F -L CAMEO-A "$ROOT_A_PART"
+mkfs.ext4 -F -L CAMEO-B "$ROOT_B_PART"
+mkfs.ext4 -F -L CAMEO-STATE "$STATE_PART"
+mount "$ROOT_A_PART" /mnt
+mkdir -p /mnt/boot /mnt/.cameo-state
+mount "$BOOT_PART" /mnt/boot
+mount "$STATE_PART" /mnt/.cameo-state
 
 # ---- copy the system (offline) ----------------------------------------------
 # The whole point: put the running image onto the disk without a single byte from
@@ -287,8 +309,6 @@ if [ ! -e /mnt/boot/vmlinuz-linux ] && [ -n "$KERNEL_SRC" ]; then
   install -Dm644 "$KERNEL_SRC" /mnt/boot/vmlinuz-linux
 fi
 [ -e /mnt/boot/vmlinuz-linux ] || die "no kernel on the target (/boot/vmlinuz-linux missing); cannot proceed."
-
-genfstab -U /mnt > /mnt/etc/fstab
 
 # ---- de-live the copy -------------------------------------------------------
 # The image is built to run as a live USB. Strip the live-only behaviour so the
@@ -426,27 +446,148 @@ arch-chroot /mnt install -d -m 2775 -g wheel /var/lib/cameo/models
 arch-chroot /mnt useradd -m -G wheel -s /bin/bash "$USERNAME_VAL"
 printf '%s:%s\n' "$USERNAME_VAL" "$PASSWORD_VAL" | arch-chroot /mnt chpasswd
 printf 'root:%s\n' "$PASSWORD_VAL" | arch-chroot /mnt chpasswd
+
+# Identity, configuration, models, daemon state and home directories survive
+# slot replacement. They live on the dedicated state partition and are bound
+# into either system slot by the same fstab entries.
+say "Separating persistent state from the A/B system slots"
+for mapping in "etc/cameo:etc-cameo" "var/lib/cameo:var-lib-cameo" "home:home"; do
+  relative="${mapping%%:*}"; state_name="${mapping#*:}"
+  source="/mnt/${relative}"; destination="/mnt/.cameo-state/${state_name}"
+  mkdir -p "$source" "$destination"
+  cp -a "$source/." "$destination/"
+  rm -rf -- "$source"
+  mkdir -p "$source"
+done
+
+genfstab -U /mnt > /mnt/etc/fstab
+cat >> /mnt/etc/fstab <<'EOF'
+/.cameo-state/etc-cameo      /etc/cameo      none bind,x-systemd.requires-mounts-for=/.cameo-state 0 0
+/.cameo-state/var-lib-cameo  /var/lib/cameo  none bind,x-systemd.requires-mounts-for=/.cameo-state 0 0
+/.cameo-state/home           /home           none bind,x-systemd.requires-mounts-for=/.cameo-state 0 0
+EOF
+
+# Mount the binds for the rest of installation so any generated state lands in
+# persistence rather than only in slot A.
+mount --bind /mnt/.cameo-state/etc-cameo /mnt/etc/cameo
+mount --bind /mnt/.cameo-state/var-lib-cameo /mnt/var/lib/cameo
+mount --bind /mnt/.cameo-state/home /mnt/home
+
+ROOT_A_PARTUUID="$(blkid -s PARTUUID -o value "$ROOT_A_PART")"
+ROOT_B_PARTUUID="$(blkid -s PARTUUID -o value "$ROOT_B_PART")"
+STATE_PARTUUID="$(blkid -s PARTUUID -o value "$STATE_PART")"
+BOOT_PARTUUID="$(blkid -s PARTUUID -o value "$BOOT_PART")"
+DISK_ID="$(lsblk -dno WWN "$TARGET" 2>/dev/null | tr -d '[:space:]')"
+[ -n "$DISK_ID" ] || DISK_ID="$(lsblk -dno SERIAL "$TARGET" 2>/dev/null | tr -d '[:space:]')"
+[ -n "$DISK_ID" ] || DISK_ID="path:$(readlink -f "$TARGET")"
+export FIRMWARE BOOTLOADER DISK_ID ROOT_A_PARTUUID ROOT_B_PARTUUID STATE_PARTUUID BOOT_PARTUUID
+python3 - /mnt/etc/cameo/update-layout.json <<'PY'
+import json, os, sys
+from pathlib import Path
+
+target = Path(sys.argv[1])
+layout = {
+    "schema": "cameo-update-layout/v2",
+    "firmware": os.environ["FIRMWARE"],
+    "bootloader": os.environ["BOOTLOADER"],
+    "active_slot": "A",
+    "boot": {"partuuid": os.environ["BOOT_PARTUUID"], "device_id": os.environ["DISK_ID"]},
+    "slots": {
+        "A": {"partuuid": os.environ["ROOT_A_PARTUUID"], "device_id": os.environ["DISK_ID"], "boot_entry": "cameo-A"},
+        "B": {"partuuid": os.environ["ROOT_B_PARTUUID"], "device_id": os.environ["DISK_ID"], "boot_entry": None},
+    },
+    "persistent": {"partuuid": os.environ["STATE_PARTUUID"], "device_id": os.environ["DISK_ID"]},
+}
+target.write_text(json.dumps(layout, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
+target.chmod(0o600)
+PY
+
+# Slot-local support is what a rolled-back OS can still read. Persistent writes
+# live on the state partition, shared by both slots.
+install -d -m755 /mnt/usr/share/cameo /mnt/var/lib/cameo /mnt/etc/cameo
+printf 'amd-v1\n' > /mnt/etc/cameo/compatibility-id
+python3 - <<'PY'
+import json, os
+from pathlib import Path
+support = {"schema": "cameo-state-support/v1", "writes": 3, "reads": [1, 2, 3]}
+for path in (
+    Path("/mnt/usr/share/cameo/state-schema.json"),
+    Path("/mnt/var/lib/cameo/state-schema.json"),
+):
+    path.write_text(json.dumps(support, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
+identities = {
+    "os": {"id": "cameo"},
+    "kernel": {"id": "linux"},
+    "firmware": {"id": os.environ.get("FIRMWARE", "uefi")},
+    "mesa_vulkan": {"id": "mesa"},
+    "rocm": {"id": "none"},
+    "llama": {"id": "llama.cpp"},
+    "cameo": {"id": "cameo"},
+    "knossos": {"id": "knossos"},
+    "starter_model": {"id": "qwen2.5-0.5b"},
+    "schemas": {"id": "cameo-engine/v1"},
+}
+Path("/mnt/etc/cameo/component-identities.json").write_text(
+    json.dumps({"schema": "cameo-component-identities/v1", "identities": identities}, sort_keys=True, separators=(",", ":")) + "\n",
+    encoding="utf-8",
+)
+PY
+
 # Enable exactly the services an installed box wants; the live-only ones were
 # stripped above. cameo-firstboot prints the tier banner once on first boot.
-arch-chroot /mnt systemctl enable systemd-networkd systemd-resolved iwd cameod cameo-firstboot 2>/dev/null || \
+arch-chroot /mnt systemctl enable systemd-networkd systemd-resolved iwd cameod cameo-firstboot cameo-update-recover.service cameo-update-health.service 2>/dev/null || \
   arch-chroot /mnt systemctl enable systemd-networkd systemd-resolved iwd cameod
 arch-chroot /mnt mkinitcpio -P
 if [ "$FIRMWARE" = "uefi" ]; then
-  arch-chroot /mnt grub-install --target=x86_64-efi --efi-directory=/boot \
-    --bootloader-id=Cameo --removable
+  # Omitting `default` makes systemd-boot use assessment-aware preferred-entry
+  # selection. A future `cameo-B+3.conf` trial therefore falls behind slot A
+  # after three failed attempts.
+  arch-chroot /mnt bootctl --esp-path=/boot install
+  install -d -m755 /mnt/boot/loader/entries
+  cat > /mnt/boot/loader/loader.conf <<'EOF'
+timeout 3
+editor no
+console-mode keep
+EOF
+  cat > /mnt/boot/loader/entries/cameo-A.conf <<EOF
+title Cameo slot A
+sort-key cameo
+version 1-A
+linux /vmlinuz-linux
+initrd /initramfs-linux.img
+options root=PARTUUID=${ROOT_A_PARTUUID} rw cameo.slot=A
+EOF
+  arch-chroot /mnt systemctl enable systemd-boot-update.service 2>/dev/null || true
 else
+  if grep -q '^GRUB_DEFAULT=' /mnt/etc/default/grub; then
+    sed -i 's/^GRUB_DEFAULT=.*/GRUB_DEFAULT=saved/' /mnt/etc/default/grub
+  else
+    printf 'GRUB_DEFAULT=saved\n' >> /mnt/etc/default/grub
+  fi
+  if grep -q '^GRUB_CMDLINE_LINUX_DEFAULT=' /mnt/etc/default/grub; then
+    sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT="/GRUB_CMDLINE_LINUX_DEFAULT="cameo.slot=A /' /mnt/etc/default/grub
+  else
+    printf 'GRUB_CMDLINE_LINUX_DEFAULT="cameo.slot=A"\n' >> /mnt/etc/default/grub
+  fi
   arch-chroot /mnt grub-install --target=i386-pc "$TARGET"
 fi
 # The live USB is still plugged in. os-prober would add it as a boot entry and
 # grub-mkconfig can emit an archiso/squashfs menu that keeps depending on the
 # stick — then "remove USB and reboot" explodes into SQUASHFS read errors.
-arch-chroot /mnt env GRUB_DISABLE_OS_PROBER=true grub-mkconfig -o /boot/grub/grub.cfg
-grub_cfg=""
-for g in /mnt/boot/grub/grub.cfg /mnt/grub/grub.cfg; do
-  [ -f "$g" ] && grub_cfg="$g" && break
-done
-if [ -n "$grub_cfg" ] && grep -qiE 'archiso|airootfs\.sfs|archisobasedir' "$grub_cfg"; then
-  die "grub.cfg still points at the live ISO ($grub_cfg). Not safe to unplug the USB."
+if [ "$FIRMWARE" = "bios" ]; then
+  arch-chroot /mnt env GRUB_DISABLE_OS_PROBER=true grub-mkconfig -o /boot/grub/grub.cfg
+  grub_cfg="/mnt/boot/grub/grub.cfg"
+  cat > /mnt/boot/grub/cameo-A.cfg <<EOF
+menuentry 'Cameo slot A' --id 'cameo-A' {
+  linux /vmlinuz-linux root=PARTUUID=${ROOT_A_PARTUUID} rw cameo.slot=A
+  initrd /initramfs-linux.img
+}
+EOF
+  printf '\nsource /grub/cameo-A.cfg\n' >> "$grub_cfg"
+  arch-chroot /mnt grub-set-default cameo-A
+  if grep -qiE 'archiso|airootfs\.sfs|archisobasedir' "$grub_cfg"; then
+    die "grub.cfg still points at the live ISO ($grub_cfg). Not safe to unplug the USB."
+  fi
 fi
 
 # ---- finish -----------------------------------------------------------------
