@@ -2,6 +2,7 @@
 
 use crate::types::{GpuInfo, MemoryKind, Vendor};
 use regex::Regex;
+use serde::Deserialize;
 use std::sync::OnceLock;
 
 /// Matches a bracketed PCI `vendor:device` id, e.g. `[1002:73df]`.
@@ -136,6 +137,160 @@ fn extract_model(line: &str) -> Option<String> {
     } else {
         Some(model.to_string())
     }
+}
+
+/// One AMD GPU from the stable top-level fields of `rocm examine --json`.
+///
+/// ROCm CLI is a Technology Preview, so Cameo deliberately consumes only the
+/// small machine-readable contract needed for detection and ignores every
+/// unknown field. `gfx` is present only when ROCm CLI actually ran `rocminfo`
+/// (or `hipInfo` on Windows); marketing-name guesses do not promote a machine
+/// from the Vulkan fallback to a ROCm tier.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RocmCliGpu {
+    pub name: String,
+    pub gfx: Option<String>,
+    pub pci_addr: Option<String>,
+    pub is_apu: Option<bool>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RocmCliExamination {
+    #[serde(default)]
+    os_family: String,
+    #[serde(default)]
+    rocminfo_status: String,
+    #[serde(default)]
+    hipinfo_status: String,
+    #[serde(default)]
+    gpus: Vec<RocmCliGpuRaw>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RocmCliGpuRaw {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    gfx_target: String,
+    #[serde(default)]
+    pci_id: String,
+    #[serde(default)]
+    is_apu: Option<bool>,
+    #[serde(default)]
+    is_amd: bool,
+}
+
+/// Parse `rocm examine --json` without binding Cameo to ROCm CLI's whole
+/// document. Malformed or incompatible output is an empty optional signal; the
+/// collector then falls back to `lspci`/`rocminfo` exactly as before.
+pub fn parse_rocm_cli_examine(output: &str) -> Vec<RocmCliGpu> {
+    let Ok(document) = serde_json::from_str::<RocmCliExamination>(output) else {
+        return Vec::new();
+    };
+    let runtime_verified = match document.os_family.as_str() {
+        "linux" => document.rocminfo_status == "ok",
+        "windows" => document.hipinfo_status == "ok",
+        _ => false,
+    };
+    document
+        .gpus
+        .into_iter()
+        .filter(|gpu| gpu.is_amd)
+        .map(|gpu| RocmCliGpu {
+            name: gpu.name.trim().to_string(),
+            gfx: runtime_verified
+                .then(|| {
+                    gfx_re()
+                        .find(&gpu.gfx_target)
+                        .map(|m| m.as_str().to_lowercase())
+                })
+                .flatten(),
+            pci_addr: normalize_pci_addr(&gpu.pci_id),
+            is_apu: gpu.is_apu,
+        })
+        .collect()
+}
+
+/// Enrich `lspci` GPUs with ROCm CLI facts, correlating by full PCI address and
+/// using single-card elimination only when it is unambiguous.
+pub fn correlate_rocm_cli_gpus(gpus: &mut [GpuInfo], records: &[RocmCliGpu]) -> usize {
+    let mut taken = vec![false; records.len()];
+    let mut gpu_taken = vec![false; gpus.len()];
+    let mut matched = 0;
+
+    for (gpu_index, gpu) in gpus.iter_mut().enumerate() {
+        if gpu.vendor != Vendor::Amd {
+            continue;
+        }
+        let Some(address) = gpu.pci_addr.as_deref() else {
+            continue;
+        };
+        let hits: Vec<_> = records
+            .iter()
+            .enumerate()
+            .filter(|(index, record)| !taken[*index] && record.pci_addr.as_deref() == Some(address))
+            .map(|(index, _)| index)
+            .collect();
+        if let [index] = hits[..] {
+            apply_rocm_cli_record(gpu, &records[index]);
+            taken[index] = true;
+            gpu_taken[gpu_index] = true;
+            matched += 1;
+        }
+    }
+
+    let free_gpus: Vec<_> = gpus
+        .iter()
+        .enumerate()
+        .filter(|(index, gpu)| gpu.vendor == Vendor::Amd && !gpu_taken[*index])
+        .map(|(index, _)| index)
+        .collect();
+    let free_records: Vec<_> = records
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| !taken[*index])
+        .map(|(index, _)| index)
+        .collect();
+    if let ([gpu_index], [record_index]) = (&free_gpus[..], &free_records[..]) {
+        apply_rocm_cli_record(&mut gpus[*gpu_index], &records[*record_index]);
+        matched += 1;
+    }
+
+    matched
+}
+
+fn apply_rocm_cli_record(gpu: &mut GpuInfo, record: &RocmCliGpu) {
+    if gpu.gfx_arch.is_none() {
+        gpu.gfx_arch.clone_from(&record.gfx);
+    }
+    if gpu.memory == MemoryKind::Unknown && record.is_apu == Some(true) {
+        gpu.memory = MemoryKind::Shared;
+    }
+}
+
+/// Build conservative AMD inventory when ROCm CLI can see a card but `lspci`
+/// is unavailable. Memory stays unknown unless the CLI positively identifies
+/// an APU, and an unverified architecture stays unset (Tier 3).
+pub fn gpus_from_rocm_cli(records: &[RocmCliGpu]) -> Vec<GpuInfo> {
+    records
+        .iter()
+        .map(|record| {
+            let mut gpu = GpuInfo::new(
+                if record.name.is_empty() {
+                    "AMD GPU"
+                } else {
+                    &record.name
+                },
+                "1002:0000",
+            );
+            gpu.pci_addr.clone_from(&record.pci_addr);
+            gpu.gfx_arch.clone_from(&record.gfx);
+            if record.is_apu == Some(true) {
+                gpu.memory = MemoryKind::Shared;
+            }
+            gpu
+        })
+        .collect()
 }
 
 /// One GPU agent as `rocminfo` reports it.
@@ -355,6 +510,20 @@ pub fn parse_memory_kind(sysfs_contents: &str) -> MemoryKind {
 mod tests {
     use super::*;
 
+    const ROCM_CLI_EXAMINE: &str = r#"{
+      "os_family": "linux",
+      "rocminfo_status": "ok",
+      "hipinfo_status": "missing",
+      "status": "ok",
+      "gpus": [
+        {"name":"Phoenix1", "gfx_target":"gfx1103", "pci_id":"0000:c5:00.0", "is_apu":true, "is_amd":true},
+        {"name":"Radeon RX 7900 XTX", "gfx_target":"gfx1100", "pci_id":"0000:03:00.0", "is_apu":false, "is_amd":true},
+        {"name":"Other GPU", "gfx_target":"", "pci_id":"0000:01:00.0", "is_apu":false, "is_amd":false}
+      ],
+      "summary": {"effective_default_engine":"lemonade"},
+      "future_field": true
+    }"#;
+
     #[test]
     fn ignores_audio_function_keeps_gpu() {
         let txt = "\
@@ -365,6 +534,50 @@ mod tests {
         assert_eq!(gpus[0].pci_id, "1002:73df");
         assert_eq!(gpus[0].pci_addr.as_deref(), Some("0000:0a:00.0"));
         assert!(gpus[0].model.contains("Radeon RX 6700 XT"));
+    }
+
+    #[test]
+    fn parses_the_small_rocm_cli_contract_and_ignores_unknown_fields() {
+        let records = parse_rocm_cli_examine(ROCM_CLI_EXAMINE);
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].gfx.as_deref(), Some("gfx1103"));
+        assert_eq!(records[0].pci_addr.as_deref(), Some("0000:c5:00.0"));
+        assert_eq!(records[0].is_apu, Some(true));
+    }
+
+    #[test]
+    fn rocm_cli_correlates_cards_by_address_not_report_order() {
+        let lspci = "\
+03:00.0 VGA compatible controller [0300]: Advanced Micro Devices, Inc. [AMD/ATI] Navi 31 [Radeon RX 7900 XTX] [1002:744c]
+c5:00.0 VGA compatible controller [0300]: Advanced Micro Devices, Inc. [AMD/ATI] Phoenix1 [1002:15bf]";
+        let mut gpus = parse_lspci(lspci);
+        let records = parse_rocm_cli_examine(ROCM_CLI_EXAMINE);
+
+        assert_eq!(correlate_rocm_cli_gpus(&mut gpus, &records), 2);
+        assert_eq!(gpus[0].gfx_arch.as_deref(), Some("gfx1100"));
+        assert_eq!(gpus[1].gfx_arch.as_deref(), Some("gfx1103"));
+        assert_eq!(gpus[1].memory, MemoryKind::Shared);
+    }
+
+    #[test]
+    fn rocm_cli_marketing_guesses_never_enable_a_rocm_tier() {
+        let unverified = ROCM_CLI_EXAMINE.replace(
+            "\"rocminfo_status\": \"ok\"",
+            "\"rocminfo_status\": \"missing\"",
+        );
+        let records = parse_rocm_cli_examine(&unverified);
+        assert_eq!(records.len(), 2);
+        assert!(records.iter().all(|record| record.gfx.is_none()));
+
+        let gpus = gpus_from_rocm_cli(&records);
+        assert_eq!(gpus.len(), 2);
+        assert!(gpus.iter().all(|gpu| gpu.gfx_arch.is_none()));
+        assert_eq!(gpus[0].memory, MemoryKind::Shared);
+    }
+
+    #[test]
+    fn malformed_rocm_cli_output_is_an_optional_signal() {
+        assert!(parse_rocm_cli_examine("not-json").is_empty());
     }
 
     #[test]

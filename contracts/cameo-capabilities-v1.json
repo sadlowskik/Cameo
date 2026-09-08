@@ -1,6 +1,13 @@
 {
   "contract_version": "cameo-capabilities/v1",
   "protocol_major": 1,
+  "hardware": {
+    "rocm_cli_examine_adapter": {
+      "maturity": "preview",
+      "available": true,
+      "detail": "When AMD ROCm CLI is installed, Cameo consumes its read-only examine JSON for GPU/runtime discovery, including native Windows discovery, with conservative validation and Linux legacy-probe fallback. ROCm CLI does not own Cameo serving, updates, or multi-GPU placement."
+    }
+  },
   "inference": {
     "openai_compatible_gateway": {
       "maturity": "stable",

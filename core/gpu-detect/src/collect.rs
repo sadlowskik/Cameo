@@ -1,18 +1,20 @@
-//! Linux-only collection: gather raw `lspci` / `rocminfo` / sysfs data and feed
-//! it through the pure parsers. On non-Linux hosts this returns
-//! [`Error::UnsupportedOs`] — develop and test against captured fixtures instead.
+//! Live collection: use AMD ROCm CLI on supported Windows and Linux hosts, then
+//! feed Linux-only `lspci` / `rocminfo` / sysfs facts through the pure parsers.
+//! Other hosts return [`Error::UnsupportedOs`] and can use captured fixtures.
 //!
 //! ⚠️ **This module is a hardware boundary.** It is not the *execution* boundary
 //! (that is `cameo_placement::command::execute`), but it does shell out to
 //! `lspci`, `rocminfo` and `rocm-smi` and read `/sys` and `/proc`. Everything it
-//! produces is derived from a live machine; everything above it is pure. See
+//! produces is derived from a live machine; everything above it is pure. When
+//! AMD's optional `rocm` CLI is installed, its read-only `examine --json` report
+//! supplies GPU/runtime facts before the legacy probes fill any gaps. See
 //! `docs/architecture.md`.
 
 use crate::error::Error;
 use crate::topology::Topology;
 use crate::types::GpuInfo;
 
-/// Detect the full multi-GPU topology on the current machine (Linux only).
+/// Detect the full multi-GPU topology on the current machine.
 #[cfg(target_os = "linux")]
 pub fn collect_topology() -> Result<Topology, Error> {
     use crate::hostmem::parse_meminfo;
@@ -32,8 +34,15 @@ pub fn collect_topology() -> Result<Topology, Error> {
     Ok(Topology::new(gpus, links).with_host_memory(host_mem))
 }
 
-/// Non-Linux stub for [`collect_topology`].
-#[cfg(not(target_os = "linux"))]
+/// Windows topology comes from ROCm CLI. It currently supplies inventory and
+/// per-card architecture but not Cameo's Linux link or host-memory facts.
+#[cfg(target_os = "windows")]
+pub fn collect_topology() -> Result<Topology, Error> {
+    Ok(Topology::new(collect()?, Vec::new()))
+}
+
+/// Unsupported-OS stub for [`collect_topology`].
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 pub fn collect_topology() -> Result<Topology, Error> {
     Err(Error::UnsupportedOs)
 }
@@ -60,12 +69,25 @@ pub fn collect() -> Result<Vec<GpuInfo>, Error> {
     use crate::parse;
     use std::process::Command;
 
+    // ROCm CLI is optional and currently a Technology Preview. Its JSON query
+    // is read-only upstream, and every failure here degrades to Cameo's existing
+    // probes. Operators can disable the adapter without uninstalling the CLI.
+    let rocm_cli = collect_rocm_cli().unwrap_or_default();
+
     // `-D` forces the PCI domain into every address. Without it `lspci` omits
     // the domain on single-domain machines, and sysfs never does — so the two
     // would not compare equal on the one field that correlates them.
-    let lspci = Command::new("lspci").args(["-D", "-nn"]).output()?;
-    let lspci_txt = String::from_utf8_lossy(&lspci.stdout);
-    let mut gpus = parse::parse_lspci(&lspci_txt);
+    let mut gpus = Command::new("lspci")
+        .args(["-D", "-nn"])
+        .output()
+        .ok()
+        .map(|output| parse::parse_lspci(&String::from_utf8_lossy(&output.stdout)))
+        .unwrap_or_default();
+    if gpus.is_empty() {
+        gpus = parse::gpus_from_rocm_cli(&rocm_cli);
+    } else {
+        parse::correlate_rocm_cli_gpus(&mut gpus, &rocm_cli);
+    }
     if gpus.is_empty() {
         return Err(Error::NoGpu);
     }
@@ -75,9 +97,14 @@ pub fn collect() -> Result<Vec<GpuInfo>, Error> {
     // is per-agent, and agents are matched to cards by key — never by position,
     // which on an APU + dGPU box attributes the iGPU's architecture to the
     // discrete card and silently misclassifies it.
-    if let Ok(out) = Command::new("rocminfo").output() {
-        let agents = parse::parse_rocminfo_agents(&String::from_utf8_lossy(&out.stdout));
-        parse::correlate_rocm_agents(&mut gpus, &agents);
+    let needs_rocminfo = gpus
+        .iter()
+        .any(|gpu| gpu.vendor == crate::types::Vendor::Amd && gpu.gfx_arch.is_none());
+    if needs_rocminfo {
+        if let Ok(out) = Command::new("rocminfo").output() {
+            let agents = parse::parse_rocminfo_agents(&String::from_utf8_lossy(&out.stdout));
+            parse::correlate_rocm_agents(&mut gpus, &agents);
+        }
     }
 
     let driver_version = read_trimmed("/sys/module/amdgpu/version");
@@ -87,6 +114,38 @@ pub fn collect() -> Result<Vec<GpuInfo>, Error> {
     }
 
     Ok(gpus)
+}
+
+/// Detect AMD GPUs through ROCm CLI on native Windows. Missing/disabled ROCm
+/// CLI leaves Windows unsupported rather than silently claiming a CPU-only box.
+#[cfg(target_os = "windows")]
+pub fn collect() -> Result<Vec<GpuInfo>, Error> {
+    let Some(records) = collect_rocm_cli() else {
+        return Err(Error::UnsupportedOs);
+    };
+    let gpus = crate::parse::gpus_from_rocm_cli(&records);
+    if gpus.is_empty() {
+        Err(Error::NoGpu)
+    } else {
+        Ok(gpus)
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn collect_rocm_cli() -> Option<Vec<crate::parse::RocmCliGpu>> {
+    use std::process::Command;
+
+    if std::env::var("CAMEO_ROCM_CLI").is_ok_and(|value| value.eq_ignore_ascii_case("off")) {
+        return None;
+    }
+    Command::new("rocm")
+        .args(["examine", "--json", "--framework", "skip"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| {
+            crate::parse::parse_rocm_cli_examine(&String::from_utf8_lossy(&output.stdout))
+        })
 }
 
 /// Fill in a GPU's memory facts from its own DRM node.
@@ -159,7 +218,7 @@ fn read_trimmed(path: impl AsRef<std::path::Path>) -> Option<String> {
 
 /// Non-Linux stub: collection needs Linux sysfs and tools. Feed captured text to
 /// [`crate::parse`] instead.
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 pub fn collect() -> Result<Vec<GpuInfo>, Error> {
     Err(Error::UnsupportedOs)
 }

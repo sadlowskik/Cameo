@@ -24,11 +24,17 @@ pub const DEFAULT_SOCKET_PATH: &str = "/run/cameo/cameo.sock";
 pub struct CapabilityManifest {
     pub contract_version: String,
     pub protocol_major: u16,
+    pub hardware: HardwareCapabilities,
     pub inference: InferenceCapabilities,
     pub harness: HarnessCapabilities,
     pub models: ModelCapabilities,
     pub mesh: MeshCapabilities,
     pub security: SecurityCapabilities,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HardwareCapabilities {
+    pub rocm_cli_examine_adapter: Capability,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -14,7 +14,10 @@ ROCm only ever makes things *faster* on cards that support it — nothing in Cam
 requires ROCm to function.
 
 ## How a tier is decided
-1. `gfx` architecture is read from `rocminfo` (e.g. `gfx1030`).
+1. When the optional AMD ROCm CLI is installed, Cameo reads
+   `rocm examine --json --framework skip`; otherwise it reads `rocminfo`
+   directly. ROCm CLI architecture data is accepted only when its runtime probe
+   succeeded, and legacy probing fills any gaps.
 2. It's looked up in the compatibility database
    (`core/gpu-detect/data/overrides.toml`).
    - Found → that entry's tier (and, for Tier 2, its known-good HSA override).

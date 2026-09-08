@@ -45,8 +45,10 @@ never leaks a `llama-server` still holding VRAM. Everything from `plan` through
 to run and produces the exact argv+env, so `cameo … --dry-run` exercises the
 entire pipeline with no GPU.
 
-`gpu_detect::collect` is the other one. It shells out to `lspci`, `rocminfo` and
-`rocm-smi`, and reads `/sys/class/drm` and `/proc/meminfo`. It runs no workload,
+`gpu_detect::collect` is the other one. When AMD ROCm CLI is installed it first
+runs the read-only `rocm examine --json --framework skip` contract, then uses
+`lspci`, `rocminfo`, `rocm-smi`, `/sys/class/drm`, and `/proc/meminfo` to fill
+missing or more precise facts. It runs no workload,
 but every fact the planner reasons from enters here — which is exactly why an
 unacknowledged boundary was expensive: two defects (an architecture attributed
 to the wrong card, VRAM read from the wrong device) lived in code that the docs
@@ -73,6 +75,25 @@ Pure, testable detection logic:
   when no capture is given, or replayed step-for-step from captured text on any
   OS. This is where the correlation rules live *once*; both the CLI and the daemon
   drive detection through it rather than re-implementing the glue.
+
+### Optional AMD ROCm CLI adapter
+
+On Linux the adapter enriches Cameo's existing probes; on native Windows it
+enables live GPU inventory and tier discovery without an `lspci` capture. The
+adapter consumes only ROCm CLI's top-level OS/runtime status and GPU records.
+Unknown JSON fields are ignored because ROCm CLI is currently a Technology
+Preview. A reported `gfx_target` enables a ROCm tier only when the same report
+says `rocminfo_status: ok` (or native Windows `hipinfo_status: ok`); marketing
+name guesses never promote a Vulkan-only machine. Cards are correlated by full
+PCI address, never array position. Invalid output, a missing binary, or a
+non-zero exit falls back to Cameo's existing probes. Set `CAMEO_ROCM_CLI=off` to
+disable the adapter.
+
+ROCm CLI does not own Cameo's model process supervision, authenticated gateway,
+A/B appliance updates, mesh, or multi-GPU placement. Its documented serving
+path currently selects one GPU and its command/API surface is still preview, so
+handing it those responsibilities would weaken Cameo's lifecycle and recovery
+contracts rather than reduce risk.
 
 Key rule: unknown or ROCm-less hardware falls back to **Tier 3 (Vulkan-only)**.
 The classifier never invents a ROCm path.

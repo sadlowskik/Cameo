@@ -6,7 +6,8 @@
 //! exercises the entire brain on any OS.  All commands support `--json`.
 //!
 //! On non-Linux dev machines, live detection is unavailable; pass captured text
-//! with `--lspci-file` / `--rocminfo-file` / `--topo-file` / `--meminfo-file` to
+//! with `--lspci-file` / `--rocm-examine-file` / `--rocminfo-file` /
+//! `--topo-file` / `--meminfo-file` to
 //! exercise everything.
 
 use std::path::PathBuf;
@@ -134,6 +135,11 @@ struct Cli {
     /// `-D` is required: without the PCI domain, captures will not match sysfs.
     #[arg(long, global = true, value_name = "FILE")]
     lspci_file: Option<PathBuf>,
+
+    /// Read `rocm examine --json --framework skip` output from a file instead
+    /// of invoking the optional ROCm CLI adapter (dev/testing).
+    #[arg(long, global = true, value_name = "FILE")]
+    rocm_examine_file: Option<PathBuf>,
 
     /// Read `rocminfo` output from a file instead of the live system (dev/testing).
     #[arg(long, global = true, value_name = "FILE")]
@@ -588,6 +594,7 @@ fn run(cli: &Cli) -> Result<()> {
 fn detect(cli: &Cli) -> Result<(Topology, Vec<TierAssessment>)> {
     let captures = Captures {
         lspci: read_opt(&cli.lspci_file)?,
+        rocm_examine: read_opt(&cli.rocm_examine_file)?,
         rocminfo: read_opt(&cli.rocminfo_file)?,
         topo: read_opt(&cli.topo_file)?,
         meminfo: read_opt(&cli.meminfo_file)?,
@@ -599,7 +606,8 @@ fn detect(cli: &Cli) -> Result<(Topology, Vec<TierAssessment>)> {
     // a non-Linux host (or a malformed capture) stops us here.
     let topo = detect_topology_or_cpu(&captures).map_err(|e| match e {
         cameo_gpu_detect::Error::UnsupportedOs => anyhow!(
-            "live GPU detection needs Linux. On this host, pass captured output with \
+            "live GPU detection needs Linux or AMD ROCm CLI on Windows. On this host, \
+             install the `rocm` command or pass captured output with --rocm-examine-file / \
              --lspci-file (and optionally --rocminfo-file / --topo-file / --meminfo-file)."
         ),
         other => anyhow!(other.to_string()),

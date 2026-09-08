@@ -124,6 +124,10 @@ struct Args {
     #[arg(long, value_name = "FILE")]
     lspci_file: Option<PathBuf>,
 
+    /// Read `rocm examine --json --framework skip` from a file (dev/testing).
+    #[arg(long, value_name = "FILE")]
+    rocm_examine_file: Option<PathBuf>,
+
     /// Read `rocminfo` from a file instead of the live system (dev/testing).
     #[arg(long, value_name = "FILE")]
     rocminfo_file: Option<PathBuf>,
@@ -196,6 +200,7 @@ fn run(args: Args) -> Result<()> {
     }
     let captures = Captures {
         lspci: read_opt(&args.lspci_file)?,
+        rocm_examine: read_opt(&args.rocm_examine_file)?,
         rocminfo: read_opt(&args.rocminfo_file)?,
         topo: read_opt(&args.topo_file)?,
         meminfo: read_opt(&args.meminfo_file)?,

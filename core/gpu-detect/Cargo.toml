@@ -9,6 +9,7 @@ description = "AMD GPU detection and Tier 1/2/3 capability classification for Ca
 
 [dependencies]
 serde.workspace = true
+serde_json.workspace = true
 toml.workspace = true
 thiserror.workspace = true
 regex.workspace = true

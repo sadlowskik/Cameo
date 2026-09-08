@@ -8,6 +8,7 @@ The same manifest is available from `cameo capabilities`, daemon capability disc
 
 | Capability | Maturity | Available | Scope |
 |---|---|---|---|
+| hardware.rocm_cli_examine_adapter | preview | yes | When AMD ROCm CLI is installed, Cameo consumes its read-only examine JSON for GPU/runtime discovery, including native Windows discovery, with conservative validation and Linux legacy-probe fallback. ROCm CLI does not own Cameo serving, updates, or multi-GPU placement. |
 | inference.openai_compatible_gateway | stable | yes | Authenticated /v1 gateway for chat completions, completions, and embeddings. |
 | inference.streaming | stable | yes | Server-sent event streaming is proxied without response buffering. |
 | inference.native_tool_calls | unsupported | no | Tool orchestration is currently owned by the agent harness. |

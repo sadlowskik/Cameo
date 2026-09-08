@@ -110,6 +110,8 @@ stable-release qualified.
 Implemented in the current tree:
 
 - fixture-backed GPU discovery, topology, tiering, overrides, and placement;
+- optional ROCm CLI examination for read-only GPU/runtime discovery, correlated
+  by PCI address with strict runtime-status gating and legacy-probe fallback;
 - model catalogue aliases, SHA-256 verification, GGUF inspection, disk preflight,
   partial cleanup, recommendation, and preview one-action setup;
 - CLI plus authenticated `cameod` console/control plane;
@@ -437,14 +439,20 @@ truthful than it found it.
 4. `REL-002` — complete: `release-manifest.json` generates the site download block,
    and unpublished/mislabeled artifacts cannot appear as working downloads.
 5. `FIELD-CI-001`: run the complete Field suite/build where child spawn is allowed.
-6. `KNS-EVAL-001` - in progress: the eight-case reward-hacking suite, hardened
+6. `CAM-ROCMCLI-001` - in progress: the optional read-only ROCm CLI examination
+   adapter is implemented and locally tested. Qualify it on native Windows,
+   Linux, and WSL AMD systems; pin a supported upstream contract/version before
+   promoting it from preview. Do not delegate serving, updates, process recovery,
+   or multi-GPU placement until ROCm CLI exposes stable machine-readable
+   lifecycle contracts and those paths pass Cameo's fault matrix.
+7. `KNS-EVAL-001` - in progress: the eight-case reward-hacking suite, hardened
    grader, frozen 27-case lock, and equal-budget Windows paired-control runner are
    implemented; run the live engine matrix, retain traces, obtain independent
    review, and publish the evidence.
-7. `CAM-ISO-001`: retain current-tag universal/lite build and QEMU install evidence.
-8. `CAM-HW-001`: collect the first complete real-AMD qualification record.
-9. `INT-001`: automate the mock Cameo/Knossos contract suite in both repositories.
-10. `RC-001`: script the artifact-only offline acceptance and fault matrix.
+8. `CAM-ISO-001`: retain current-tag universal/lite build and QEMU install evidence.
+9. `CAM-HW-001`: collect the first complete real-AMD qualification record.
+10. `INT-001`: automate the mock Cameo/Knossos contract suite in both repositories.
+11. `RC-001`: script the artifact-only offline acceptance and fault matrix.
 
 ## 10. Required release evidence
 

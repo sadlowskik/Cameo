@@ -9,9 +9,10 @@
 //! rules (per-card `rocminfo` matching, sysfs memory facts, host RAM) live in
 //! exactly one place.
 //!
-//! Live detection is Linux-only; on any other host, hand it [`Captures`] read
-//! from fixtures. Reading the files is the caller's job — this function takes
-//! their contents as strings so it stays pure and OS-independent.
+//! Live detection uses native Linux probes or AMD ROCm CLI on Windows. On any
+//! other host, hand it [`Captures`] read from fixtures. Reading the files is the
+//! caller's job — this function takes their contents as strings so it stays
+//! pure and OS-independent.
 
 use crate::error::Error;
 use crate::topology::Topology;
@@ -21,9 +22,11 @@ use crate::topology::Topology;
 /// operator would capture with the named command.
 #[derive(Debug, Default, Clone)]
 pub struct Captures {
-    /// `lspci -D -nn`. Its presence is what switches detection into replay mode;
-    /// when `None`, detection reads the live machine instead.
+    /// `lspci -D -nn`. Any supplied capture switches detection into replay mode.
     pub lspci: Option<String>,
+    /// `rocm examine --json --framework skip`, the optional ROCm CLI adapter.
+    /// Only runtime-verified architecture fields are trusted for tiering.
+    pub rocm_examine: Option<String>,
     /// `rocminfo`, for per-card architecture (and thus ROCm tiering).
     pub rocminfo: Option<String>,
     /// `rocm-smi --showtopo`, for inter-GPU links.
@@ -36,9 +39,14 @@ pub struct Captures {
 }
 
 impl Captures {
-    /// Whether detection will read the live machine (no `lspci` capture given).
+    /// Whether detection will read the live machine (no capture given).
     pub fn is_live(&self) -> bool {
         self.lspci.is_none()
+            && self.rocm_examine.is_none()
+            && self.rocminfo.is_none()
+            && self.topo.is_none()
+            && self.meminfo.is_none()
+            && self.gpu_mem.is_none()
     }
 }
 
@@ -49,13 +57,26 @@ impl Captures {
 /// step for step, so a fixture-driven run on a dev box exercises the same
 /// assembly a real machine would.
 pub fn detect_topology(captures: &Captures) -> Result<Topology, Error> {
-    let Some(lspci_txt) = &captures.lspci else {
+    if captures.is_live() {
         return crate::collect::collect_topology();
-    };
+    }
 
     use crate::{hostmem, memfacts, parse, topology};
 
-    let mut gpus = parse::parse_lspci(lspci_txt);
+    let mut gpus = captures
+        .lspci
+        .as_deref()
+        .map(parse::parse_lspci)
+        .unwrap_or_default();
+
+    if let Some(examination) = &captures.rocm_examine {
+        let records = parse::parse_rocm_cli_examine(examination);
+        if gpus.is_empty() {
+            gpus = parse::gpus_from_rocm_cli(&records);
+        } else {
+            parse::correlate_rocm_cli_gpus(&mut gpus, &records);
+        }
+    }
 
     // Per-card correlation, not a broadcast: a `rocminfo` agent is matched to the
     // card it describes, so a mixed APU + dGPU box is not mislabelled.
@@ -170,5 +191,61 @@ mod tests {
         };
         let topo = detect_topology(&caps).expect("replay should detect the GPU");
         assert_eq!(topo.gpus.len(), 1);
+    }
+
+    #[test]
+    fn rocm_cli_capture_enriches_the_same_replay_path_as_live_detection() {
+        let caps = Captures {
+            lspci: Some(
+                "03:00.0 VGA compatible controller [0300]: Advanced Micro Devices, \
+                 Inc. [AMD/ATI] Navi 31 [Radeon RX 7900 XTX] [1002:744c]\n"
+                    .into(),
+            ),
+            rocm_examine: Some(
+                r#"{
+                  "os_family":"linux",
+                  "rocminfo_status":"ok",
+                  "gpus":[{
+                    "name":"Radeon RX 7900 XTX",
+                    "gfx_target":"gfx1100",
+                    "pci_id":"0000:03:00.0",
+                    "is_apu":false,
+                    "is_amd":true
+                  }]
+                }"#
+                .into(),
+            ),
+            ..Default::default()
+        };
+
+        let topo = detect_topology(&caps).expect("ROCm CLI capture should enrich the GPU");
+        assert_eq!(topo.gpus[0].gfx_arch.as_deref(), Some("gfx1100"));
+    }
+
+    #[test]
+    fn rocm_cli_capture_can_replay_windows_without_lspci() {
+        let caps = Captures {
+            rocm_examine: Some(
+                r#"{
+                  "os_family":"windows",
+                  "hipinfo_status":"ok",
+                  "gpus":[{
+                    "name":"Radeon RX 7900 XTX",
+                    "gfx_target":"gfx1100",
+                    "pci_id":"0000:03:00.0",
+                    "is_apu":false,
+                    "is_amd":true
+                  }]
+                }"#
+                .into(),
+            ),
+            ..Default::default()
+        };
+
+        assert!(!caps.is_live());
+        let topo = detect_topology(&caps).expect("ROCm CLI alone should replay on Windows");
+        assert_eq!(topo.gpus.len(), 1);
+        assert_eq!(topo.gpus[0].model, "Radeon RX 7900 XTX");
+        assert_eq!(topo.gpus[0].gfx_arch.as_deref(), Some("gfx1100"));
     }
 }
