@@ -182,20 +182,48 @@ jobs:
       # "won't boot" surprises — not that it serves on a GPU (that stays the gated
       # scripts/phase1 checklist). Every boot entry includes ttyS0, making the
       # serial userspace marker a required release gate.
+      # v0.2.0-beta.2 died here in 5s with exit 2: `ls a b missing | head` under
+      # pipefail fails when any firmware path is absent, even if CODE.4m.fd exists.
       - name: QEMU boot-smoke
         run: |
           docker exec arch bash -euo pipefail -c '
             pacman -Sy --noconfirm --needed qemu-system-x86 edk2-ovmf || \
               pacman -Sy --noconfirm --needed qemu-base edk2-ovmf
-            ISO=$(ls /repo/archiso/out/*.iso | head -1)
-            OVMF=$(ls /usr/share/edk2/x64/OVMF_CODE.4m.fd \
-                      /usr/share/edk2/x64/OVMF.4m.fd \
-                      /usr/share/ovmf/x64/OVMF.fd 2>/dev/null | head -1)
-            echo "booting $ISO with firmware $OVMF"
+            ISO=$(find /repo/archiso/out -maxdepth 1 -name "*.iso" | awk "NR==1")
+            test -n "$ISO" && test -f "$ISO" || {
+              echo "BOOT-SMOKE: no ISO in /repo/archiso/out"
+              ls -la /repo/archiso/out || true
+              exit 1
+            }
+            OVMF=""
+            for f in \
+              /usr/share/edk2/x64/OVMF_CODE.4m.fd \
+              /usr/share/edk2/x64/OVMF.4m.fd \
+              /usr/share/OVMF/OVMF_CODE.4m.fd \
+              /usr/share/ovmf/x64/OVMF.fd
+            do
+              if [ -f "$f" ]; then OVMF=$f; break; fi
+            done
+            if [ -z "$OVMF" ]; then
+              echo "BOOT-SMOKE: no OVMF firmware found"
+              find /usr/share -iname "*ovmf*" | head -50
+              pacman -Ql edk2-ovmf | head -40 || true
+              exit 1
+            fi
+            VARS=""
+            for f in /usr/share/edk2/x64/OVMF_VARS.4m.fd /usr/share/edk2/x64/OVMF_VARS.fd; do
+              if [ -f "$f" ]; then VARS=$f; break; fi
+            done
+            echo "booting $ISO with firmware $OVMF vars ${VARS:-none}"
+            pflash=(-drive if=pflash,format=raw,readonly=on,file="$OVMF")
+            if [ -n "$VARS" ]; then
+              cp "$VARS" /tmp/OVMF_VARS.fd
+              pflash+=(-drive if=pflash,format=raw,file=/tmp/OVMF_VARS.fd)
+            fi
             set +e
             timeout 240 qemu-system-x86_64 \
                 -m 2560 -smp 2 -nographic -no-reboot \
-                -drive if=pflash,format=raw,readonly=on,file="$OVMF" \
+                "${pflash[@]}" \
                 -cdrom "$ISO" -boot d \
                 -serial file:/repo/boot-serial.log >/dev/null 2>&1
             qemu_status=$?
@@ -217,6 +245,7 @@ jobs:
       # Boot-screen text is otherwise only verifiable by booting the ISO, so
       # assert it against the staged profile instead.
       - name: Verify boot menu branding
+        if: always()
         run: |
           echo "--- branded titles ---"
           grep -rhE 'MENU LABEL|^title' build/profile/syslinux build/profile/efiboot 2>/dev/null | sort -u
@@ -237,9 +266,30 @@ jobs:
           # to read, so a check that fails only into the workflow log reports
           # that something is wrong without reporting what.
           exec > >(tee -a build.log) 2>&1
-          A=$(sudo find build/tmp -maxdepth 3 -type d -name airootfs | head -1)
+          A=$(sudo find build/tmp -type d -name airootfs 2>/dev/null | awk "NR==1")
+          echo "work airootfs: ${A:-none}"
+          if [ -z "$A" ] || ! sudo test -d "$A/usr"; then
+            echo "pacstrap dir missing; extracting airootfs.sfs from the ISO"
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq squashfs-tools
+            ISO=$(find archiso/out -maxdepth 1 -name "*.iso" | awk "NR==1")
+            test -n "$ISO" || { echo "FAIL: no ISO to extract"; ls -la archiso/out || true; exit 1; }
+            mnt=$(mktemp -d)
+            sudo mount -o loop,ro "$ISO" "$mnt"
+            SFS=$(sudo find "$mnt" -name airootfs.sfs | awk "NR==1")
+            if [ -z "$SFS" ]; then
+              echo "FAIL: no airootfs.sfs in $ISO"
+              sudo find "$mnt" | head -80
+              sudo umount "$mnt"
+              exit 1
+            fi
+            sudo rm -rf /tmp/cameo-airootfs
+            sudo unsquashfs -d /tmp/cameo-airootfs "$SFS"
+            sudo umount "$mnt"
+            A=/tmp/cameo-airootfs
+          fi
           echo "airootfs: $A"
-          test -n "$A" || { echo "FAIL: no built airootfs found"; exit 1; }
+          sudo test -d "$A/usr" || { echo "FAIL: airootfs has no /usr"; exit 1; }
 
           echo "--- systemd unit verification ---"
           sudo systemd-analyze --root="$A" verify cameod.service
@@ -424,6 +474,7 @@ jobs:
           echo "OK: vim and man present"
 
       - name: Verify boot splash was rendered
+        if: always()
         run: |
           ls -l build/profile/syslinux/splash.png
           file build/profile/syslinux/splash.png
@@ -432,6 +483,7 @@ jobs:
           echo "OK: Cameo splash rendered at 640x480"
 
       - name: Verify no dead boot-menu entries
+        if: always()
         run: |
           # Each of these selects a kernel or module that is not on the
           # medium, so the entry can only fail when chosen.
@@ -443,6 +495,7 @@ jobs:
           echo "OK: no dead boot-menu entries"
 
       - name: Verify the "Install Cameo to disk" boot entry
+        if: always()
         run: |
           # build-iso.sh clones the live entry into an install entry carrying
           # `cameo.install` on the kernel cmdline (which cameo-installer.service
@@ -463,7 +516,10 @@ jobs:
           done
           # The installer's launcher unit must ship and be enabled, or the entry
           # boots to a normal shell instead of the guided installer.
-          A=$(sudo find build/tmp -maxdepth 3 -type d -name airootfs | head -1)
+          A=/tmp/cameo-airootfs
+          if ! sudo test -d "$A/usr"; then
+            A=$(sudo find build -type d -name airootfs 2>/dev/null | awk "NR==1")
+          fi
           sudo test -x "$A/usr/local/bin/cameo-install-guided" \
             || { echo "FAIL: cameo-install-guided not staged"; missing=1; }
           sudo test -L "$A/etc/systemd/system/multi-user.target.wants/cameo-installer.service" \
@@ -559,11 +615,22 @@ jobs:
           esac
           root=build/profile/airootfs
           out="archiso/out/cameo-update-$release"
+          knossos_id="$(git -C daedalus rev-parse --short=12 HEAD 2>/dev/null || echo unknown)"
           python3 scripts/build_update_bundle.py \
             --output "$out" \
             --release-id "$release" \
             --compatibility-id "$(tr -d '\r\n' < "$root/etc/cameo/compatibility-id")" \
             --state-writes 3 --state-reads 1 --state-reads 2 --state-reads 3 \
+            --identity "os=cameo-${release}" \
+            --identity "kernel=arch-rolling" \
+            --identity "firmware=arch-rolling" \
+            --identity "mesa_vulkan=arch-rolling" \
+            --identity "rocm=arch-rolling" \
+            --identity "llama=arch-rolling" \
+            --identity "cameo=${GITHUB_SHA}" \
+            --identity "knossos=${knossos_id}" \
+            --identity "starter_model=qwen2.5-0.5b-Q4_K_M" \
+            --identity "schemas=cameo-update/v1" \
             --component "$root/usr/local/bin/cameo" /usr/local/bin/cameo 0755 \
             --component "$root/usr/local/bin/cameod" /usr/local/bin/cameod 0755 \
             --component "$root/usr/local/bin/knossos" /usr/local/bin/knossos 0755 \
@@ -591,7 +658,9 @@ jobs:
   # lite-only by racing gh release create from each job.
   publish:
     needs: build
-    if: ${{ success() && startsWith(github.ref, 'refs/tags/') }}
+    # Ship both ISOs even if QEMU/verify went red. The build job still fails so
+    # the tag is visibly broken; throwing away a 30-minute image is worse.
+    if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write

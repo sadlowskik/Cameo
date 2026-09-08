@@ -65,7 +65,7 @@ LABEL org.opencontainers.image.title="Cameo" \
 # rocm edition. `curl` is what cameo_models shells out to for pulls.
 RUN pacman -Syu --noconfirm --needed \
       mesa vulkan-icd-loader vulkan-radeon vulkan-tools \
-      llama-cpp ggml-vulkan \
+      llama-cpp ggml ggml-vulkan \
       curl ca-certificates \
  && if [ "$EDITION" = "rocm" ]; then \
       pacman -S --noconfirm --needed rocm-hip-runtime rocminfo ggml-hip; \

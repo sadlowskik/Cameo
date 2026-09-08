@@ -1531,7 +1531,7 @@ fn cmd_install_plan(cli: &Cli) -> Result<()> {
     // Print the package set the *image already carries* for this hardware.
     // This does not install anything — disk install is `cameo-install`.
     if assessments.is_empty() {
-        let packages = ["llama-cpp", "ggml-cpu"];
+        let packages = ["llama-cpp", "ggml"];
         if cli.json {
             println!(
                 "{}",
@@ -1558,7 +1558,7 @@ fn cmd_install_plan(cli: &Cli) -> Result<()> {
         "mesa",
         "vulkan-radeon",
         "llama-cpp",
-        "ggml-cpu",
+        "ggml",
         "ggml-vulkan",
     ];
     if top.tier.training_supported() {

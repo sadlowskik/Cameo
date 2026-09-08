@@ -27,7 +27,7 @@ cd scripts/phase1
 chmod +x *.sh
 ./provision.sh
 ```
-Installs Vulkan userspace, packaged `llama-cpp` + `ggml-cpu` + `ggml-vulkan`, and
+Installs Vulkan userspace, packaged `llama-cpp` + `ggml` + `ggml-vulkan`, and
 (best-effort) ROCm + `ggml-hip`. If ROCm packages fail, the box is treated as
 **Tier 3** (Vulkan-only) and the rest still works.
 

@@ -10,7 +10,7 @@ need pacman  # Arch Linux only
 # llama.cpp is opt-in (CAMEO_BUILD_LLAMA=1); cmake/ninja stay available for that.
 BUILD_PKGS="base-devel git cmake ninja curl"
 VULKAN_PKGS="${CAMEO_VULKAN_PKGS:-vulkan-radeon vulkan-icd-loader vulkan-tools}"
-LLAMA_PKGS="${CAMEO_LLAMA_PKGS:-llama-cpp ggml-cpu ggml-vulkan}"
+LLAMA_PKGS="${CAMEO_LLAMA_PKGS:-llama-cpp ggml ggml-vulkan}"
 ROCM_PKGS="${CAMEO_ROCM_PKGS:-rocm-hip-sdk rocminfo rocm-smi-lib ggml-hip}"
 
 log "Installing Vulkan userspace + packaged llama.cpp: $VULKAN_PKGS $LLAMA_PKGS"

@@ -67,7 +67,7 @@ sudo dd if=archiso/out/cameo-*.iso of=/dev/sdX bs=4M status=progress oflag=sync
 ## What's in the image
 `packages.x86_64`: kernel + amdgpu + Vulkan userspace (every tier), ROCm runtime
 detection (`rocminfo` / `rocm-smi-lib`) and `ggml-hip` on the universal edition
-(dropped in lite), packaged `llama-cpp` + `ggml-cpu` + `ggml-vulkan`. No compiler
+(dropped in lite), packaged `llama-cpp` + `ggml` + `ggml-vulkan`. No compiler
 toolchain and no PyTorch — the image is an appliance. The `cameo` CLI and the
 `cameod` console daemon are compiled from this repo and staged into the airootfs
 by the build script (not listed as packages).
