@@ -1,5 +1,8 @@
 blank_issues_enabled: true
 contact_links:
+  - name: Hardware validation
+    url: https://cameoconstruct.xyz/testers.html
+    about: Booted it on metal? File the GPU and what happened. Names only with consent.
   - name: Security report
-    url: https://cameoconstruct.xyz/bounty.html
-    about: Private mail for working exploits. The wall is credit after a fix — not a public 0day form.
+    url: https://github.com/sadlowskik/Cameo/blob/main/SECURITY.md
+    about: Private vulnerabilities — do not file a public issue for a working exploit.

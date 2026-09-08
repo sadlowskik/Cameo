@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Cameo — hardware validation log</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Boot Cameo on real AMD metal, file what happened, and land on the roll if you ask.">
+<meta name="theme-color" content="#0B0E0C">
+<meta name="color-scheme" content="dark">
+<link rel="canonical" href="https://cameoconstruct.xyz/testers.html">
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<style>
+@font-face{font-family:"IBM Plex Mono";src:url("assets/fonts/ibm-plex-mono-latin-400-normal.woff2") format("woff2");font-weight:400;font-style:normal;font-display:swap}
+@font-face{font-family:"IBM Plex Mono";src:url("assets/fonts/ibm-plex-mono-latin-500-normal.woff2") format("woff2");font-weight:500;font-style:normal;font-display:swap}
+@font-face{font-family:"IBM Plex Sans";src:url("assets/fonts/ibm-plex-sans-latin-wght-normal.woff2") format("woff2");font-weight:100 700;font-style:normal;font-display:swap}
+:root{
+  --bg:#0B0E0C; --ink:#E7EDE6; --dim:#9AA89A; --ghost:#6E7A6E;
+  --line:#2A332C; --plate:#141A16; --ember:#FF7A1A; --stamp:#C8F0B4; --warn:#E6C15A;
+  --mono:"IBM Plex Mono",ui-monospace,Consolas,monospace;
+  --sans:"IBM Plex Sans",system-ui,sans-serif;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--mono);font-size:14px;line-height:1.5;
+  background-image:
+    linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(255,255,255,.025) 1px,transparent 1px);
+  background-size:28px 28px}
+body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
+  background:radial-gradient(80% 50% at 50% -10%,rgba(255,122,26,.12),transparent 55%)}
+a{color:var(--ember);text-decoration:none}
+:focus-visible{outline:2px solid var(--ember);outline-offset:3px}
+.tape{position:relative;z-index:2;background:var(--warn);color:#1A1404;
+  font-weight:500;letter-spacing:.18em;text-transform:uppercase;font-size:11px;
+  text-align:center;padding:8px 12px;
+  background-image:repeating-linear-gradient(90deg,#1A1404 0 12px,transparent 12px 28px);
+  background-size:40px 4px;background-repeat:repeat-x;background-position:0 0,0 100%}
+.tape span{background:var(--warn);padding:0 10px}
+.top{position:relative;z-index:1;display:flex;justify-content:space-between;align-items:center;
+  gap:16px;padding:14px 22px;border-bottom:1px solid var(--line)}
+.top b{letter-spacing:.14em;text-transform:uppercase;font-size:12px}
+.top nav{display:flex;gap:16px;color:var(--dim)}
+.top nav a{color:var(--dim)}.top nav a:hover{color:var(--ink)}
+.stage{position:relative;z-index:1;max-width:1180px;margin:0 auto;padding:28px 22px 64px}
+.lead{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,.9fr);gap:28px;align-items:end;margin-bottom:36px}
+@media(max-width:860px){.lead{grid-template-columns:1fr}}
+h1{font-family:var(--sans);font-size:clamp(34px,5vw,56px);line-height:.95;letter-spacing:-.04em;margin:8px 0 12px;font-weight:700}
+.meta{color:var(--dim);max-width:46em}
+.stamp{border:2px solid var(--stamp);color:var(--stamp);display:inline-block;padding:10px 14px;
+  transform:rotate(-8deg);letter-spacing:.2em;text-transform:uppercase;font-size:12px;
+  box-shadow:4px 4px 0 rgba(200,240,180,.15)}
+.split{display:grid;grid-template-columns:minmax(0,.95fr) minmax(0,1.05fr);gap:22px}
+@media(max-width:860px){.split{grid-template-columns:1fr}}
+.panel{background:var(--plate);border:1px solid var(--line);padding:18px}
+.panel h2{margin:0 0 6px;font-size:13px;letter-spacing:.16em;text-transform:uppercase;color:var(--warn)}
+.panel p.hint{margin:0 0 16px;color:var(--dim);font-size:13px}
+label{display:flex;flex-direction:column;gap:5px;margin:0 0 12px;color:var(--ghost);font-size:11px;letter-spacing:.08em;text-transform:uppercase}
+input,select,textarea{font:14px var(--mono);color:var(--ink);background:#0B0E0C;border:1px solid #3A463E;
+  border-radius:0;padding:9px 10px}
+textarea{min-height:110px;resize:vertical}
+.pair{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media(max-width:560px){.pair{grid-template-columns:1fr}}
+.check{flex-direction:row;align-items:flex-start;gap:8px;text-transform:none;letter-spacing:0;font-size:13px;color:var(--dim)}
+.check input{margin-top:2px}
+.actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+button,.btn{font:13px var(--mono);border:0;padding:10px 14px;cursor:pointer}
+button.primary,.btn.primary{background:var(--ember);color:#1A1008;font-weight:500}
+.btn.ghost{background:transparent;color:var(--ink);border:1px solid var(--line)}
+.note{margin:12px 0 0;color:var(--ghost);font-size:12px}
+.wall-head{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:12px}
+#count{color:var(--stamp)}
+.wall{display:flex;flex-direction:column;gap:10px;max-height:70vh;overflow:auto}
+.plate{border:1px solid #3A463E;background:#101510;padding:14px 14px 12px;position:relative}
+.plate::before{content:"";position:absolute;left:8px;top:8px;width:6px;height:6px;border-radius:50%;background:#4a554c}
+.plate::after{content:"";position:absolute;right:8px;top:8px;width:6px;height:6px;border-radius:50%;background:#4a554c}
+.plate .when{color:var(--ghost);font-size:11px;letter-spacing:.12em}
+.plate h3{margin:6px 0 4px;font-size:16px;font-family:var(--sans)}
+.plate .gpu{color:var(--ember)}
+.plate .did{margin:6px 0 0;color:var(--dim)}
+.empty{color:var(--ghost);border:1px dashed #3A463E;padding:28px 16px;text-align:center}
+</style>
+</head>
+<body>
+<div class="tape"><span>hardware validation log · not a bounty · metal only</span></div>
+<header class="top">
+  <b>Cameo / testers</b>
+  <nav>
+    <a href="index.html">product page</a>
+    <a href="#file">file a run</a>
+    <a href="#wall">the roll</a>
+  </nav>
+</header>
+
+<main class="stage">
+  <div class="lead">
+    <div>
+      <p style="margin:0;color:var(--warn);letter-spacing:.18em;text-transform:uppercase;font-size:11px">open log · 0 certified cards</p>
+      <h1>You boot it.<br>The roll is the proof.</h1>
+      <p class="meta">This is not the marketing site. Flash an ISO on a spare AMD box, write down the GPU, what came up, and what died. A name goes on the wall only if you check the box. No invented testers.</p>
+    </div>
+    <div><span class="stamp" id="stamp">unvalidated</span></div>
+  </div>
+
+  <div class="split">
+    <section class="panel" id="file">
+      <h2>File a run</h2>
+      <p class="hint">Opens mail, or file the GitHub hardware report. Same facts either way.</p>
+      <form id="run">
+        <div class="pair">
+          <label>Handle<input id="name" maxlength="80" placeholder="@you — blank stays off the roll"></label>
+          <label>GPU<input id="gpu" required maxlength="80" placeholder="RX 6800, 7900 XTX, RX 580…"></label>
+        </div>
+        <label>Machine<input id="host" maxlength="120" placeholder="desktop, 32 GB, UEFI — no address"></label>
+        <label>What you booted<input id="artifact" maxlength="120" placeholder="v0.2.0-beta.1 universal / commit"></label>
+        <label>What you proved<textarea id="proved" maxlength="900" placeholder="Installed to disk, console came up, qwen answered offline."></textarea></label>
+        <label>What broke<textarea id="broke" maxlength="700" placeholder="Optional. Exact error, not a novel."></textarea></label>
+        <label class="check"><input id="consent" type="checkbox"> List this handle on the public roll.</label>
+        <div class="actions">
+          <button class="primary" type="submit">Send as mail</button>
+          <a class="btn ghost" href="https://github.com/sadlowskik/Cameo/issues/new?template=hardware-report.yml">GitHub report</a>
+        </div>
+        <p class="note">Mail goes to korbin.sadlowski@gmail.com. The installer erases the disk you pick — not a gaming PC you still need.</p>
+      </form>
+    </section>
+
+    <section class="panel" id="wall">
+      <div class="wall-head">
+        <h2>The roll</h2>
+        <span id="count">000 validated</span>
+      </div>
+      <div class="wall" id="plates">
+        <p class="empty" id="empty">No plates yet. First consented metal report becomes #001.</p>
+      </div>
+    </section>
+  </div>
+</main>
+<script>
+(function(){
+  var form=document.getElementById('run');
+  form.addEventListener('submit',function(e){
+    e.preventDefault();
+    function v(id){return (document.getElementById(id).value||'').trim();}
+    var text=[
+      'Cameo hardware validation',
+      'Handle: '+(v('name')||'(anonymous)'),
+      'GPU: '+(v('gpu')||'(missing)'),
+      'Machine: '+(v('host')||'(unspecified)'),
+      'Artifact: '+(v('artifact')||'(unspecified)'),
+      'List on roll: '+(document.getElementById('consent').checked?'yes':'no'),
+      '',
+      'Proved:',
+      v('proved')||'(none)',
+      '',
+      'Broke:',
+      v('broke')||'(none)'
+    ].join('\n');
+    if(text.length>1800) text=text.slice(0,1800)+'\n[truncated]';
+    window.location.href='mailto:korbin.sadlowski@gmail.com?subject='+encodeURIComponent('hardware: '+(v('gpu')||'report'))+'&body='+encodeURIComponent(text);
+  });
+  function esc(s){return String(s||'').replace(/[<>&]/g,function(c){return ({'<':'&lt;','>':'&gt;','&':'&amp;'})[c];});}
+  fetch('testers.json').then(function(r){return r.ok?r.json():null;}).then(function(data){
+    var people=data&&data.testers||[];
+    var n=String(people.length).padStart(3,'0');
+    document.getElementById('count').textContent=n+' validated';
+    document.getElementById('stamp').textContent=people.length?'log open':'unvalidated';
+    if(!people.length) return;
+    document.getElementById('empty').hidden=true;
+    document.getElementById('plates').innerHTML=people.map(function(t,i){
+      var id=String(i+1).padStart(3,'0');
+      return '<article class="plate"><div class="when">#'+id+' · '+esc(t.date)+'</div><h3>'+esc(t.name)+'</h3><div class="gpu">'+esc(t.machine||t.gpu)+'</div><p class="did">'+esc(t.proved)+'</p></article>';
+    }).join('');
+  }).catch(function(){});
+})();
+</script>
+</body>
+</html>

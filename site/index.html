@@ -63,6 +63,17 @@ svg,canvas{display:block;max-width:100%}
 .wrap{width:100%;max-width:var(--wrap);margin-inline:auto;padding-inline:26px}
 .kicker{font-family:var(--mono);font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:var(--faint);margin:0}
 
+.prove-bar{
+  display:flex;align-items:center;gap:16px;flex-wrap:wrap;
+  padding:10px 26px;background:#0c0b09;
+  border-bottom:1px dashed #6a4a22;
+  font-family:var(--mono);font-size:12px;letter-spacing:.04em;color:#d8c4a4;
+  background-image:repeating-linear-gradient(-45deg,rgba(255,122,26,.12) 0 10px,rgba(12,11,9,1) 10px 20px)}
+.prove-bar b{color:var(--ink);font-weight:500;letter-spacing:0;font-size:13px}
+.prove-bar span{color:#ffb05a;text-transform:uppercase;letter-spacing:.16em;font-size:10px}
+.prove-bar a{margin-left:auto;color:var(--ember-ink);background:var(--ember);padding:6px 12px;border-radius:6px;font-weight:500}
+.prove-bar a:hover{filter:brightness(1.06)}
+@media(max-width:700px){.prove-bar a{margin-left:0}}
 header{position:sticky;top:0;z-index:30;background:rgba(26,24,18,.86);
   backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
 .nav{display:flex;align-items:center;height:60px;gap:22px}
@@ -281,6 +292,11 @@ header{box-shadow:0 1px 0 rgba(255,176,90,.06)}
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
+<div class="prove-bar">
+  <span>hardware validation</span>
+  <b>Boot it on metal. File the GPU. That’s how a card gets on the roll.</b>
+  <a href="testers.html">Open the log</a>
+</div>
 <div id="vignette" aria-hidden="true"></div>
 
 <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
@@ -322,8 +338,7 @@ header{box-shadow:0 1px 0 rgba(255,176,90,.06)}
     <a class="l" href="#how">how</a>
     <a class="l" href="#tiers">tiers</a>
     <a class="l" href="#install">download</a>
-    <a class="l" href="#testers">testers</a>
-    <a class="l" href="bounty.html">holes</a>
+    <a class="l" href="testers.html">testers</a>
   </nav>
   <a class="l gh" href="https://github.com/sadlowskik/Cameo" rel="noopener">
     <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg>github</a>
@@ -546,18 +561,9 @@ sudo CAMEO_EDITION=lite ./scripts/build-iso.sh</pre>
 
   <section id="testers"><div class="wrap">
     <p class="eyebrow"><span class="ix">04</span>the roll</p>
-    <h2>The first people to boot it on metal.</h2>
-    <p style="color:var(--body);max-width:42rem">Cameo is Apache-2.0. A name lands here only if someone asked to be listed after they actually ran it.</p>
-    <p id="tester-empty" style="color:var(--muted);font-family:var(--mono);font-size:14px">No names yet. The first consented hardware report becomes row one.</p>
-    <div class="steps" id="tester-list" hidden></div>
-    <p style="margin-top:18px"><a class="btn-primary" href="https://github.com/sadlowskik/Cameo/issues/new?template=hardware-report.yml">File a hardware report</a></p>
-  </div></section>
-
-  <section id="bounty"><div class="wrap">
-    <p class="eyebrow"><span class="ix">05</span>holes</p>
-    <h2>If you break it, don't post the exploit.</h2>
-    <p class="lede">Mail it. If it's real, it gets fixed. If you want the name up, it goes on the wall after that.</p>
-    <p><a class="btn-primary" href="bounty.html">The wall</a></p>
+    <h2>Hardware validation lives on its own log.</h2>
+    <p class="lede">Names only after someone actually booted it and asked to be listed. The form and the wall are not this marketing page.</p>
+    <p><a class="btn-primary" href="testers.html">Open the validation log</a></p>
   </div></section>
 </main>
 
@@ -569,8 +575,7 @@ sudo CAMEO_EDITION=lite ./scripts/build-iso.sh</pre>
       <a href="legal.html#terms">terms</a>
       <a href="legal.html#privacy">privacy</a>
       <a href="legal.html">legal</a>
-      <a href="#testers">testers</a>
-      <a href="bounty.html">holes</a>
+      <a href="testers.html">testers</a>
       <a class="gh" href="https://github.com/sadlowskik/Cameo" rel="noopener">github</a>
     </div>
   </div>
@@ -581,7 +586,7 @@ sudo CAMEO_EDITION=lite ./scripts/build-iso.sh</pre>
 (function(){
   var d=document;
   var navLinks=Array.prototype.slice.call(d.querySelectorAll('.nav .links a.l'));
-  var navTargets=navLinks.map(function(a){return d.querySelector(a.getAttribute('href'));}).filter(Boolean);
+  var navTargets=navLinks.filter(function(a){return (a.getAttribute('href')||'').charAt(0)==='#';}).map(function(a){return d.querySelector(a.getAttribute('href'));}).filter(Boolean);
   if(navTargets.length&&'IntersectionObserver' in window){
     var visible={};
     var spy=new IntersectionObserver(function(es){
@@ -611,20 +616,6 @@ sudo CAMEO_EDITION=lite ./scripts/build-iso.sh</pre>
     });
   });
 
-  fetch('testers.json').then(function(r){return r.ok?r.json():null;}).then(function(data){
-    var people=data&&data.testers||[];
-    var empty=d.getElementById('tester-empty');
-    var list=d.getElementById('tester-list');
-    if(!people.length||!list) return;
-    empty.hidden=true;
-    list.hidden=false;
-    list.innerHTML=people.map(function(t){
-      var name=String(t.name||'').replace(/[<>&]/g,function(c){return ({'<':'&lt;','>':'&gt;','&':'&amp;'})[c];});
-      var machine=String(t.machine||'').replace(/[<>&]/g,function(c){return ({'<':'&lt;','>':'&gt;','&':'&amp;'})[c];});
-      var proved=String(t.proved||'').replace(/[<>&]/g,function(c){return ({'<':'&lt;','>':'&gt;','&':'&amp;'})[c];});
-      return '<article class="step"><span class="n">'+(t.date||'')+'</span><h3>'+name+'</h3><div class="step-foot"><i></i>'+machine+(proved?' · '+proved:'')+'</div></article>';
-    }).join('');
-  }).catch(function(){});
 })();
 </script>
 </body>
