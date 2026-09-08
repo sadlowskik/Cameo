@@ -437,7 +437,10 @@ truthful than it found it.
 4. `REL-002` — complete: `release-manifest.json` generates the site download block,
    and unpublished/mislabeled artifacts cannot appear as working downloads.
 5. `FIELD-CI-001`: run the complete Field suite/build where child spawn is allowed.
-6. `KNS-EVAL-001`: publish the reward-hacking adversarial and paired-control suite.
+6. `KNS-EVAL-001` - in progress: the eight-case reward-hacking suite, hardened
+   grader, frozen 27-case lock, and equal-budget Windows paired-control runner are
+   implemented; run the live engine matrix, retain traces, obtain independent
+   review, and publish the evidence.
 7. `CAM-ISO-001`: retain current-tag universal/lite build and QEMU install evidence.
 8. `CAM-HW-001`: collect the first complete real-AMD qualification record.
 9. `INT-001`: automate the mock Cameo/Knossos contract suite in both repositories.

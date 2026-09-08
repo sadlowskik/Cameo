@@ -4,7 +4,7 @@ Snapshot: 2026-09-08
 
 Cameo: `311f7cd` / `v0.2.0-beta.3`
 
-Bundled Knossos: `a20a3b8` / `v0.2.0-beta.1`
+Bundled Knossos baseline: `9916bdc` / target `v0.2.0-beta.2` (unpublished)
 
 Next package targets: Cameo `v0.2.0-beta.4`; Knossos and Field
 `v0.2.0-beta.2`. These versions are not published yet.
@@ -28,6 +28,7 @@ Do not label this checkout stable or release-candidate qualified.
 |---|---|---|
 | Cameo | `cargo test --workspace` passed on Windows | Locally verified software paths; not Linux, ISO, or AMD-hardware proof |
 | Knossos | All 572 tests passed, including cross-process conversation recovery | Locally verified deterministic baseline |
+| Knossos evaluation | 27 fixtures pass the frozen-suite audit; 8 adversarial reward-hacking cases and a two-arm Windows runner are present | Grader and suite are locally verified; live model results have not been collected yet |
 | Field | Every directly runnable test passed, including the 100,004-event stress case; process generation and Vite/esbuild both hit sandbox `EPERM` | Broad local evidence; rerun the complete suite/build where child spawn is allowed |
 | Hardware | Tester roll is empty; no `known-good-combo.json` is present | No hardware combination is certified from this checkout |
 | Release metadata | Next Cargo/npm/display versions are aligned; the site block is generated from `release-manifest.json`; mislabeled legacy downloads were removed | Metadata is consistent; all next-version artifacts remain explicitly unpublished |
@@ -35,14 +36,16 @@ Do not label this checkout stable or release-candidate qualified.
 ## Present release blockers
 
 1. Complete Field's full test/build run on supported systems.
-2. Build both current Cameo ISO editions from a clean tag and retain QEMU boot,
+2. Run the Knossos reward-hacking matrix with the Windows runner, retain both
+   equal-budget arms, and obtain independent review before publishing a claim.
+3. Build both current Cameo ISO editions from a clean tag and retain QEMU boot,
    install, reboot, update, rollback, and recovery evidence.
-3. Produce the first complete real-AMD record with
+4. Produce the first complete real-AMD record with
    `scripts/phase1/RUNBOOK.md`; calibrate claims from evidence.
-4. Publish current Cameo ISO artifacts so the public artifact version catches up
+5. Publish current Cameo ISO artifacts so the public artifact version catches up
    with the aligned source and package version.
-5. Run artifact-only offline Cameo -> Knossos -> Field acceptance.
-6. Complete the platform, security, accessibility, supply-chain, fault, soak,
+6. Run artifact-only offline Cameo -> Knossos -> Field acceptance.
+7. Complete the platform, security, accessibility, supply-chain, fault, soak,
    and dogfood gates in the canonical plan.
 
 ## What may be claimed now
@@ -70,6 +73,10 @@ cargo test --workspace
 cargo fmt --all --check --manifest-path daedalus/knossos-rs/Cargo.toml
 cargo clippy --manifest-path daedalus/knossos-rs/Cargo.toml --all-targets -- -D warnings
 cargo test --manifest-path daedalus/knossos-rs/Cargo.toml
+Push-Location daedalus/model
+python scripts/audit_suites.py --lock ../knossos-rs/cases/suite-lock.json
+Pop-Location
+daedalus\scripts\run-reward-eval.cmd
 
 npm --prefix daedalus/field test
 npm --prefix daedalus/field run build
