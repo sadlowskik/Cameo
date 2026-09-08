@@ -1,20 +1,21 @@
 # Cameo Architecture (current state)
 
-This documents what the code **actually does today**, not the full vision (that's
-`CAMEO_PROJECT_PLAN.md`). Update it as reality changes.
+This documents what the code **actually does today**. Product scope, release
+blockers, and future work live only in [`PRODUCTIZATION_PLAN.md`](../PRODUCTIZATION_PLAN.md).
 
 ## Shape
 
-Cameo is a Cargo workspace. All logic lives in `core/`; `cli/` is a thin client.
-The current tree is the **hardware-independent** slice — detection logic, the API
-contract, the CLI, and cross-cutting config — plus stubs for everything that needs
-validated hardware.
+Cameo is a Cargo workspace. Reusable policy and planning logic lives in `core/`;
+`cli/` and `cameod/` are the command and service surfaces. The tree contains real
+process, network, persistence, installer, and update paths, but only their
+hardware-independent portions are continuously testable on the development host.
+Linux appliance behavior and GPU execution remain separate qualification boundaries.
 
 ```
 cli/ (cameo) ┐         cameod/ (control plane: daemon + browser dashboard)
              │  both front ends: detect → classify → plan → act
              ▼                                    core/api (contract, JSON-RPC types)
-core/gpu-detect ── core/config ── core/models     ▲  shared by cli + future gui
+core/gpu-detect ── core/config ── core/models     ▲  shared by CLI + daemon
    │  detection boundary          name → .gguf     │
    │  detect_topology (live | replayed captures) ──┘
    ▼
@@ -103,7 +104,8 @@ Pure decision logic: `plan(topology, assessments, model, task, settings)` →
 `model` estimates memory from coarse (calibratable) constants; the *structure* of
 the decisions is what's tested. `command::build_*` turns a plan into an exact
 `CommandSpec` (argv+env for llama.cpp / torchrun / llama-quantize) — the flag
-assumptions live here, centralized for Phase 1 to correct. `command::execute` is
+assumptions live here, centralized for hardware validation to calibrate.
+`command::execute` is
 the *execution* boundary (Linux-gated) — the only call that spawns a workload,
 though not the only one that touches hardware. `plan` refuses a model that
 exceeds VRAM + host RAM instead of emitting a command the kernel would
@@ -148,10 +150,11 @@ admission check is the real gate, `router.rs:158`), or the model's `need` fits i
 `NoneEligible` (nodes exist, none satisfy card + fit). Pure and unit-tested off-hardware.
 
 ## `core/api`
-The stable contract the CLI and GUI both bind to: versioned `Request`/`Response`
-envelopes and a `Call` enum (`gpu.status`, `model.run`, `model.quantize`,
-`train.start`, `install.plan`). **Types only** today; the Unix-socket transport
-lands in Phase 2. See `docs/api.md`.
+Versioned internal `Request`/`Response` envelopes and `Call` variants used by
+tests and shared code. The public daemon surfaces are the HTTP API documented in
+[`api-reference.md`](api-reference.md) and the versioned
+`contracts/cameo-engine-v1.schema.json` engine descriptor; do not infer transport
+support from the internal enum alone.
 
 ## `cli/` (`cameo`)
 `clap`-based, `--json` and `--dry-run` on every command. `gpu-status` (shows
@@ -409,5 +412,5 @@ precedence, the placement engine (fit/offload/multi-GPU/training-gating), the
 command builders, API serde round-trips, model-spec resolution, the daemon's HTTP
 request parser, and the supervisor's lifecycle (spawn-failure recorded, stop,
 relaunch on a freed port) — all runnable on any OS. Detection
-fixtures in `core/gpu-detect/tests/fixtures/` are **illustrative** until the
-first real Phase 1 capture replaces them.
+fixtures in `core/gpu-detect/tests/fixtures/` are **illustrative** and never count
+as a certified hardware record.

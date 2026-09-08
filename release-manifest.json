@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "cameo": {
+    "version": "0.2.0-beta.4",
+    "tag": "v0.2.0-beta.4",
+    "release_status": "unpublished",
+    "previous_source_tag": "v0.2.0-beta.3",
+    "repository": "https://github.com/sadlowskik/Cameo",
+    "release_index": "https://github.com/sadlowskik/Cameo/releases",
+    "iso": {
+      "status": "rebuild-required",
+      "last_public_tag": "v0.1.0-beta.2"
+    }
+  },
+  "knossos": {
+    "version": "0.2.0-beta.2",
+    "tag": "v0.2.0-beta.2",
+    "release_status": "unpublished",
+    "previous_source_tag": "v0.2.0-beta.1",
+    "repository": "https://github.com/sadlowskik/Knossos-Harness",
+    "release_url": "https://github.com/sadlowskik/Knossos-Harness/releases",
+    "pinned_commit": "a20a3b8826c916b3ab6b5694bf38ae5608663a43",
+    "artifacts": {
+      "windows_x86_64": {
+        "status": "rebuild-required"
+      },
+      "linux_x86_64": {
+        "status": "rebuild-required"
+      }
+    }
+  },
+  "field": {
+    "version": "0.2.0-beta.2",
+    "distribution": "bundled-with-knossos"
+  }
+}

@@ -2,7 +2,7 @@
 
 Generated from contracts/cameo-capabilities-v1.json. Run `node scripts/render-capabilities.mjs` to update.
 
-These labels describe implemented software surfaces, not hardware certification or production release approval. See [production audit](production-audit.md) for outstanding gates.
+These labels describe implemented software surfaces, not hardware certification or production release approval. See [release readiness](release-readiness.md) and the [canonical productization plan](../PRODUCTIZATION_PLAN.md) for outstanding gates.
 
 The same manifest is available from `cameo capabilities`, daemon capability discovery, the console Capabilities panel, `site/capabilities.json`, and `/etc/cameo/capabilities.json` in newly built ISOs.
 

@@ -93,7 +93,7 @@ dependencies = [
 
 [[package]]
 name = "cameo-api"
-version = "0.1.0"
+version = "0.2.0-beta.4"
 dependencies = [
  "serde",
  "serde_json",
@@ -101,21 +101,21 @@ dependencies = [
 
 [[package]]
 name = "cameo-backend-rocm"
-version = "0.1.0"
+version = "0.2.0-beta.4"
 dependencies = [
  "cameo-placement",
 ]
 
 [[package]]
 name = "cameo-backend-vulkan"
-version = "0.1.0"
+version = "0.2.0-beta.4"
 dependencies = [
  "cameo-placement",
 ]
 
 [[package]]
 name = "cameo-cli"
-version = "0.1.0"
+version = "0.2.0-beta.4"
 dependencies = [
  "anyhow",
  "cameo-api",
@@ -137,7 +137,7 @@ dependencies = [
 
 [[package]]
 name = "cameo-config"
-version = "0.1.0"
+version = "0.2.0-beta.4"
 dependencies = [
  "serde",
  "thiserror",
@@ -146,7 +146,7 @@ dependencies = [
 
 [[package]]
 name = "cameo-containers"
-version = "0.1.0"
+version = "0.2.0-beta.4"
 dependencies = [
  "serde",
  "serde_json",
@@ -154,7 +154,7 @@ dependencies = [
 
 [[package]]
 name = "cameo-daemon"
-version = "0.1.0"
+version = "0.2.0-beta.4"
 dependencies = [
  "anyhow",
  "cameo-api",
@@ -175,7 +175,7 @@ dependencies = [
 
 [[package]]
 name = "cameo-gpu-detect"
-version = "0.1.0"
+version = "0.2.0-beta.4"
 dependencies = [
  "regex",
  "serde",
@@ -185,7 +185,7 @@ dependencies = [
 
 [[package]]
 name = "cameo-models"
-version = "0.1.0"
+version = "0.2.0-beta.4"
 dependencies = [
  "anyhow",
  "serde",
@@ -194,21 +194,21 @@ dependencies = [
 
 [[package]]
 name = "cameo-moe-harness"
-version = "0.1.0"
+version = "0.2.0-beta.4"
 dependencies = [
  "thiserror",
 ]
 
 [[package]]
 name = "cameo-net-strategy"
-version = "0.1.0"
+version = "0.2.0-beta.4"
 dependencies = [
  "thiserror",
 ]
 
 [[package]]
 name = "cameo-placement"
-version = "0.1.0"
+version = "0.2.0-beta.4"
 dependencies = [
  "cameo-config",
  "cameo-gpu-detect",
@@ -221,7 +221,7 @@ dependencies = [
 
 [[package]]
 name = "cameo-quant-tools"
-version = "0.1.0"
+version = "0.2.0-beta.4"
 dependencies = [
  "cameo-placement",
 ]

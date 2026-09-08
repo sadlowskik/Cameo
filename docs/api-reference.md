@@ -177,9 +177,9 @@ the warmed model running for reuse.
 
 ## Notes
 
-- The JSON-RPC contract in `core/api` is the *typed* internal surface (Phase 2
-  Unix-socket transport); this document describes the *HTTP* surface `cameod`
-  serves today. Keep them in sync as the transport lands.
+- The JSON-RPC contract in `core/api` is an internal typed surface. This document
+  describes the HTTP surface `cameod` serves. The harness-facing compatibility
+  boundary is additionally versioned by `contracts/cameo-engine-v1.schema.json`.
 - Auth is fail-closed: a non-loopback bind is refused without the relevant key,
   so the GPU is never published unauthenticated.
 - Managed model keys and Link credentials are excluded from process arguments

@@ -17,10 +17,10 @@ is for extra models, Cameo Mesh, and opening the console from outside the house.
 
 ---
 
-Cameo meets your hardware where it is. **Vulkan is the universal baseline** — it
-runs on *any* AMD card. **ROCm is an optional accelerator** that only ever makes the
-supported cards faster; nothing requires it. Cameo detects the card, classifies what
-it can do, and serves.
+Cameo meets your hardware where it is. **Vulkan is the broad compatibility
+baseline** for AMD cards with a working Vulkan stack. **ROCm is an optional
+accelerator** for supported cards. Cameo detects the card, classifies what the
+software expects it can do, and makes that recommendation overridable.
 
 Hardware coverage is a product goal, not a certification claim: actual support
 depends on the card, driver, Vulkan implementation, model, and memory available.
@@ -37,10 +37,10 @@ particular machine as release-qualified.
 A coding harness (Knossos) and a coding model (Daedalus) can point at this box
 later. They are not required to install or chat.
 
-> **Status: beta, pre-v1.** The core (detection, placement, CLI, console, container,
-> ISO) is built and the command surface below is real. GPU execution is validated on
-> AMD hardware through the [Phase 1 runbook](scripts/phase1/RUNBOOK.md); treat pinned
-> releases as the stable line and `main` as moving. See [Status](#status).
+> **Status: beta, pre-v1.** The software core and delivery pipelines exist, but the
+> current checkout has no retained certified-hardware record. Treat release tags as
+> immutable beta snapshots and `main` as moving. See [release
+> readiness](docs/release-readiness.md) for observed evidence and blockers.
 
 ## Quickstart
 
@@ -50,7 +50,7 @@ After that the machine does not need the internet. Full walkthrough:
 
 ### ISO appliance
 
-Flash an `.iso` from [GitHub Releases](https://github.com/sadlowskik/Cameo/releases/latest)
+Flash an `.iso` from [GitHub Releases](https://github.com/sadlowskik/Cameo/releases)
 (not the Source code zip). **Universal** includes Vulkan and ROCm; **lite** is the
 smaller Vulkan-only image. Both editions also include the Rust-native Knossos
 agentic harness. Standalone Windows Knossos is on
@@ -168,15 +168,15 @@ core/                 Rust — all real logic
   backend-vulkan/     llama.cpp Vulkan executor (universal baseline)
   backend-rocm/       llama.cpp ROCm + PyTorch training executor (Tier 1/2)
   quant-tools/        GGUF quantization (wraps llama-quantize)
-  moe-harness/        MoE expert offloading                   (Phase 3)
-  net-strategy/       multi-node networking strategy          (v2)
+  moe-harness/        MoE expert-offload placement primitives
+  net-strategy/       multi-node layout primitives
 cli/                  `cameo` command-line tool
 cameod/               `cameod` control-plane daemon: browser console + JSON API
 archiso/              Arch ISO build profile (ships cameo + cameod)
 containers/           Containerfile + entrypoint (the recommended delivery)
-k8s/                  device plugin / Helm charts             (v2)
+k8s/                  experimental device-plugin / Helm scaffolding
 scripts/phase1/       automated Phase 1 hardware validation
-docs/                 architecture, tiers, API, definition-of-done
+docs/                 current reference, evidence snapshot, and documentation index
 ```
 
 ## Testers
@@ -188,29 +188,22 @@ if you want your name there.
 
 ## Documentation
 
-- [Production roadmap audit](docs/production-audit.md) — implemented work, fixes, and remaining release blockers.
+- [Documentation index](docs/README.md) — the maintained reference set.
+- [Productization plan](PRODUCTIZATION_PLAN.md) — the single Cameo + Knossos roadmap.
+- [Release readiness](docs/release-readiness.md) — current observed evidence and blockers.
 - [Generated capabilities](docs/capabilities.md) — shared manifest; also available with `cameo capabilities`.
-
-- [Cameo Mesh](docs/cameo-mesh.md) - pair nodes and dispatch whole requests securely.
-
-- [Quickstart](docs/quickstart.md) — download, plug in, account, play offline.
-- [HTTP API reference](docs/api-reference.md) — the `cameod` control-plane surface.
-- [Harness integration](docs/harness-integration.md) — point Knossos at Cameo.
-- [Updating](docs/updating.md) — container / installed / ISO update paths.
-- [Secure Boot](docs/secure-boot.md) — the shim chain, and the fallback that works now.
-- [Architecture](docs/architecture.md) · [Tiers](docs/tiers.md) · [Road to v1](docs/remediation-plan.md)
+- [Quickstart](docs/quickstart.md) · [Architecture](docs/architecture.md) · [HTTP API](docs/api-reference.md)
 
 ## Status
 
-The hardware-independent core is complete: GPU detection and tier classification,
-override precedence, the placement engine, the model cache, the CLI, the `cameod`
-console and its versioned API, the container, and the ISO profile. Vulkan and ROCm
-execution is validated on a cloud AMD instance through the automated
-[Phase 1 runbook](scripts/phase1/RUNBOOK.md). MoE expert offloading (Phase 3) and
-certificate-bound mesh identity, distributed model sharding, and Kubernetes are
-still in progress. Request-level Cameo Mesh scheduling and pairing are preview.
-See
-[`CAMEO_PROJECT_PLAN.md`](CAMEO_PROJECT_PLAN.md) for the full plan.
+The fixture-tested software core includes GPU detection and tier classification,
+placement, model management, the CLI, the authenticated `cameod` console/API,
+durable endpoint intent, preview recommendation/setup, request-level mesh
+scheduling/pairing, container packaging, and ISO/update pipelines. The current
+checkout does **not** contain a retained certified-hardware record, and the public
+tester roll is still empty. Certificate-bound mesh identity, distributed model
+sharding, full storage/update fault qualification, and Kubernetes support are not
+shipped v1 capabilities. See the [canonical plan](PRODUCTIZATION_PLAN.md).
 
 ## Contributing
 

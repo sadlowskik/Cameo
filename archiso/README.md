@@ -79,7 +79,7 @@ by the build script (not listed as packages).
   for pinned offload buffers. Sets nothing: both values it used to ship were no-ops
   on the live image, and a no-op reads as "already tuned".
 
-## Still TODO (Phase 5)
+## Still required before hardware certification
 - Pin ROCm/kernel/mesa **per tier** from `scripts/phase1`'s `known-good-combo.json`.
 - **Resizable BAR** is a firmware/BIOS setting — document it as a recommended toggle.
 
@@ -90,5 +90,6 @@ Done: the guided installer is now the **default** boot entry and shows the
 detected tier before installing (detect → show tier → install to disk).
 
 ⚠️ Every value in the tuning files is a **starting point** to confirm on real
-hardware; the whole profile builds today but is only *validated* once you've booted
-it and run `scripts/phase1`.
+hardware. The build path exists, but the current tag is only validated after its
+artifact has been built, booted, installed, and exercised with `scripts/phase1`,
+with the resulting record retained.

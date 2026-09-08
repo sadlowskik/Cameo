@@ -1554,13 +1554,7 @@ fn cmd_install_plan(cli: &Cli) -> Result<()> {
     }
 
     let top = &assessments[0];
-    let mut packages = vec![
-        "mesa",
-        "vulkan-radeon",
-        "llama-cpp",
-        "ggml",
-        "ggml-vulkan",
-    ];
+    let mut packages = vec!["mesa", "vulkan-radeon", "llama-cpp", "ggml", "ggml-vulkan"];
     if top.tier.training_supported() {
         packages.push("rocminfo");
         packages.push("rocm-smi-lib");

@@ -1,10 +1,10 @@
 # containers — Cameo as a container
 
-The **Cameo serving image now exists**: [`Containerfile`](Containerfile) builds
-`cameod` + the `cameo` CLI + llama.cpp into a portable image (F1 in
-`docs/remediation-plan.md`). This is the hero delivery artifact — the same daemon
-the ISO ships, packaged to run on any host with a container runtime and to join a
-cluster as a node.
+The **Cameo serving image exists**: [`Containerfile`](Containerfile) builds
+`cameod` + the `cameo` CLI + llama.cpp into a portable developer/deployment image.
+It carries the same daemon as the ISO and can join Cameo Mesh as a node. The ISO
+remains the primary appliance delivery; release requirements live in
+[`PRODUCTIZATION_PLAN.md`](../PRODUCTIZATION_PLAN.md).
 
 ## Build
 

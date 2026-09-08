@@ -32,6 +32,10 @@ jobs:
           node-version: "22"
       - name: Capability documentation matches manifest
         run: node scripts/render-capabilities.mjs --check
+      - name: Release metadata matches packages and downloads
+        run: node scripts/render-releases.mjs --check
+      - name: Documentation links are current
+        run: node scripts/check-doc-links.mjs
 
   knossos:
     name: Knossos submodule
