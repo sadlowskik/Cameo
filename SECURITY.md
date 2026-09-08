@@ -3,7 +3,7 @@
 Report vulnerabilities privately. Do not open a public issue for a working
 exploit against the daemon, installer, update path, or mesh.
 
-Hardware validation (testers, not a bounty): [cameoconstruct.xyz/testers.html](https://cameoconstruct.xyz/testers.html).
+Hardware testers: [cameoconstruct.xyz/testers.html](https://cameoconstruct.xyz/testers.html).
 
 Vulnerabilities still go here, privately. Email **korbin.sadlowski@gmail.com** with:
 

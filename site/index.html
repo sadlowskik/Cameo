@@ -38,7 +38,7 @@
   --wrap:1120px;
 }
 *{box-sizing:border-box}
-html{-webkit-text-size-adjust:100%;scroll-behavior:smooth;scroll-padding-top:80px}
+html{-webkit-text-size-adjust:100%;scroll-behavior:smooth;scroll-padding-top:118px}
 body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
   font-size:17px;line-height:1.55;font-weight:400;-webkit-font-smoothing:antialiased;overflow-x:hidden}
 body::before{content:"";position:fixed;inset:0;z-index:-4;pointer-events:none;
@@ -63,18 +63,17 @@ svg,canvas{display:block;max-width:100%}
 .wrap{width:100%;max-width:var(--wrap);margin-inline:auto;padding-inline:26px}
 .kicker{font-family:var(--mono);font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:var(--faint);margin:0}
 
+.mast{position:sticky;top:0;z-index:40}
 .prove-bar{
-  display:flex;align-items:center;gap:16px;flex-wrap:wrap;
-  padding:10px 26px;background:#0c0b09;
-  border-bottom:1px dashed #6a4a22;
-  font-family:var(--mono);font-size:12px;letter-spacing:.04em;color:#d8c4a4;
-  background-image:repeating-linear-gradient(-45deg,rgba(255,122,26,.12) 0 10px,rgba(12,11,9,1) 10px 20px)}
-.prove-bar b{color:var(--ink);font-weight:500;letter-spacing:0;font-size:13px}
-.prove-bar span{color:#ffb05a;text-transform:uppercase;letter-spacing:.16em;font-size:10px}
-.prove-bar a{margin-left:auto;color:var(--ember-ink);background:var(--ember);padding:6px 12px;border-radius:6px;font-weight:500}
+  display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+  padding:11px 26px;background:#14110c;
+  border-bottom:1px solid #6a4a22;
+  font-family:var(--mono);font-size:13px;color:#e7d4b8}
+.prove-bar b{color:var(--ink);font-weight:500}
+.prove-bar a{margin-left:auto;color:var(--ember-ink);background:var(--ember);padding:7px 14px;border-radius:6px;font-weight:600}
 .prove-bar a:hover{filter:brightness(1.06)}
 @media(max-width:700px){.prove-bar a{margin-left:0}}
-header{position:sticky;top:0;z-index:30;background:rgba(26,24,18,.86);
+header{background:rgba(26,24,18,.92);
   backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
 .nav{display:flex;align-items:center;height:60px;gap:22px}
 .brand{display:flex;align-items:center;gap:10px;font-family:var(--disp);font-weight:700;font-size:19px;letter-spacing:-.03em;margin-right:auto}
@@ -292,12 +291,11 @@ header{box-shadow:0 1px 0 rgba(255,176,90,.06)}
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
+<div class="mast">
 <div class="prove-bar">
-  <span>hardware validation</span>
-  <b>Boot it on metal. File the GPU. That’s how a card gets on the roll.</b>
-  <a href="testers.html">Open the log</a>
+  <b>Nobody has validated a card yet. If you have a spare AMD box, flash it and file the run — you would be first.</b>
+  <a href="testers.html">Test a box</a>
 </div>
-<div id="vignette" aria-hidden="true"></div>
 
 <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
 <g id="mark" transform="scale(0.05417)">
@@ -343,6 +341,8 @@ header{box-shadow:0 1px 0 rgba(255,176,90,.06)}
   <a class="l gh" href="https://github.com/sadlowskik/Cameo" rel="noopener">
     <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg>github</a>
 </div></header>
+</div>
+<div id="vignette" aria-hidden="true"></div>
 
 <main id="main">
   <section class="hero" id="top" style="border:0"><div class="wrap">
@@ -360,6 +360,7 @@ header{box-shadow:0 1px 0 rgba(255,176,90,.06)}
           </a>
           <p class="cta-note">Free • Open source • Apache 2.0</p>
         </div>
+        <a class="btn" href="testers.html">I have a spare box</a>
         <a class="btn" href="https://github.com/sadlowskik/Cameo" rel="noopener">
           <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg>
           GitHub
@@ -559,12 +560,6 @@ sudo CAMEO_EDITION=lite ./scripts/build-iso.sh</pre>
     <p class="note">Beta, pre-v1. Flash an <code style="color:var(--amber)">.iso</code>, not Source code. Check <code style="color:var(--amber)">SHA256SUMS</code>. The disk installer erases the drive you pick. Source: <a href="https://github.com/sadlowskik/Cameo" rel="noopener" style="color:var(--amber)">github.com/sadlowskik/Cameo</a>.</p>
   </div></section>
 
-  <section id="testers"><div class="wrap">
-    <p class="eyebrow"><span class="ix">04</span>the roll</p>
-    <h2>Hardware validation lives on its own log.</h2>
-    <p class="lede">Names only after someone actually booted it and asked to be listed. The form and the wall are not this marketing page.</p>
-    <p><a class="btn-primary" href="testers.html">Open the validation log</a></p>
-  </div></section>
 </main>
 
 <footer><div class="wrap">
