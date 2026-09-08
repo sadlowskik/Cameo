@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Cameo — holes</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="If you find a hole in Cameo or Knossos, mail it. Names go on the wall after it's fixed, and only if you asked.">
+<meta name="theme-color" content="#1A1812">
+<meta name="color-scheme" content="dark">
+<link rel="canonical" href="https://cameoconstruct.xyz/bounty.html">
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png">
+<style>
+@font-face{font-family:"Space Grotesk";src:url("assets/fonts/space-grotesk-latin-wght-normal.woff2") format("woff2");font-weight:300 700;font-style:normal;font-display:swap}
+@font-face{font-family:"IBM Plex Sans";src:url("assets/fonts/ibm-plex-sans-latin-wght-normal.woff2") format("woff2");font-weight:100 700;font-style:normal;font-display:swap}
+@font-face{font-family:"IBM Plex Mono";src:url("assets/fonts/ibm-plex-mono-latin-400-normal.woff2") format("woff2");font-weight:400;font-style:normal;font-display:swap}
+@font-face{font-family:"IBM Plex Mono";src:url("assets/fonts/ibm-plex-mono-latin-500-normal.woff2") format("woff2");font-weight:500;font-style:normal;font-display:swap}
+:root{
+  --bg:#1A1812; --panel:rgba(44,43,39,.72); --inset:rgba(24,23,21,.55); --raised:rgba(58,54,46,.72);
+  --line:#3F3C36; --line-2:#524E46;
+  --ink:#F6F4F2; --body:#D8D2C8; --muted:#B8B1A6; --faint:#A39C91;
+  --ember:#FF7A1A; --ember-ink:#1A1008; --amber:#FFD08A; --rust:#B4472F;
+  --disp:"Space Grotesk",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --sans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Consolas,monospace;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%;scroll-behavior:smooth;scroll-padding-top:80px}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+  font-size:17px;line-height:1.55;-webkit-font-smoothing:antialiased}
+body::before{content:"";position:fixed;inset:0;z-index:-4;pointer-events:none;
+  background:
+    linear-gradient(90deg,rgba(26,24,18,.92) 0%,rgba(26,24,18,.45) 54%,rgba(26,24,18,.78) 100%),
+    linear-gradient(180deg,rgba(26,24,18,.08),rgba(26,24,18,.9) 88%),
+    url("assets/cameo-forum-bg.webp") 60% top / cover no-repeat,
+    linear-gradient(160deg,#221F18,#17150E 55%,#1B1812);
+  filter:saturate(.78) contrast(1.06)}
+a{color:inherit;text-decoration:none}
+:focus-visible{outline:2px solid var(--ember);outline-offset:3px}
+.skip{position:absolute;left:-999px;top:8px;background:var(--ember);color:var(--ember-ink);
+  font-family:var(--mono);font-size:13px;padding:8px 12px;border-radius:8px;z-index:80}
+.skip:focus{left:8px}
+.wrap{width:100%;max-width:880px;margin-inline:auto;padding-inline:26px}
+header{position:sticky;top:0;z-index:30;background:rgba(26,24,18,.86);
+  backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+.nav{display:flex;align-items:center;height:60px;gap:22px}
+.brand{display:flex;align-items:center;gap:10px;font-family:var(--disp);font-weight:700;font-size:19px;letter-spacing:-.03em;margin-right:auto}
+.brand svg{width:26px;height:26px}
+.nav a.l{font-family:var(--mono);font-size:13px;color:var(--muted);white-space:nowrap}
+.nav a.l:hover{color:var(--ink)}
+.hero{padding:56px 0 28px}
+.kicker{font-family:var(--mono);font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:var(--faint);margin:0}
+h1{font-family:var(--disp);font-weight:700;letter-spacing:-.04em;line-height:.95;
+  font-size:clamp(36px,6vw,64px);margin:14px 0 0}
+.sub{font-size:18px;line-height:1.6;color:var(--body);max-width:42em;margin:18px 0 0}
+.rules{margin:0 0 28px;border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:20px 22px}
+.rules h2{font-family:var(--mono);font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--amber);margin:0 0 12px}
+.rules ul{margin:0;padding-left:20px;color:var(--muted)}
+.rules li{margin:7px 0}
+.rules b{color:var(--ink);font-weight:500}
+.eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:var(--faint);margin:0 0 14px;
+  display:flex;align-items:center;gap:14px}
+.eyebrow .ix{color:var(--ember)}
+.eyebrow::after{content:"";flex:1;height:1px;background:linear-gradient(90deg,var(--line-2),transparent)}
+h2{font-family:var(--disp);font-weight:700;letter-spacing:-.03em;font-size:clamp(24px,4vw,32px);margin:0 0 12px;line-height:1.15;scroll-margin-top:80px}
+section{padding:48px 0;border-top:1px solid var(--line)}
+.field{display:flex;flex-direction:column;gap:6px;margin:0 0 14px}
+.field span{font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--faint)}
+.field input,.field select,.field textarea{
+  font-family:var(--mono);font-size:14px;color:var(--ink);
+  background:var(--inset);border:1px solid var(--line);border-radius:8px;padding:10px 12px}
+.field textarea{min-height:140px;resize:vertical;line-height:1.5}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media(max-width:640px){.row{grid-template-columns:1fr}}
+.check{display:flex;gap:10px;align-items:flex-start;margin:8px 0 18px;font-size:15px;color:var(--body)}
+.check input{margin-top:4px}
+.actions{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+.btn,.btn-primary{font-family:var(--mono);font-size:13.5px;border-radius:8px;padding:10px 16px;
+  display:inline-flex;gap:8px;align-items:center;cursor:pointer;border:1px solid var(--line-2)}
+.btn{color:var(--ink);background:var(--raised)}
+.btn-primary{background:var(--ember);color:var(--ember-ink);border-color:transparent;font-weight:500}
+.btn-primary:hover{filter:brightness(1.06)}
+.note{font-family:var(--mono);font-size:12.5px;color:var(--muted);margin:14px 0 0}
+.warn{border:1px solid rgba(180,71,47,.6);border-radius:12px;padding:16px 18px;margin:0 0 22px;
+  background:linear-gradient(180deg,rgba(180,71,47,.2),rgba(44,28,22,.55))}
+.warn b{display:block;font-family:var(--disp);margin:0 0 6px;color:#FFB877}
+.warn p{margin:0;color:var(--body);font-size:15px}
+.wall{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+@media(max-width:720px){.wall{grid-template-columns:1fr}}
+.brick{border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:16px 18px}
+.brick .n{font-family:var(--mono);font-size:12px;color:var(--ember);letter-spacing:.08em}
+.brick h3{font-family:var(--disp);font-size:18px;margin:8px 0 6px;letter-spacing:-.02em}
+.brick p{margin:0;color:var(--muted);font-size:14px}
+.empty{color:var(--muted);font-family:var(--mono);font-size:14px}
+footer{border-top:1px solid var(--line);padding:36px 0 50px}
+.foot{display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap;align-items:center}
+.foot .tag,.foot a{font-family:var(--mono);font-size:12.5px;color:var(--faint)}
+.foot a{color:var(--muted)}.foot a:hover{color:var(--ink)}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+<g id="mark" transform="scale(0.05417)">
+  <circle cx="240" cy="240" r="234" fill="#302F2B"/>
+  <circle cx="240" cy="240" r="228" fill="none" stroke="#454339" stroke-width="10" stroke-dasharray="3 9"/>
+  <circle cx="240" cy="240" r="208" fill="#1C1B18"/>
+  <g fill="none" stroke-linecap="butt">
+    <path d="M 308.8 141.7 A 120 120 0 1 0 308.8 338.3" stroke="#F6F4F2" stroke-width="48"/>
+    <path d="M 308.8 141.7 A 120 120 0 0 1 351.3 195.1" stroke="#F6F4F2" stroke-width="48" stroke-dasharray="7 11"/>
+    <path d="M 308.8 338.3 A 120 120 0 0 0 351.3 284.9" stroke="#F6F4F2" stroke-width="48" stroke-dasharray="7 11"/>
+  </g>
+  <circle cx="360" cy="240" r="12" fill="#FF7A1A"/>
+</g>
+</defs></svg>
+
+<header><div class="wrap nav">
+  <a class="brand" href="index.html"><svg viewBox="0 0 26 26"><use href="#mark"/></svg>cameo</a>
+  <a class="l" href="index.html">home</a>
+  <a class="l" href="#send">submit</a>
+  <a class="l" href="#wall">the wall</a>
+</div></header>
+
+<main id="main"><div class="wrap">
+  <section class="hero" style="border:0;padding-top:56px">
+    <p class="kicker">not a paid program</p>
+    <h1>Find a hole.<br>Don't post the exploit.</h1>
+    <p class="sub">Mail it. If it's real, it gets fixed. If you want your name up, it goes on the wall after that — not before.</p>
+  </section>
+
+  <div class="rules">
+    <h2>How this works</h2>
+    <ul>
+      <li><b>Working exploit?</b> Email only. No public GitHub issue. No tweet with a PoC.</li>
+      <li><b>Urgent:</b> remote code execution, auth bypass, update-trust, installer wiping the wrong disk, leaked private keys.</li>
+      <li><b>This is a wall, not HackerOne.</b> Credit, not a bounty table. Don't invent a payout.</li>
+      <li><b>Give a window</b> before you go public. Pre-v1 still treats the items above as urgent.</li>
+    </ul>
+  </div>
+
+  <section id="send">
+    <p class="eyebrow"><span class="ix">01</span>submit</p>
+    <h2>Private mail. This site stores nothing.</h2>
+    <div class="warn" role="note">
+      <b>Do not paste a full exploit in a public issue</b>
+      <p>The button opens your mail app to korbin.sadlowski@gmail.com. Nothing is uploaded here.</p>
+    </div>
+    <form id="report" action="mailto:korbin.sadlowski@gmail.com" method="get">
+      <div class="row">
+        <label class="field"><span>Handle</span><input id="handle" name="handle" maxlength="80" placeholder="@you or a name"></label>
+        <label class="field"><span>Your email</span><input id="from" name="from" type="email" maxlength="120" placeholder="so I can reply"></label>
+      </div>
+      <div class="row">
+        <label class="field"><span>What</span>
+          <select id="area">
+            <option value="cameo">Cameo daemon / console</option>
+            <option value="iso">ISO / installer / updates</option>
+            <option value="knossos">Knossos</option>
+            <option value="field">Field</option>
+            <option value="site">this site</option>
+            <option value="other">other</option>
+          </select>
+        </label>
+        <label class="field"><span>How bad</span>
+          <select id="sev">
+            <option value="unsure">not sure</option>
+            <option value="low">low</option>
+            <option value="auth">auth / keys / trust</option>
+            <option value="rce">code execution / disk wipe</option>
+          </select>
+        </label>
+      </div>
+      <label class="field"><span>Version, tag, or commit</span><input id="ver" maxlength="120" placeholder="v0.2.0-beta.1, ISO SHA, git sha"></label>
+      <label class="field"><span>What you did, and what happened</span><textarea id="body" maxlength="1800" placeholder="Steps. Result. No need for a novel. Attach the rest in the email if it doesn't fit."></textarea></label>
+      <label class="check"><input id="wallok" type="checkbox"> Put my handle on the wall after this is fixed. Leave unchecked to stay off it.</label>
+      <div class="actions">
+        <button class="btn-primary" type="submit">Open mail to send</button>
+        <a class="btn" href="mailto:korbin.sadlowski@gmail.com">or just email</a>
+      </div>
+      <p class="note" id="form-note">Subject and body are filled for your mail app. If the window is blank, mail korbin.sadlowski@gmail.com yourself.</p>
+    </form>
+  </section>
+
+  <section id="wall">
+    <p class="eyebrow"><span class="ix">02</span>the wall</p>
+    <h2>People who found something real.</h2>
+    <p class="empty" id="wall-empty">Nobody on it yet. First consented, fixed report becomes brick one.</p>
+    <div class="wall" id="wall-list" hidden></div>
+  </section>
+</div></main>
+
+<footer><div class="wrap">
+  <div class="foot">
+    <a class="brand" href="index.html"><svg viewBox="0 0 26 26"><use href="#mark"/></svg>cameo</a>
+    <p class="tag">private first · wall after · apache-2.0</p>
+    <a href="legal.html">legal</a>
+  </div>
+</div></footer>
+
+<script>
+(function(){
+  var form=document.getElementById('report');
+  form.addEventListener('submit',function(e){
+    e.preventDefault();
+    function v(id){return (document.getElementById(id).value||'').trim();}
+    var handle=v('handle')||'(no handle)';
+    var from=v('from')||'(no reply address)';
+    var area=v('area');
+    var sev=v('sev');
+    var ver=v('ver')||'(unspecified)';
+    var body=v('body');
+    var wall=document.getElementById('wallok').checked?'yes':'no';
+    var text=[
+      'Cameo/Knossos report',
+      'Handle: '+handle,
+      'Reply: '+from,
+      'Area: '+area,
+      'Severity: '+sev,
+      'Version: '+ver,
+      'Wall after fix: '+wall,
+      '',
+      body||'(no details in the form — see attachments)'
+    ].join('\n');
+    if(text.length>1800) text=text.slice(0,1800)+'\n\n[truncated — send the rest as an attachment]';
+    var href='mailto:korbin.sadlowski@gmail.com?subject='+encodeURIComponent('Cameo report: '+area+' / '+sev)+'&body='+encodeURIComponent(text);
+    window.location.href=href;
+  });
+
+  function esc(s){return String(s||'').replace(/[<>&]/g,function(c){return ({'<':'&lt;','>':'&gt;','&':'&amp;'})[c];});}
+  fetch('bounty.json').then(function(r){return r.ok?r.json():null;}).then(function(data){
+    var people=data&&data.wall||[];
+    var empty=document.getElementById('wall-empty');
+    var list=document.getElementById('wall-list');
+    if(!people.length||!list) return;
+    empty.hidden=true;
+    list.hidden=false;
+    list.innerHTML=people.map(function(t){
+      return '<article class="brick"><span class="n">'+esc(t.date)+'</span><h3>'+esc(t.name)+'</h3><p>'+esc(t.finding)+'</p></article>';
+    }).join('');
+  }).catch(function(){});
+})();
+</script>
+</body>
+</html>

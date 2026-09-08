@@ -3,6 +3,9 @@
 Report vulnerabilities privately. Do not open a public issue for a working
 exploit against the daemon, installer, update path, or mesh.
 
+The public wall and mail form: [cameoconstruct.xyz/bounty.html](https://cameoconstruct.xyz/bounty.html).
+A name lands there only after the hole is fixed, and only if you asked.
+
 Email **korbin.sadlowski@gmail.com** with:
 
 - the affected version, commit, or ISO tag

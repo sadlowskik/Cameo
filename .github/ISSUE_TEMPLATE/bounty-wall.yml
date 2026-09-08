@@ -1,0 +1,38 @@
+name: Wall credit
+description: Already disclosed and fixed. Ask to be listed on the public wall. Do not attach a working exploit.
+title: "wall: "
+labels: ["security"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Live exploits go to email only: korbin.sadlowski@gmail.com
+        This form is for **credit on [the wall](https://cameoconstruct.xyz/bounty.html)** after the hole is closed.
+  - type: input
+    id: name
+    attributes:
+      label: How should the wall list you?
+      placeholder: "@handle"
+    validations:
+      required: true
+  - type: checkboxes
+    id: consent
+    attributes:
+      label: Public credit
+      options:
+        - label: I want this name on the wall after the fix is public.
+          required: true
+  - type: input
+    id: finding
+    attributes:
+      label: One-line finding (no PoC)
+      description: What broke, not how to weaponize it.
+      placeholder: "console key accepted over LAN without TLS"
+    validations:
+      required: true
+  - type: input
+    id: report
+    attributes:
+      label: Private report
+      description: Date you mailed it, or issue/PR where it was fixed.
+      placeholder: "mailed 2026-09-08 / fixed in b9a1043"
