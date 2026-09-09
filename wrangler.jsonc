@@ -1,0 +1,14 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "cameoconstruct",
+  "pages_build_output_dir": "./site",
+  "compatibility_date": "2026-09-08",
+  "d1_databases": [
+    {
+      "binding": "REPORTS",
+      "database_name": "cameo-hardware-reports",
+      "database_id": "ef0df26d-625a-4538-9ac0-74b60015f8c5",
+      "migrations_dir": "./migrations"
+    }
+  ]
+}

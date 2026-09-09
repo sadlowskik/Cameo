@@ -453,8 +453,8 @@ truthful than it found it.
    submission consent, and paste-ready failure path are implemented; add the
    bounded starter-model smoke test and validate on a real Cameo image.
 8. `CAM-INTAKE-001` - in progress: the strict, size-bound, salted-rate-limited
-   Pages/D1 pending intake and migration are implemented; provision the binding
-   and secret, deploy it, and add the reviewer-only export flow.
+   Pages/D1 pending intake is deployed at the production domain with its migration,
+   binding, and secret verified; add the reviewer-only export flow.
 9. `CAM-MATRIX-001` - in progress: the site and offline credits now derive from
    the one consented roster and untrusted site fields use text nodes; approved
    report export and the generated gfx-grouped matrix remain.
