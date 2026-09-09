@@ -448,16 +448,16 @@ truthful than it found it.
    promoting it from preview. Do not delegate serving, updates, process recovery,
    or multi-GPU placement until ROCm CLI exposes stable machine-readable
    lifecycle contracts and those paths pass Cameo's fault matrix.
-7. `CAM-REPORT-001` - in progress: the versioned report/submission contracts,
-   privacy-allowlisted local report, exact payload preview/hash, interactive
-   submission consent, and paste-ready failure path are implemented; add the
-   bounded starter-model smoke test and validate on a real Cameo image.
-8. `CAM-INTAKE-001` - in progress: the strict, size-bound, salted-rate-limited
-   Pages/D1 pending intake is deployed at the production domain with its migration,
-   binding, and secret verified; add the reviewer-only export flow.
-9. `CAM-MATRIX-001` - in progress: the site and offline credits now derive from
-   the one consented roster and untrusted site fields use text nodes; approved
-   report export and the generated gfx-grouped matrix remain.
+7. `CAM-REPORT-001` - in progress: the versioned contracts, privacy-allowlisted
+   local report, exact payload preview/hash, consent gates, failure path, and
+   bounded observed starter-model smoke are implemented; validate the smoke on a
+   real Cameo image.
+8. `CAM-INTAKE-001` - complete: the strict, size-bound, salted-rate-limited
+   Pages/D1 pending intake is deployed at the production domain, and authenticated
+   local export/approve/reject tooling keeps moderation off the public API.
+9. `CAM-MATRIX-001` - in progress: one reviewed approved-report source generates
+   the consented roster, offline credits, and aggregate public hardware matrix;
+   approve the first real reports before making compatibility claims.
 10. `CAM-CREDITS-001` - in progress: `cameo credits` and ISO embedding are wired;
     set the release cutoff, review consent records, and freeze the release asset.
 11. `KNS-EVAL-001` - in progress: the eight-case reward-hacking suite, hardened

@@ -24,10 +24,12 @@ SRC="$ROOT/site"
 printf '\033[1;38;5;209m[pages]\033[0m Deploying %s -> Cloudflare Pages project "%s"\n' "$SRC" "$PROJECT"
 # Prefer a globally-installed wrangler; fall back to npx (which fetches it on demand).
 if command -v wrangler >/dev/null 2>&1; then WR=(wrangler); else WR=(npx --yes wrangler); fi
+# wrangler.jsonc is the source of truth (output dir + D1 REPORTS binding).
+# Passing ./site here would skip that file and drop the intake binding.
 # --branch main makes this a PRODUCTION deployment regardless of the repo's current
 # git branch; without it, deploys from feature branches only create previews.
 cd "$ROOT"
-"${WR[@]}" pages deploy "$SRC" --project-name "$PROJECT" --branch main --commit-dirty=true
+"${WR[@]}" pages deploy --project-name "$PROJECT" --branch main --commit-dirty=true
 
 printf '\033[1;38;5;209m[pages]\033[0m Done. Add the custom domain in the Pages project:\n'
 printf '  Cloudflare dashboard -> Pages -> %s -> Custom domains -> add cameoconstruct.xyz\n' "$PROJECT"

@@ -37,7 +37,7 @@ jobs:
       - name: Tester roster matches consented source
         run: node scripts/render-testers.mjs --check
       - name: Hardware intake validation
-        run: node --test tests/hardware-reports.test.mjs
+        run: node --test tests/hardware-reports.test.mjs tests/approved-hardware.test.mjs
       - name: Documentation links are current
         run: node scripts/check-doc-links.mjs
 

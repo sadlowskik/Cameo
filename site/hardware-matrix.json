@@ -1,0 +1,6 @@
+{
+  "schema": "cameo-hardware-matrix/v1",
+  "evidence_class": "approved_community_reports",
+  "disclaimer": "Approved community reports are compatibility evidence, not hardware certification, a warranty, or a release-readiness claim.",
+  "entries": []
+}

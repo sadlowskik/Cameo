@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cameoconstruct.xyz/contracts/cameo-hardware-matrix-v1.schema.json",
+  "title": "Cameo community hardware evidence matrix v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "evidence_class", "disclaimer", "entries"],
+  "properties": {
+    "schema": { "const": "cameo-hardware-matrix/v1" },
+    "evidence_class": { "const": "approved_community_reports" },
+    "disclaimer": { "type": "string", "minLength": 1, "maxLength": 500 },
+    "entries": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["key", "model", "pci_id", "is_apu", "cameo_tier", "report_count", "boot", "gpu_detection", "inference", "last_reported_at", "cameo_versions"],
+        "properties": {
+          "key": { "type": "string", "minLength": 1, "maxLength": 256 },
+          "model": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "pci_id": { "type": "string", "pattern": "^[0-9a-fA-F]{4}:[0-9a-fA-F]{4}$" },
+          "gfx_target": { "type": "string", "pattern": "^gfx[0-9a-z]+$" },
+          "is_apu": { "type": "boolean" },
+          "cameo_tier": { "type": "integer", "minimum": 1, "maximum": 3 },
+          "report_count": { "type": "integer", "minimum": 1 },
+          "boot": { "$ref": "#/$defs/outcomeCounts" },
+          "gpu_detection": { "$ref": "#/$defs/outcomeCounts" },
+          "inference": { "$ref": "#/$defs/outcomeCounts" },
+          "last_reported_at": { "type": "string", "format": "date-time" },
+          "cameo_versions": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 64 }, "uniqueItems": true }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "outcomeCounts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["passed", "failed", "degraded", "not_tested"],
+      "properties": {
+        "passed": { "type": "integer", "minimum": 0 },
+        "failed": { "type": "integer", "minimum": 0 },
+        "degraded": { "type": "integer", "minimum": 0 },
+        "not_tested": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

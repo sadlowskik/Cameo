@@ -1,9 +1,9 @@
 //! Local-first, explicit-consent beta hardware reports.
 
-use std::io::{IsTerminal, Write};
+use std::io::{IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, bail, Context, Result};
 use clap::ValueEnum;
@@ -14,6 +14,8 @@ const DEFAULT_ENDPOINT: &str = "https://cameoconstruct.xyz/api/hardware-reports"
 const MANUAL_URL: &str = "https://cameoconstruct.xyz/testers.html#retry";
 const MAX_NOTE_CHARS: usize = 1_000;
 const MAX_ERROR_CHARS: usize = 2_000;
+const SMOKE_TIMEOUT: Duration = Duration::from_secs(120);
+const SMOKE_OUTPUT_LIMIT: usize = 64 * 1024;
 
 #[derive(clap::Args)]
 pub(crate) struct Args {
@@ -36,6 +38,10 @@ pub(crate) struct Args {
     /// Result of a real model load and generation. Defaults to not-tested.
     #[arg(long, value_enum, default_value_t = Outcome::NotTested)]
     inference: Outcome,
+
+    /// Run the bundled starter model with a fixed 16-token prompt and 120s timeout.
+    #[arg(long)]
+    smoke: bool,
 
     /// Optional tester note. This is included verbatim after control checks.
     #[arg(long)]
@@ -143,6 +149,40 @@ pub(crate) fn run(cli: &super::Cli, args: &Args) -> Result<()> {
         credit_name.as_deref(),
         args.credit_name.is_some(),
     )?;
+    if args.smoke && args.inference != Outcome::NotTested {
+        bail!("--smoke records observed inference; do not combine it with --inference");
+    }
+    if args.smoke && cli.dry_run {
+        bail!("--smoke cannot be combined with --dry-run because it must execute the model");
+    }
+
+    let (inference, inference_source) = if args.smoke {
+        eprintln!("Running bounded qwen2.5-0.5b smoke (16 generated tokens; 120s timeout)...");
+        match super::starter_smoke_spec(cli).and_then(|spec| execute_smoke(&spec)) {
+            Ok(true) => {
+                eprintln!("Starter-model smoke passed.");
+                (Outcome::Passed, "observed")
+            }
+            Ok(false) => {
+                eprintln!("Starter-model smoke failed; no prompt or model output will be stored.");
+                (Outcome::Failed, "observed")
+            }
+            Err(error) => {
+                eprintln!("Starter-model smoke could not complete: {error}");
+                eprintln!("The report records a failed observed smoke without raw output.");
+                (Outcome::Failed, "observed")
+            }
+        }
+    } else {
+        (
+            args.inference,
+            if args.inference == Outcome::NotTested {
+                "unavailable"
+            } else {
+                "tester_asserted"
+            },
+        )
+    };
 
     let facts = super::system_facts::collect(cli);
     let generated_at_unix = SystemTime::now()
@@ -191,12 +231,8 @@ pub(crate) fn run(cli: &super::Cli, args: &Args) -> Result<()> {
                 evidence_source: detection_source,
             },
             inference: OutcomeFact {
-                result: args.inference,
-                evidence_source: if args.inference == Outcome::NotTested {
-                    "unavailable"
-                } else {
-                    "tester_asserted"
-                },
+                result: inference,
+                evidence_source: inference_source,
             },
         },
         note,
@@ -266,6 +302,67 @@ pub(crate) fn run(cli: &super::Cli, args: &Args) -> Result<()> {
             Err(anyhow!("hardware report submission failed"))
         }
     }
+}
+
+fn read_bounded<R: Read>(mut reader: R) -> std::io::Result<Vec<u8>> {
+    let mut retained = Vec::new();
+    let mut chunk = [0_u8; 4096];
+    loop {
+        let read = reader.read(&mut chunk)?;
+        if read == 0 {
+            return Ok(retained);
+        }
+        let remaining = SMOKE_OUTPUT_LIMIT.saturating_sub(retained.len());
+        retained.extend_from_slice(&chunk[..read.min(remaining)]);
+    }
+}
+
+fn execute_smoke(spec: &cameo_placement::CommandSpec) -> Result<bool> {
+    let mut command = Command::new(&spec.program);
+    command
+        .args(&spec.args)
+        .envs(spec.env.iter().map(|(key, value)| (key, value)))
+        .envs(spec.secret_env.iter().map(|(key, value)| (key, value)))
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command
+        .spawn()
+        .with_context(|| format!("starting {}", spec.program))?;
+    let stdout = child.stdout.take().context("capturing smoke stdout")?;
+    let stderr = child.stderr.take().context("capturing smoke stderr")?;
+    let stdout_reader = std::thread::spawn(move || read_bounded(stdout));
+    let stderr_reader = std::thread::spawn(move || read_bounded(stderr));
+    let started = Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if started.elapsed() >= SMOKE_TIMEOUT {
+            child
+                .kill()
+                .context("terminating timed-out starter smoke")?;
+            let _ = child.wait();
+            let _ = stdout_reader.join();
+            let _ = stderr_reader.join();
+            bail!("starter-model smoke exceeded 120 seconds");
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    let stdout = stdout_reader
+        .join()
+        .map_err(|_| anyhow!("smoke stdout reader panicked"))??;
+    let _stderr = stderr_reader
+        .join()
+        .map_err(|_| anyhow!("smoke stderr reader panicked"))??;
+    Ok(smoke_passed(
+        status.success(),
+        &String::from_utf8_lossy(&stdout),
+    ))
+}
+
+fn smoke_passed(status_success: bool, stdout: &str) -> bool {
+    status_success && stdout.contains("CAMEO_SMOKE_OK")
 }
 
 fn validate_credit(credit: bool, clean_name: Option<&str>, name_was_supplied: bool) -> Result<()> {
@@ -462,5 +559,19 @@ mod tests {
         assert!(write_new(&path, b"second").is_err());
         assert_eq!(std::fs::read(&path).unwrap(), b"first");
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn smoke_requires_both_success_and_the_private_marker() {
+        assert!(smoke_passed(true, "CAMEO_SMOKE_OK"));
+        assert!(!smoke_passed(false, "CAMEO_SMOKE_OK"));
+        assert!(!smoke_passed(true, "some model output"));
+    }
+
+    #[test]
+    fn smoke_capture_is_bounded_while_the_reader_drains() {
+        let input = vec![b'x'; SMOKE_OUTPUT_LIMIT + 4096];
+        let captured = read_bounded(std::io::Cursor::new(input)).unwrap();
+        assert_eq!(captured.len(), SMOKE_OUTPUT_LIMIT);
     }
 }

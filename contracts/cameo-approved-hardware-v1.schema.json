@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cameoconstruct.xyz/contracts/cameo-approved-hardware-v1.schema.json",
+  "title": "Cameo approved hardware evidence v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "release_id", "cutoff_at", "approved"],
+  "properties": {
+    "schema": { "const": "cameo-approved-hardware/v1" },
+    "release_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "cutoff_at": { "type": ["string", "null"], "format": "date-time" },
+    "approved": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["approved_at", "report", "credit_request"],
+        "properties": {
+          "approved_at": { "type": "string", "format": "date-time" },
+          "report": { "$ref": "cameo-hardware-report-v1.schema.json" },
+          "credit_request": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["publish", "permanence_acknowledged"],
+            "properties": {
+              "publish": { "type": "boolean" },
+              "display_name": { "type": "string", "minLength": 1, "maxLength": 80 },
+              "permanence_acknowledged": { "type": "boolean" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

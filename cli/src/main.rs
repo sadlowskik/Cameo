@@ -724,6 +724,46 @@ fn binary_for(backend: Backend) -> &'static str {
     }
 }
 
+/// Build the fixed, bounded starter-model invocation used by `cameo report
+/// --smoke`. Keeping it on the normal detector/planner/backend path makes the
+/// report evidence exercise the same placement code users rely on.
+fn starter_smoke_spec(cli: &Cli) -> Result<CommandSpec> {
+    const STARTER: &str = "qwen2.5-0.5b";
+    let options = ModelOpts {
+        params: None,
+        quant: "Q4_K_M".into(),
+        moe: false,
+        context: 2048,
+        native_context: None,
+        slots: 1,
+        kv_cache: "q8_0".into(),
+        kv_heads: None,
+        head_dim: None,
+        batch: 512,
+        ubatch: 256,
+        no_flash_attention: false,
+        cache_reuse: 0,
+        cache_ram_mib: 0,
+        slot_save_path: None,
+        layers: 0,
+    };
+    let (topology, assessments) = detect(cli)?;
+    let model = model_meta(STARTER, &options);
+    let settings = settings_from(cli, None)?;
+    let plan = make_plan(&topology, &assessments, &model, Task::Inference, &settings)
+        .map_err(|error| plan_error(cli, error))?;
+    let model_path = resolve_model_path(cli, STARTER)?;
+    let mut spec = build_llama_run(&plan, &model, &model_path, binary_for(plan.backend));
+    spec.args.extend([
+        "--prompt".into(),
+        "Reply with CAMEO_SMOKE_OK only.".into(),
+        "--n-predict".into(),
+        "16".into(),
+        "--no-display-prompt".into(),
+    ]);
+    Ok(spec)
+}
+
 /// llama.cpp's HTTP server binary. The backend selects the build, not the name,
 /// so both tiers resolve to the same program today.
 const SERVER_BINARY: &str = "llama-server";

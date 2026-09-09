@@ -76,6 +76,12 @@ button.primary{background:var(--ember);color:#1A1008;font-weight:500}
 .retry summary{cursor:pointer;color:var(--dim);font-size:13px;letter-spacing:.04em}
 .retry summary:hover{color:var(--ink)}
 .retry .panel{margin-top:12px}
+.matrix{margin-top:22px}
+.matrix-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px;margin-top:12px}
+.matrix-card{border:1px solid #3A463E;background:#101510;padding:14px}
+.matrix-card h3{font:600 15px var(--sans);margin:0 0 5px}
+.matrix-card .target{color:var(--ember);font-size:12px}
+.matrix-card p{color:var(--dim);font-size:12px;margin:7px 0 0}
 </style>
 </head>
 <body>
@@ -85,6 +91,7 @@ button.primary{background:var(--ember);color:#1A1008;font-weight:500}
   <nav>
     <a href="index.html">product page</a>
     <a href="#wall">the roll</a>
+    <a href="#matrix">hardware evidence</a>
     <a href="#retry">upload failed</a>
   </nav>
 </header>
@@ -94,7 +101,7 @@ button.primary{background:var(--ember);color:#1A1008;font-weight:500}
     <div>
       <p style="margin:0;color:var(--warn);letter-spacing:.18em;text-transform:uppercase;font-size:11px">consented hardware runs · review required</p>
       <h1>The roll</h1>
-      <p class="meta">Names appear only after <code>cameo report --submit</code> on a Cameo box, reviewer export, and explicit credit consent. This page does not take a hardware report. Pending reports stay off the roll.</p>
+      <p class="meta">Names appear only after <code>cameo report --submit</code> on a Cameo box, reviewer approval, and explicit credit consent. This page accepts only an exact retry payload, never a free-text report. Pending reports stay off the roll.</p>
     </div>
     <div><span class="stamp" id="stamp">unvalidated</span></div>
   </div>
@@ -107,10 +114,18 @@ button.primary{background:var(--ember);color:#1A1008;font-weight:500}
   <section class="panel" id="wall">
     <div class="wall-head">
       <h2>Leaderboard</h2>
-      <span id="count">000 validated</span>
+      <span id="count">000 approved</span>
     </div>
     <div class="wall" id="plates">
       <p class="empty" id="empty">No plates yet. First consented metal report becomes #001.</p>
+    </div>
+  </section>
+
+  <section class="panel matrix" id="matrix">
+    <h2>Community hardware evidence</h2>
+    <p class="hint" id="matrix-note">Approved reports are compatibility evidence, not hardware certification or a warranty.</p>
+    <div class="matrix-grid" id="matrix-grid">
+      <p class="empty">No approved hardware evidence yet.</p>
     </div>
   </section>
 
@@ -183,7 +198,7 @@ button.primary{background:var(--ember);color:#1A1008;font-weight:500}
   fetch('testers.json').then(function(r){return r.ok?r.json():null;}).then(function(data){
     var people=data&&data.testers||[];
     var n=String(people.length).padStart(3,'0');
-    document.getElementById('count').textContent=n+' validated';
+    document.getElementById('count').textContent=n+' approved';
     document.getElementById('stamp').textContent=people.length?'log open':'unvalidated';
     var tape=document.querySelector('.tape span');
     if(people.length) tape.textContent=n+' consented runs on the roll. Pending reports stay off it.';
@@ -207,6 +222,27 @@ button.primary{background:var(--ember);color:#1A1008;font-weight:500}
       did.textContent=String(t.proved||'');
       plate.append(when,name,gpu,did);
       plates.appendChild(plate);
+    });
+  }).catch(function(){});
+  fetch('hardware-matrix.json').then(function(r){return r.ok?r.json():null;}).then(function(data){
+    if(!data||data.schema!=='cameo-hardware-matrix/v1'||!Array.isArray(data.entries)) return;
+    if(typeof data.disclaimer==='string') document.getElementById('matrix-note').textContent=data.disclaimer;
+    if(!data.entries.length) return;
+    var grid=document.getElementById('matrix-grid');
+    grid.textContent='';
+    data.entries.forEach(function(entry){
+      var card=document.createElement('article');
+      card.className='matrix-card';
+      var name=document.createElement('h3');
+      name.textContent=String(entry.model||'AMD GPU');
+      var target=document.createElement('div');
+      target.className='target';
+      target.textContent=[entry.pci_id,entry.gfx_target,'Tier '+entry.cameo_tier].filter(Boolean).join(' · ');
+      var evidence=document.createElement('p');
+      var inference=entry.inference||{};
+      evidence.textContent=String(entry.report_count||0)+' approved report(s) · inference: '+String(inference.passed||0)+' passed, '+String(inference.degraded||0)+' degraded, '+String(inference.failed||0)+' failed, '+String(inference.not_tested||0)+' not tested';
+      card.append(name,target,evidence);
+      grid.appendChild(card);
     });
   }).catch(function(){});
 })();
