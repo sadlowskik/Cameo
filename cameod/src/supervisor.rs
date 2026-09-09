@@ -8,9 +8,10 @@
 //! crashed `cameod` never leaks a `llama-server` still holding VRAM.
 //!
 //! State is a `Mutex<HashMap>`: a control plane supervises a handful of
-//! endpoints, so a single lock is simpler than anything finer-grained and never
-//! a bottleneck. Every read reaps first (see [`Endpoint::refresh`]), so a server
-//! that died on its own is reported as `exited`, not falsely `running`.
+//! endpoints, so a single lock is simpler than anything finer-grained. Slow
+//! health probes and persistence commits run after releasing it. Every read
+//! reaps first (see [`Endpoint::refresh`]), so a server that died on its own is
+//! reported as `exited`, not falsely `running`.
 
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Write};
@@ -21,6 +22,12 @@ use std::time::{Duration, SystemTime};
 
 use cameo_placement::{gib, spawn, CommandSpec};
 use serde_json::{json, Value};
+
+mod admission;
+mod lease;
+
+use admission::{admit, exclude_leased_residents, Admission, ResidentVram};
+use lease::{epoch_seconds, Lease, LEASE_TTL_SECS};
 
 /// A crashed server (they do not exit cleanly) is restarted automatically, up to
 /// this many times before it is parked as `failed` with the reason — so a broken
@@ -37,14 +44,6 @@ const RESTART_BACKOFF: Duration = Duration::from_secs(2);
 const STABLE_UPTIME_RESET: Duration = Duration::from_secs(300);
 const HEALTH_PROBE_INTERVAL: Duration = Duration::from_millis(500);
 const HEALTH_PROBE_TIMEOUT: Duration = Duration::from_millis(250);
-const LEASE_TTL_SECS: u64 = 90;
-
-fn epoch_seconds() -> u64 {
-    SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-}
 
 trait ManagedProcess {
     fn exited(&mut self) -> std::io::Result<bool>;
@@ -134,58 +133,6 @@ fn restart_decision(
     }
 }
 
-/// A currently-resident endpoint, as the admission decision sees it: how much
-/// VRAM it holds and when it was last used (for LRU eviction).
-struct ResidentVram {
-    id: String,
-    vram_bytes: u64,
-    last_used: SystemTime,
-}
-
-/// The outcome of admitting a new endpoint under the VRAM budget (F10).
-#[derive(Debug, PartialEq)]
-enum Admission {
-    /// Fits in the remaining budget — start without disturbing anything.
-    Admit,
-    /// Fits only after stopping these endpoints (least-recently-used first).
-    Evict(Vec<String>),
-    /// Larger than the whole GPU — refuse even with nothing else resident.
-    Refuse,
-}
-
-/// Decide admission for a `need`-byte endpoint against a known, non-zero VRAM
-/// `budget`, given the endpoints already holding VRAM. Pure, so the arbitration
-/// policy is unit-tested without spawning: a model bigger than the GPU is refused
-/// (the planner's oversize case); otherwise the least-recently-used residents are
-/// evicted until it fits. Callers with an *unknown* budget skip residency
-/// entirely rather than pass `0` here — you cannot arbitrate what you cannot
-/// measure.
-fn admit(budget: u64, need: u64, residents: &mut [ResidentVram]) -> Admission {
-    if need > budget {
-        return Admission::Refuse;
-    }
-    let used: u64 = residents
-        .iter()
-        .map(|r| r.vram_bytes)
-        .fold(0, u64::saturating_add);
-    if used.saturating_add(need) <= budget {
-        return Admission::Admit;
-    }
-    // Evict oldest-used first until the newcomer fits.
-    residents.sort_by_key(|r| r.last_used);
-    let must_free = used.saturating_add(need).saturating_sub(budget);
-    let mut freed = 0u64;
-    let mut evict = Vec::new();
-    for r in residents.iter() {
-        if freed >= must_free {
-            break;
-        }
-        freed = freed.saturating_add(r.vram_bytes);
-        evict.push(r.id.clone());
-    }
-    Admission::Evict(evict)
-}
-
 /// One supervised endpoint: what was asked for, the exact command, and — when it
 /// spawned — the live process. The public view is produced by [`Endpoint::view`].
 pub struct Endpoint {
@@ -233,6 +180,17 @@ pub struct Endpoint {
     readiness_error: Option<String>,
 }
 
+/// Immutable health-probe target captured while the endpoint map is locked.
+/// Network I/O happens after the lock is released; the process identity prevents
+/// a late result from being applied to a restarted replacement.
+struct HealthProbe {
+    endpoint_id: String,
+    host: String,
+    port: u16,
+    process_id: u32,
+    started_at: SystemTime,
+}
+
 impl Endpoint {
     /// Reap the child without blocking: if it has exited on its own, record the
     /// code and drop the handle. Idempotent, and the first thing every read does.
@@ -254,26 +212,45 @@ impl Endpoint {
                 }
             }
         }
-        if self.child.is_some()
-            && self
-                .last_health_probe
-                .and_then(|at| at.elapsed().ok())
-                .map(|age| age >= HEALTH_PROBE_INTERVAL)
-                .unwrap_or(true)
-        {
-            self.last_health_probe = Some(SystemTime::now());
-            match probe_health(&self.host, self.port) {
-                Ok(()) => {
-                    self.ready = true;
-                    self.readiness_error = None;
-                }
-                Err(error) => {
-                    self.ready = false;
-                    self.readiness_error = Some(error);
-                }
+        self.maybe_restart();
+    }
+
+    fn schedule_health_probe(&mut self) -> Option<HealthProbe> {
+        let child = self.child.as_ref()?;
+        let due = self
+            .last_health_probe
+            .and_then(|at| at.elapsed().ok())
+            .map(|age| age >= HEALTH_PROBE_INTERVAL)
+            .unwrap_or(true);
+        if !due {
+            return None;
+        }
+        self.last_health_probe = Some(SystemTime::now());
+        Some(HealthProbe {
+            endpoint_id: self.id.clone(),
+            host: self.host.clone(),
+            port: self.port,
+            process_id: child.id(),
+            started_at: self.started_at,
+        })
+    }
+
+    fn apply_health_probe(&mut self, probe: &HealthProbe, result: Result<(), String>) {
+        let same_process = self.child.as_ref().map(Child::id) == Some(probe.process_id)
+            && self.started_at == probe.started_at;
+        if !same_process {
+            return;
+        }
+        match result {
+            Ok(()) => {
+                self.ready = true;
+                self.readiness_error = None;
+            }
+            Err(error) => {
+                self.ready = false;
+                self.readiness_error = Some(error);
             }
         }
-        self.maybe_restart();
     }
 
     /// Auto-restart a server that exited on its own. Reads drive this (the
@@ -465,28 +442,6 @@ pub enum LeaseError {
     Unavailable(String),
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-struct Lease {
-    session_id: String,
-    model: String,
-    endpoint_id: String,
-    #[serde(skip)]
-    recovered: bool,
-    #[serde(default)]
-    expires_at: u64,
-    #[serde(skip)]
-    renewed_at: Option<std::time::Instant>,
-}
-
-impl Lease {
-    fn expired(&self, now: u64) -> bool {
-        self.expires_at <= now
-            || self
-                .renewed_at
-                .is_some_and(|at| at.elapsed().as_secs() >= LEASE_TTL_SECS)
-    }
-}
-
 /// The supervisor: a lock around the set of tracked endpoints.
 #[derive(Default)]
 pub struct Supervisor {
@@ -666,23 +621,55 @@ impl Supervisor {
         if let Err(error) = self.expire_leases(epoch_seconds()) {
             tracing::error!(%error, "cannot persist expired lease release");
         }
-        let mut endpoints = self.endpoints.lock().unwrap();
-        for endpoint in endpoints.values_mut() {
-            endpoint.refresh();
-        }
+        let probes = {
+            let mut endpoints = self.endpoints.lock().unwrap();
+            endpoints
+                .values_mut()
+                .filter_map(|endpoint| {
+                    endpoint.refresh();
+                    endpoint.schedule_health_probe()
+                })
+                .collect::<Vec<_>>()
+        };
+        let results = probes
+            .into_iter()
+            .map(|probe| {
+                let result = probe_health(&probe.host, probe.port);
+                (probe, result)
+            })
+            .collect::<Vec<_>>();
+        let observations = {
+            let mut endpoints = self.endpoints.lock().unwrap();
+            for (probe, result) in results {
+                if let Some(endpoint) = endpoints.get_mut(&probe.endpoint_id) {
+                    endpoint.apply_health_probe(&probe, result);
+                }
+            }
+            endpoints
+                .values()
+                .map(|endpoint| {
+                    let observation = json!({
+                        "state": endpoint.state(),
+                        "restarts": endpoint.restarts,
+                        "ready": endpoint.is_ready(),
+                    });
+                    let reset_recovery = endpoint.is_ready()
+                        && endpoint.started_at.elapsed().unwrap_or_default() >= STABLE_UPTIME_RESET;
+                    (endpoint.id.clone(), observation, reset_recovery)
+                })
+                .collect::<Vec<_>>()
+        };
         let mut storage = self.store.lock().unwrap();
         if let Some(store) = storage.as_mut() {
             let mut next = store.state.clone();
             let mut changed = false;
-            for endpoint in endpoints.values() {
-                if let Some(intent) = next.endpoints.get_mut(&endpoint.id) {
-                    let observation = json!({"state": endpoint.state(), "restarts": endpoint.restarts, "ready": endpoint.is_ready()});
+            for (endpoint_id, observation, reset_recovery) in observations {
+                if let Some(intent) = next.endpoints.get_mut(&endpoint_id) {
                     if intent.get("_last_observed") != Some(&observation) {
                         intent["_last_observed"] = observation;
                         changed = true;
                     }
-                    if endpoint.is_ready()
-                        && endpoint.started_at.elapsed().unwrap_or_default() >= STABLE_UPTIME_RESET
+                    if reset_recovery
                         && intent
                             .get("_recovery_attempts")
                             .and_then(Value::as_u64)
@@ -1170,13 +1157,6 @@ fn lease_view(lease: &Lease, endpoints: &mut HashMap<String, Endpoint>) -> Value
         "state": state,
         "expires_at": lease.expires_at,
     })
-}
-
-/// Keep explicit session claims out of normal LRU eviction. The lease remains
-/// observable even if its endpoint stops; only a running resident reaches this
-/// selection helper, so stopped claims cannot consume admission capacity.
-fn exclude_leased_residents(residents: &mut Vec<ResidentVram>, protected: &HashSet<&str>) {
-    residents.retain(|resident| !protected.contains(resident.id.as_str()));
 }
 
 /// Escape a Prometheus label value: backslash, double-quote, and newline are the

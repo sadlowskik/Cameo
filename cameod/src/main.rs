@@ -21,6 +21,7 @@ use clap::Parser;
 
 use cameo_config::Settings;
 use cameo_gpu_detect::Captures;
+use cameo_net_strategy::is_loopback;
 
 use crate::app::AppState;
 use crate::sessions::Board;
@@ -29,7 +30,6 @@ use crate::supervisor::Supervisor;
 mod agent;
 mod app;
 mod auth;
-mod curl;
 mod dashboard;
 mod dispatch;
 mod drain;
@@ -505,14 +505,6 @@ fn bind_operator_socket(path: &str) -> Result<std::os::unix::net::UnixListener> 
 }
 
 /// Whether an address reaches this machine only.
-fn is_loopback(host: &str) -> bool {
-    host.eq_ignore_ascii_case("localhost")
-        || host
-            .parse::<std::net::IpAddr>()
-            .map(|ip| ip.is_loopback())
-            .unwrap_or(false)
-}
-
 fn state_directory(configured: Option<&std::path::Path>) -> PathBuf {
     if let Some(path) = configured {
         return path.to_path_buf();

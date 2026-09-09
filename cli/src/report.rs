@@ -472,46 +472,16 @@ fn validate_endpoint(endpoint: &str) -> Result<()> {
     Ok(())
 }
 
-fn quote_curl_config(value: &str) -> Result<String> {
-    let mut quoted = String::with_capacity(value.len() + 2);
-    quoted.push('"');
-    for character in value.chars() {
-        match character {
-            '\\' => quoted.push_str("\\\\"),
-            '"' => quoted.push_str("\\\""),
-            '\n' => quoted.push_str("\\n"),
-            '\r' => quoted.push_str("\\r"),
-            '\t' => quoted.push_str("\\t"),
-            character if character.is_control() => {
-                bail!("submission contains an unsupported control character")
-            }
-            character => quoted.push(character),
-        }
-    }
-    quoted.push('"');
-    Ok(quoted)
-}
-
 fn submit(endpoint: &str, payload: &[u8]) -> Result<String> {
-    let payload = std::str::from_utf8(payload).context("submission is not UTF-8")?;
-    let config = format!(
-        "silent\nshow-error\nfail\nconnect-timeout = 5\nmax-time = 15\nmax-filesize = 65536\nproto = \"=https\"\ntlsv1.2\nrequest = \"POST\"\nheader = \"Content-Type: application/json\"\nurl = {}\ndata-binary = {}\n",
-        quote_curl_config(endpoint)?,
-        quote_curl_config(payload)?
-    );
-    let mut child = Command::new("curl")
-        .args(["--config", "-"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .context("could not run curl (is it installed?)")?;
-    child
-        .stdin
-        .take()
-        .context("could not open curl stdin")?
-        .write_all(config.as_bytes())?;
-    let output = child.wait_with_output()?;
+    let output = cameo_net_strategy::curl::json_request(
+        endpoint,
+        "POST",
+        None,
+        Some(payload),
+        15,
+        cameo_net_strategy::curl::HTTPS_ONLY,
+    )
+    .map_err(|error| anyhow!(error))?;
     if !output.status.success() {
         let mut stderr = String::from_utf8_lossy(&output.stderr).into_owned();
         stderr.truncate(512);
@@ -543,13 +513,6 @@ mod tests {
         );
         assert!(clean_user_text(Some("012345678"), 8, "note").is_err());
         assert!(clean_user_text(Some("hello\u{1b}[31m"), 80, "note").is_err());
-    }
-
-    #[test]
-    fn curl_values_cannot_inject_configuration() {
-        let quoted = quote_curl_config("ok\nurl = \"https://attacker.test\"").unwrap();
-        assert!(!quoted.contains("ok\nurl"));
-        assert!(quoted.contains("ok\\nurl"));
     }
 
     #[test]

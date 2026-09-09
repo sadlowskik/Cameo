@@ -18,10 +18,74 @@
 
 use thiserror::Error;
 
+pub mod curl;
+
 #[derive(Debug, Error, PartialEq)]
 pub enum Error {
     #[error("distributed execution needs at least two nodes; got {0}")]
     NotDistributable(usize),
+    #[error("invalid node address '{0}'")]
+    InvalidAddress(String),
+}
+
+/// Extract the host from a hostname/IP with an optional port. Bracketed IPv6 is
+/// supported; a bare IPv6 literal is returned whole. Malformed multi-colon
+/// authorities are rejected instead of being reclassified as hostnames.
+pub fn host_of(address: &str) -> Option<&str> {
+    if address.is_empty() {
+        return None;
+    }
+    if let Some(rest) = address.strip_prefix('[') {
+        let close = rest.find(']')?;
+        let host = &rest[..close];
+        let suffix = &rest[close + 1..];
+        if host.parse::<std::net::Ipv6Addr>().is_err()
+            || !(suffix.is_empty()
+                || suffix
+                    .strip_prefix(':')
+                    .is_some_and(|port| port.parse::<u16>().is_ok()))
+        {
+            return None;
+        }
+        return Some(host);
+    }
+    if address.parse::<std::net::IpAddr>().is_ok() {
+        return Some(address);
+    }
+    match address.matches(':').count() {
+        0 => Some(address),
+        1 => {
+            let (host, port) = address.rsplit_once(':')?;
+            (!host.is_empty() && port.parse::<u16>().is_ok()).then_some(host)
+        }
+        _ => None,
+    }
+}
+
+pub fn is_loopback(host: &str) -> bool {
+    host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<std::net::IpAddr>()
+            .map(|ip| ip.is_loopback())
+            .unwrap_or(false)
+}
+
+/// Parse a literal address while distinguishing hostnames from strings that
+/// merely look like malformed IP literals. SSRF guards can reject the latter
+/// rather than passing them to DNS as names.
+pub fn parse_ip_literal(host: &str) -> Result<Option<std::net::IpAddr>, Error> {
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        return Ok(Some(ip));
+    }
+    let ipv4_like = host.contains('.')
+        && host
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || byte == b'.');
+    if host.contains(':') || host.contains('[') || host.contains(']') || ipv4_like {
+        Err(Error::InvalidAddress(host.to_string()))
+    } else {
+        Ok(None)
+    }
 }
 
 /// The `rpc-server` a single worker node runs so the head can offload to it.
@@ -65,7 +129,9 @@ pub fn rpc_layout(node_addresses: &[String], base_port: u16) -> Result<RpcLayout
     let mut workers = Vec::new();
     let mut endpoints = Vec::new();
     for (i, addr) in node_addresses.iter().enumerate() {
-        let host = host_of(addr).to_string();
+        let host = host_of(addr)
+            .ok_or_else(|| Error::InvalidAddress(addr.clone()))?
+            .to_string();
         let port = base_port.saturating_add(i as u16);
         workers.push(RpcWorker {
             host: host.clone(),
@@ -84,17 +150,6 @@ pub fn rpc_layout(node_addresses: &[String], base_port: u16) -> Result<RpcLayout
         workers,
         endpoints: endpoints.join(","),
     })
-}
-
-/// The host part of a `host` or `host:port` address (`[v6]:port` aware).
-fn host_of(address: &str) -> &str {
-    if let Some(rest) = address.strip_prefix('[') {
-        return rest.split(']').next().unwrap_or(address);
-    }
-    match address.rsplit_once(':') {
-        Some((h, p)) if p.chars().all(|c| c.is_ascii_digit()) => h,
-        _ => address,
-    }
 }
 
 #[cfg(test)]
@@ -136,9 +191,25 @@ mod tests {
 
     #[test]
     fn host_is_extracted_from_addresses() {
-        assert_eq!(host_of("box-a:9090"), "box-a");
-        assert_eq!(host_of("10.0.0.5:9090"), "10.0.0.5");
-        assert_eq!(host_of("bare-host"), "bare-host");
-        assert_eq!(host_of("[::1]:9090"), "::1");
+        assert_eq!(host_of("box-a:9090"), Some("box-a"));
+        assert_eq!(host_of("10.0.0.5:9090"), Some("10.0.0.5"));
+        assert_eq!(host_of("bare-host"), Some("bare-host"));
+        assert_eq!(host_of("[::1]:9090"), Some("::1"));
+        assert_eq!(host_of("fe80::1"), Some("fe80::1"));
+        assert_eq!(host_of("fe80::1:not-a-port"), None);
+    }
+
+    #[test]
+    fn malformed_ip_literals_are_not_hostnames() {
+        assert_eq!(
+            parse_ip_literal("fe80::1"),
+            Ok(Some("fe80::1".parse().unwrap()))
+        );
+        assert_eq!(
+            parse_ip_literal("999.999.999.999"),
+            Err(Error::InvalidAddress("999.999.999.999".into()))
+        );
+        assert_eq!(parse_ip_literal("box.local"), Ok(None));
+        assert!(is_loopback("::1"));
     }
 }

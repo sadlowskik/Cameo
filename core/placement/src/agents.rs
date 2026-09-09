@@ -18,6 +18,7 @@ use crate::fleet::{place_on_fleet, Cluster, FleetPlacement};
 use crate::model::ModelMeta;
 use crate::plan::{plan, Task};
 use cameo_config::Settings;
+use cameo_net_strategy::{host_of, is_loopback};
 use serde::Serialize;
 
 /// Where an agent's engine (model) comes from.
@@ -98,25 +99,6 @@ fn provider_endpoint(provider: &str) -> Option<&'static str> {
 }
 
 /// The host part of a `host:port` (or `[v6]:port`) address.
-fn host_of(address: &str) -> &str {
-    if let Some(rest) = address.strip_prefix('[') {
-        return rest.split(']').next().unwrap_or("127.0.0.1");
-    }
-    match address.split_once(':') {
-        Some((h, _)) => h,
-        None => address,
-    }
-}
-
-/// Whether an address names this machine only.
-fn is_loopback(host: &str) -> bool {
-    host.eq_ignore_ascii_case("localhost")
-        || host
-            .parse::<std::net::IpAddr>()
-            .map(|ip| ip.is_loopback())
-            .unwrap_or(false)
-}
-
 /// Resolve one agent spec into a run plan. `port` is used only for local serving.
 ///
 /// Serving is fail-closed. `llama-server` has no authentication of its own
@@ -179,7 +161,10 @@ pub fn resolve_agent(
                 }
             };
 
-            let host = host_of(&cluster.nodes[node_idx].address).to_string();
+            let address = &cluster.nodes[node_idx].address;
+            let host = host_of(address)
+                .ok_or_else(|| Error::InvalidNodeAddress(address.clone()))?
+                .to_string();
             let loopback = is_loopback(&host);
             let api_key = settings.serve_api_key.as_deref();
             if !loopback && api_key.is_none() {
@@ -595,9 +580,9 @@ mod tests {
 
     #[test]
     fn host_parsing_handles_ipv6_and_bare_hosts() {
-        assert_eq!(host_of("[::1]:9000"), "::1");
-        assert_eq!(host_of("beefy.local:9000"), "beefy.local");
-        assert_eq!(host_of("beefy.local"), "beefy.local");
+        assert_eq!(host_of("[::1]:9000"), Some("::1"));
+        assert_eq!(host_of("beefy.local:9000"), Some("beefy.local"));
+        assert_eq!(host_of("beefy.local"), Some("beefy.local"));
         assert!(is_loopback("::1"));
         assert!(is_loopback("localhost"));
         assert!(!is_loopback("10.0.0.4"));

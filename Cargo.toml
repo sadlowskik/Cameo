@@ -57,6 +57,7 @@ cameo-net-strategy = { path = "core/net-strategy" }
 
 [profile.release]
 lto = "thin"
+codegen-units = 1
 # Debug symbols are dead weight in shipped binaries: stripping shrinks
 # cameo/cameod several-fold in the ISO, container, and bare install alike.
 strip = true

@@ -15,6 +15,7 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::net::IpAddr;
 use std::net::{TcpListener, TcpStream};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -40,6 +41,26 @@ const IO_TIMEOUT: Duration = Duration::from_secs(30);
 /// connections are dropped immediately (cheaper and safer under overload than
 /// composing a 503 for an abuser); a handful of real clients never get near it.
 const MAX_CONNECTIONS: usize = 64;
+
+/// Owns one admitted connection slot. The decrement belongs in `Drop` so a
+/// panicking handler cannot permanently leak capacity and silently DoS the
+/// listener. Admission also makes the ceiling atomic instead of racy.
+struct ConnectionSlot(Arc<AtomicUsize>);
+
+impl Drop for ConnectionSlot {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+fn admit_connection(in_flight: &Arc<AtomicUsize>) -> Option<ConnectionSlot> {
+    in_flight
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+            (current < MAX_CONNECTIONS).then_some(current + 1)
+        })
+        .ok()
+        .map(|_| ConnectionSlot(Arc::clone(in_flight)))
+}
 
 /// A parsed HTTP request. Header keys are lowercased; the path is already split
 /// from the query string.
@@ -173,8 +194,6 @@ pub fn serve<F>(
 where
     F: Fn(&Request) -> Response + Send + Sync + 'static,
 {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
     let handler = Arc::new(handler);
     let in_flight = Arc::new(AtomicUsize::new(0));
     listener.set_nonblocking(true)?;
@@ -189,18 +208,16 @@ where
         };
         stream.set_nonblocking(false)?;
         // Over the cap, drop the connection on the floor: the accept loop stays
-        // fast and no thread is spent on the excess. (The check-then-add is
-        // benignly racy — the cap is a shed point, not an exact quota.)
-        if in_flight.load(Ordering::Relaxed) >= MAX_CONNECTIONS {
+        // fast and no thread is spent on the excess. Admission is atomic, so
+        // even a connection burst cannot overshoot the thread ceiling.
+        let Some(slot) = admit_connection(&in_flight) else {
             drop(stream);
             continue;
-        }
-        in_flight.fetch_add(1, Ordering::Relaxed);
+        };
         let handler = Arc::clone(&handler);
-        let in_flight = Arc::clone(&in_flight);
         std::thread::spawn(move || {
+            let _slot = slot;
             let _ = handle_connection(stream, handler.as_ref());
-            in_flight.fetch_sub(1, Ordering::Relaxed);
         });
     }
     Ok(())
@@ -544,22 +561,18 @@ pub fn serve_unix<F>(listener: std::os::unix::net::UnixListener, handler: F)
 where
     F: Fn(&Request) -> Response + Send + Sync + 'static,
 {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
     let handler = Arc::new(handler);
     let in_flight = Arc::new(AtomicUsize::new(0));
     for stream in listener.incoming() {
         let Ok(stream) = stream else { continue };
-        if in_flight.load(Ordering::Relaxed) >= MAX_CONNECTIONS {
+        let Some(slot) = admit_connection(&in_flight) else {
             drop(stream);
             continue;
-        }
-        in_flight.fetch_add(1, Ordering::Relaxed);
+        };
         let handler = Arc::clone(&handler);
-        let in_flight = Arc::clone(&in_flight);
         std::thread::spawn(move || {
+            let _slot = slot;
             let _ = handle_unix(stream, handler.as_ref());
-            in_flight.fetch_sub(1, Ordering::Relaxed);
         });
     }
 }
@@ -597,6 +610,21 @@ where
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn connection_slot_releases_capacity_during_unwind() {
+        use std::panic::{catch_unwind, AssertUnwindSafe};
+        use std::sync::atomic::Ordering;
+
+        let in_flight = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            let _slot = super::admit_connection(&in_flight).unwrap();
+            assert_eq!(in_flight.load(Ordering::Relaxed), 1);
+            panic!("handler fixture");
+        }));
+        assert!(result.is_err());
+        assert_eq!(in_flight.load(Ordering::Relaxed), 0);
+    }
+
     #[test]
     fn serve_can_stop_without_waiting_for_an_incoming_connection() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();

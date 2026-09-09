@@ -73,7 +73,14 @@ fn base(url: &str) -> &str {
 /// body on success, or an error describing the failed curl. The one network seam.
 fn post(cfg: &HubConfig, path: &str, body: &str, token: Option<&str>) -> Result<Vec<u8>, String> {
     let url = format!("{}/{}", base(&cfg.hub_url), path);
-    let out = crate::curl::json_request(&url, "POST", token, Some(body.as_bytes()), 10)?;
+    let out = cameo_net_strategy::curl::json_request(
+        &url,
+        "POST",
+        token,
+        Some(body.as_bytes()),
+        10,
+        cameo_net_strategy::curl::HTTPS_ONLY,
+    )?;
     if !out.status.success() {
         return Err(format!(
             "POST {url} failed (curl exit {:?})",

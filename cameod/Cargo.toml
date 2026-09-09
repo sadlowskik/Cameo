@@ -17,6 +17,7 @@ cameo-config.workspace = true
 cameo-placement.workspace = true
 cameo-models.workspace = true
 cameo-api.workspace = true
+cameo-net-strategy.workspace = true
 serde = { workspace = true }
 serde_json.workspace = true
 anyhow.workspace = true

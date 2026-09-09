@@ -12,7 +12,6 @@
 //! pure and unit-tested; only [`fetch_node`] touches the network.
 
 use anyhow::{anyhow, bail, Result};
-use std::process::Command;
 
 use cameo_gpu_detect::{TierAssessment, Topology};
 use cameo_placement::{Cluster, NetworkClass, NodeInfo};
@@ -60,15 +59,15 @@ fn node_from_json(address: &str, body: &[u8]) -> Result<NodeInfo> {
 /// Fetch one node's self-description over HTTP (via `curl`).
 fn fetch_node(address: &str, key: Option<&str>) -> Result<NodeInfo> {
     let url = format!("http://{address}/api/node");
-    let mut cmd = Command::new("curl");
-    cmd.args(["-s", "--fail", "--max-time", "10"]);
-    if let Some(k) = key {
-        cmd.arg("-H").arg(format!("Authorization: Bearer {k}"));
-    }
-    cmd.arg(&url);
-    let out = cmd
-        .output()
-        .map_err(|e| anyhow!("could not run curl (is it installed?): {e}"))?;
+    let out = cameo_net_strategy::curl::json_request(
+        &url,
+        "GET",
+        key,
+        None,
+        10,
+        cameo_net_strategy::curl::HTTP_OR_HTTPS,
+    )
+    .map_err(|e| anyhow!(e))?;
     if !out.status.success() {
         bail!(
             "could not reach {url} (curl exit {:?}). Is cameod running there, and is the \
@@ -88,18 +87,15 @@ fn api(
     body: Option<&str>,
 ) -> Result<Vec<u8>> {
     let url = format!("http://{address}{path}");
-    let mut cmd = Command::new("curl");
-    cmd.args(["-s", "--fail", "--max-time", "30", "-X", method]);
-    if let Some(k) = key {
-        cmd.arg("-H").arg(format!("Authorization: Bearer {k}"));
-    }
-    if let Some(b) = body {
-        cmd.args(["-H", "Content-Type: application/json", "-d", b]);
-    }
-    cmd.arg(&url);
-    let out = cmd
-        .output()
-        .map_err(|e| anyhow!("could not run curl (is it installed?): {e}"))?;
+    let out = cameo_net_strategy::curl::json_request(
+        &url,
+        method,
+        key,
+        body.map(str::as_bytes),
+        30,
+        cameo_net_strategy::curl::HTTP_OR_HTTPS,
+    )
+    .map_err(|e| anyhow!(e))?;
     if !out.status.success() {
         bail!(
             "{method} {url} failed (curl exit {:?}). Is cameod running, and is the console key set?",

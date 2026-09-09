@@ -111,6 +111,14 @@ pub struct Farm {
     state_path: Option<PathBuf>,
 }
 
+/// Credential path that authorized a heartbeat. A legacy shared token must
+/// never refresh or rewrite a row protected by a paired device credential.
+#[derive(Clone, Copy)]
+pub enum HeartbeatAuth {
+    LegacyToken,
+    PairedDevice,
+}
+
 impl Default for Farm {
     fn default() -> Self {
         Self::new()
@@ -278,7 +286,7 @@ impl Farm {
     /// Refresh a known node's liveness, and its live description when the beat
     /// carries one. Returns `false` if the node is unknown (dropped for silence,
     /// say), which the agent treats as "re-register".
-    pub fn heartbeat(&self, node_id: &str, node: Option<Value>) -> bool {
+    pub fn heartbeat(&self, node_id: &str, node: Option<Value>, auth: HeartbeatAuth) -> bool {
         let now = Instant::now();
         let mut map = self.inner.lock().unwrap();
         // Prune here too, not only on reader paths (register/list/dispatch): an
@@ -286,7 +294,13 @@ impl Farm {
         // beats its live nodes send.
         prune(&mut map, now);
         match map.get_mut(node_id) {
-            Some(e) => {
+            Some(e)
+                if matches!(
+                    (&e.enrollment, auth),
+                    (Enrollment::LegacyToken, HeartbeatAuth::LegacyToken)
+                        | (Enrollment::Paired { .. }, HeartbeatAuth::PairedDevice)
+                ) =>
+            {
                 e.last_seen = now;
                 if let Some(n) = node {
                     if !n.is_null() && !blob_too_big(&n) {
@@ -295,7 +309,7 @@ impl Farm {
                 }
                 true
             }
-            None => false,
+            Some(_) | None => false,
         }
     }
 
@@ -723,9 +737,12 @@ mod tests {
     fn heartbeat_refreshes_known_and_rejects_unknown() {
         let farm = Farm::new();
         let id = farm.register(reg(json!({ "name": "box-a", "address": "10.0.0.2:9090" })));
-        assert!(farm.heartbeat(&id, None), "known node accepts a beat");
         assert!(
-            !farm.heartbeat("ghost", None),
+            farm.heartbeat(&id, None, HeartbeatAuth::LegacyToken),
+            "known node accepts a beat"
+        );
+        assert!(
+            !farm.heartbeat("ghost", None, HeartbeatAuth::LegacyToken),
             "an unknown node is rejected so its agent re-registers"
         );
     }
@@ -734,11 +751,11 @@ mod tests {
     fn heartbeat_updates_the_live_description() {
         let farm = Farm::new();
         let id = farm.register(reg(json!({ "name": "box-a", "address": "10.0.0.2:9090" })));
-        assert!(farm.heartbeat(&id, Some(node_desc())));
+        assert!(farm.heartbeat(&id, Some(node_desc()), HeartbeatAuth::LegacyToken));
         // The beat's description is now what the dashboard shows.
         assert_eq!(farm.list()[0]["gpus"][0]["tier"], "Tier1");
         // A null description on a beat leaves the last-known one intact.
-        assert!(farm.heartbeat(&id, Some(Value::Null)));
+        assert!(farm.heartbeat(&id, Some(Value::Null), HeartbeatAuth::LegacyToken));
         assert_eq!(farm.list()[0]["gpus"][0]["tier"], "Tier1");
     }
 
@@ -845,6 +862,12 @@ mod tests {
             .unwrap();
         assert!(farm.authenticate_paired(&id, Some(token)));
         assert!(!farm.authenticate_paired(&id, Some(&"f".repeat(64))));
+        assert!(!farm.heartbeat(
+            &id,
+            Some(json!({ "name": "legacy-token-overwrite" })),
+            HeartbeatAuth::LegacyToken,
+        ));
+        assert!(farm.heartbeat(&id, Some(node_desc()), HeartbeatAuth::PairedDevice,));
 
         // A holder of the old shared token can call register(), but cannot
         // replace or downgrade the paired row.
@@ -883,7 +906,7 @@ mod tests {
             let farm = Farm::open(&path).unwrap();
             assert_eq!(farm.list()[0]["online"], false, "restart begins offline");
             assert!(farm.authenticate_paired("durable-a", Some(&token)));
-            assert!(farm.heartbeat("durable-a", Some(node_desc())));
+            assert!(farm.heartbeat("durable-a", Some(node_desc()), HeartbeatAuth::PairedDevice));
             assert_eq!(farm.list()[0]["online"], true);
             assert!(farm.remove("durable-a").unwrap());
         }

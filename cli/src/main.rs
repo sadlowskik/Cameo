@@ -21,6 +21,7 @@ use cameo_containers::{run_args, GpuPassthrough, RunOpts};
 use cameo_gpu_detect::{
     classify_topology, detect_topology_or_cpu, Captures, OverrideDb, TierAssessment, Topology,
 };
+use cameo_net_strategy::is_loopback;
 use cameo_placement::command::{
     build_llama_run, build_llama_server, build_quantize, build_training,
 };
@@ -769,14 +770,6 @@ fn starter_smoke_spec(cli: &Cli) -> Result<CommandSpec> {
 const SERVER_BINARY: &str = "llama-server";
 
 /// Whether an address reaches this machine only.
-fn is_loopback(host: &str) -> bool {
-    host.eq_ignore_ascii_case("localhost")
-        || host
-            .parse::<std::net::IpAddr>()
-            .map(|ip| ip.is_loopback())
-            .unwrap_or(false)
-}
-
 /// Print a plan (and optional command) as JSON or human text.
 fn emit_plan(cli: &Cli, plan: &PlacementPlan, spec: Option<&CommandSpec>) {
     if cli.json {

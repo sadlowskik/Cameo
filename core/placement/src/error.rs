@@ -39,6 +39,9 @@ pub enum Error {
     #[error("node '{0}' not found in the cluster")]
     NodeNotFound(String),
 
+    #[error("node address '{0}' is malformed")]
+    InvalidNodeAddress(String),
+
     #[error("local agent '{0}' model does not fit any single node; distributed serving is v2")]
     LocalAgentTooLarge(String),
 }

@@ -15,6 +15,7 @@ use cameo_config::{Backend, Settings};
 use cameo_gpu_detect::{
     classify_topology, detect_topology_or_cpu, Captures, OverrideDb, TierAssessment, Topology,
 };
+use cameo_net_strategy::{host_of, is_loopback, parse_ip_literal};
 use cameo_placement::command::build_llama_server;
 use cameo_placement::{plan as make_plan, KvCacheType, ModelMeta, QuantLevel, Task};
 use serde::Deserialize;
@@ -829,13 +830,16 @@ fn route_hub(state: &Arc<AppState>, req: &Request, rest: &[&str]) -> Response {
             let Some(node_id) = v.get("node_id").and_then(Value::as_str) else {
                 return Response::error(400, "heartbeat needs a node_id");
             };
-            if !state.farm.authenticate_paired(node_id, bearer(req)) {
+            let heartbeat_auth = if state.farm.authenticate_paired(node_id, bearer(req)) {
+                crate::hub::HeartbeatAuth::PairedDevice
+            } else {
                 if let Some(denied) = check_farm_auth(state, req) {
                     return denied;
                 }
-            }
+                crate::hub::HeartbeatAuth::LegacyToken
+            };
             let node = v.get("node").cloned();
-            let known = state.farm.heartbeat(node_id, node);
+            let known = state.farm.heartbeat(node_id, node, heartbeat_auth);
             Response::json(200, &json!({ "known": known }))
         }
         // Admin: the fleet roster. Console-key gated.
@@ -912,7 +916,14 @@ fn node_call(
     let url = format!("{}{path}", address.trim_end_matches('/'));
     // Keep the outbound timeout under the inbound IO_TIMEOUT (30s), and keep
     // credentials/body off the process command line (see `curl::json_request`).
-    match crate::curl::json_request(&url, method, key.as_deref(), body, 20) {
+    match cameo_net_strategy::curl::json_request(
+        &url,
+        method,
+        key.as_deref(),
+        body,
+        20,
+        cameo_net_strategy::curl::HTTPS_ONLY,
+    ) {
         Ok(out) if out.status.success() => Ok(out.stdout),
         Ok(out) => Err((
             502,
@@ -1908,25 +1919,6 @@ fn start_server_inner(
 // ---- helpers ---------------------------------------------------------------
 
 /// Whether an address reaches this machine only (mirrors the CLI's rule).
-fn is_loopback(host: &str) -> bool {
-    host.eq_ignore_ascii_case("localhost")
-        || host
-            .parse::<std::net::IpAddr>()
-            .map(|ip| ip.is_loopback())
-            .unwrap_or(false)
-}
-
-/// The host part of a `host:port` (or `[v6]:port`) authority.
-fn host_of(address: &str) -> &str {
-    if let Some(rest) = address.strip_prefix('[') {
-        return rest.split(']').next().unwrap_or(address);
-    }
-    match address.rsplit_once(':') {
-        Some((h, _)) => h,
-        None => address,
-    }
-}
-
 /// Extract the authority from the HTTPS callback base URL. Callback URLs may
 /// have a single trailing slash but no credentials, path, query, or fragment.
 fn callback_authority(address: &str) -> Option<&str> {
@@ -1952,13 +1944,17 @@ fn push_address_ok(address: &str) -> bool {
     let Some(authority) = callback_authority(address) else {
         return false;
     };
-    match host_of(authority).parse::<std::net::IpAddr>() {
-        Ok(std::net::IpAddr::V4(ip)) => !(ip.is_link_local() || ip.is_unspecified()),
-        Ok(std::net::IpAddr::V6(ip)) => {
+    let Some(host) = host_of(authority) else {
+        return false;
+    };
+    match parse_ip_literal(host) {
+        Ok(Some(std::net::IpAddr::V4(ip))) => !(ip.is_link_local() || ip.is_unspecified()),
+        Ok(Some(std::net::IpAddr::V6(ip))) => {
             !(ip.is_unspecified() || (ip.segments()[0] & 0xffc0) == 0xfe80)
         }
         // Not a literal IP: a hostname the operator's DNS resolves — allowed.
-        Err(_) => true,
+        Ok(None) => true,
+        Err(_) => false,
     }
 }
 
@@ -2126,10 +2122,10 @@ mod tests {
 
     #[test]
     fn host_of_splits_v4_v6_and_bare() {
-        assert_eq!(host_of("10.0.0.2:9090"), "10.0.0.2");
-        assert_eq!(host_of("[fe80::1]:9090"), "fe80::1");
-        assert_eq!(host_of("box.local:9090"), "box.local");
-        assert_eq!(host_of("box.local"), "box.local");
+        assert_eq!(host_of("10.0.0.2:9090"), Some("10.0.0.2"));
+        assert_eq!(host_of("[fe80::1]:9090"), Some("fe80::1"));
+        assert_eq!(host_of("box.local:9090"), Some("box.local"));
+        assert_eq!(host_of("box.local"), Some("box.local"));
     }
 
     #[test]
@@ -2138,6 +2134,8 @@ mod tests {
         assert!(!push_address_ok("https://169.254.169.254:80"));
         assert!(!push_address_ok("https://169.254.0.1:9090"));
         assert!(!push_address_ok("https://[fe80::1]:9090"));
+        assert!(!push_address_ok("https://fe80::1"));
+        assert!(!push_address_ok("https://999.999.999.999:9090"));
         assert!(!push_address_ok("https://0.0.0.0:9090"));
         assert!(!push_address_ok("http://10.0.0.2:9090"));
         assert!(!push_address_ok("https://user@box.local:9090"));
