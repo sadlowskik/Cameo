@@ -540,8 +540,21 @@ install -Dm755 "$CARGO_TARGET/release/cameod" "$BUILD/airootfs/usr/local/bin/cam
 install -Dm644 "$REPO/contracts/cameo-capabilities-v1.json" "$BUILD/airootfs/etc/cameo/capabilities.json"
 install -Dm644 "$REPO/testers/roster.json" "$BUILD/airootfs/usr/share/cameo/credits.json"
 install -Dm755 "$KNOSSOS_TARGET/release/knossos" "$BUILD/airootfs/usr/local/bin/knossos"
+# Git records the installer front ends as data files because this repository is
+# also developed on Windows. Reinstall them into the staged profile with their
+# runtime mode instead of relying on checkout filesystem semantics.
+install -Dm755 "$PROFILE/airootfs/usr/local/bin/cameo-install" \
+  "$BUILD/airootfs/usr/local/bin/cameo-install"
+install -Dm755 "$PROFILE/airootfs/usr/local/bin/cameo-install-guided" \
+  "$BUILD/airootfs/usr/local/bin/cameo-install-guided"
 install -Dm644 "$REPO/scripts/update_host_transaction.py" \
   "$BUILD/airootfs/usr/local/lib/cameo/update_host_transaction.py"
+
+for required_executable in cameo cameod knossos cameo-install cameo-install-guided; do
+  [ -x "$BUILD/airootfs/usr/local/bin/$required_executable" ] \
+    || die "required executable was not staged: /usr/local/bin/$required_executable"
+done
+log "Verified Cameo, Knossos, and installer executables in the staged profile"
 
 arch_snapshot_json=null
 if [ -n "${CAMEO_ARCH_SNAPSHOT:-}" ]; then
