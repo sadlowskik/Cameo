@@ -182,9 +182,9 @@ docs/                 current reference, evidence snapshot, and documentation in
 ## Testers
 
 Cameo is open source. The people who run it on real AMD hardware before v1 get
-a permanent line in git: [the roll](docs/testers.md). File a
-[hardware report](.github/ISSUE_TEMPLATE/hardware-report.yml) and check consent
-if you want your name there.
+a permanent line in git: [the roll](docs/testers.md). On the box, run
+`cameo report --submit` and pass credit consent there. The public page is a
+leaderboard of approved rows, not a report form.
 
 ## Documentation
 

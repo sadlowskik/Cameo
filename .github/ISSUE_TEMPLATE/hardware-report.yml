@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thank you for flashing this. Names receive permanent public credit only if you check consent below.
+        Prefer `cameo report --submit` on the Cameo box. This GitHub form is last resort when the box cannot reach cameoconstruct.xyz. Names receive permanent public credit only if you check consent below.
   - type: input
     id: name
     attributes:

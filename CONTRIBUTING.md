@@ -11,10 +11,13 @@ Run it on a machine you own.
 2. Install to a disk you are willing to erase, or stay on the live USB.
 3. Open the console, start the starter model, send one chat with the network
    unplugged if you can.
-4. File what happened with the [hardware report](.github/ISSUE_TEMPLATE/hardware-report.yml)
-   template.
+4. On the box, run `cameo report --submit`. Credit is opt-in on that command.
 
-If you check the consent box, your name can go on [the roll](docs/testers.md).
+If upload fails, paste the exact JSON at
+[testers.html#retry](https://cameoconstruct.xyz/testers.html#retry). GitHub's
+[hardware issue](.github/ISSUE_TEMPLATE/hardware-report.yml) is last resort.
+
+Consented names go on [the roll](docs/testers.md) only after reviewer export.
 That file is the public, git-backed record of people who tested Cameo before it
 was a finished product. Consent is opt-in and can be withdrawn: open an issue
 or mail the maintainer and the row is removed in the next commit.

@@ -8,9 +8,14 @@ repository does.
 Names are added **only with explicit consent**. A hardware report can stay
 anonymous. A GitHub handle is enough. Full legal names are never inferred.
 
-To be listed: open a [hardware report](https://github.com/sadlowskik/Cameo/issues/new?template=hardware-report.yml)
-and check the consent box, or email the maintainer the same facts. The
-canonical machine-readable roster is [`testers/roster.json`](../testers/roster.json).
+To be listed: on a Cameo box run `cameo report --submit` and pass credit
+consent there. Intake queues a pending report; a name is added only after
+reviewer export. The public page is the [roll](https://cameoconstruct.xyz/testers.html),
+not a second report form. If upload fails, paste the exact JSON at
+[testers.html#retry](https://cameoconstruct.xyz/testers.html#retry) or open a
+[GitHub hardware issue](https://github.com/sadlowskik/Cameo/issues/new?template=hardware-report.yml)
+as last resort. The canonical machine-readable roster is
+[`testers/roster.json`](../testers/roster.json).
 
 ## How a row is written
 

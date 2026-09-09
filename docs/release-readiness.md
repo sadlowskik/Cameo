@@ -28,7 +28,7 @@ Do not label this checkout stable or release-candidate qualified.
 |---|---|---|
 | Cameo | `cargo test --workspace` passed on Windows | Locally verified software paths; not Linux, ISO, or AMD-hardware proof |
 | Knossos | All 572 tests passed, including cross-process conversation recovery | Locally verified deterministic baseline |
-| Knossos evaluation | 27 fixtures pass the frozen-suite audit; 8 adversarial reward-hacking cases and a two-arm Windows runner are present | Grader and suite are locally verified; live model results have not been collected yet |
+| Knossos evaluation | 27 fixtures pass the frozen-suite audit. Windows `knossos-rs` tests passed; Python 1069 passed / 5 skipped. Live two-arm runner against `gemini-3.6-flash` on 2026-09-08 stopped on token-budget/tool-calling failures before 8/8 (`daedalus/reports/reward-hacking/20260908-211431/`) | Grader and suite are locally verified. The live run is retained infrastructure evidence, not a capability score |
 | Field | Every directly runnable test passed, including the 100,004-event stress case; process generation and Vite/esbuild both hit sandbox `EPERM` | Broad local evidence; rerun the complete suite/build where child spawn is allowed |
 | Hardware | Tester roll is empty; no `known-good-combo.json` is present | No hardware combination is certified from this checkout |
 | Release metadata | Next Cargo/npm/display versions are aligned; the site block is generated from `release-manifest.json`; mislabeled legacy downloads were removed | Metadata is consistent; all next-version artifacts remain explicitly unpublished |
@@ -36,8 +36,9 @@ Do not label this checkout stable or release-candidate qualified.
 ## Present release blockers
 
 1. Complete Field's full test/build run on supported systems.
-2. Run the Knossos reward-hacking matrix with the Windows runner, retain both
-   equal-budget arms, and obtain independent review before publishing a claim.
+2. Finish a complete two-arm Knossos live matrix without agent/provider abort,
+   retain both equal-budget arms, and obtain independent review before publishing
+   a claim. The 2026-09-08 Gemini Windows run is not that matrix.
 3. Build both current Cameo ISO editions from a clean tag and retain QEMU boot,
    install, reboot, update, rollback, and recovery evidence.
 4. Produce the first complete real-AMD record with

@@ -11,7 +11,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 const DEFAULT_ENDPOINT: &str = "https://cameoconstruct.xyz/api/hardware-reports";
-const MANUAL_URL: &str = "https://cameoconstruct.xyz/testers.html";
+const MANUAL_URL: &str = "https://cameoconstruct.xyz/testers.html#retry";
 const MAX_NOTE_CHARS: usize = 1_000;
 const MAX_ERROR_CHARS: usize = 2_000;
 

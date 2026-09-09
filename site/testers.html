@@ -2,9 +2,9 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Cameo — hardware validation log</title>
+<title>Cameo — hardware roll</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="Boot Cameo on real AMD metal, file what happened, and land on the roll if you ask.">
+<meta name="description" content="Public roll of consented Cameo hardware runs. File from the box with cameo report --submit.">
 <meta name="theme-color" content="#0B0E0C">
 <meta name="color-scheme" content="dark">
 <link rel="canonical" href="https://cameoconstruct.xyz/testers.html">
@@ -30,6 +30,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   background:radial-gradient(80% 50% at 50% -10%,rgba(255,122,26,.12),transparent 55%)}
 a{color:var(--ember);text-decoration:none}
 :focus-visible{outline:2px solid var(--ember);outline-offset:3px}
+code{color:var(--warn);font:inherit}
 .tape{position:relative;z-index:2;background:var(--warn);color:#1A1404;
   font-weight:500;letter-spacing:.12em;text-transform:uppercase;font-size:12px;
   text-align:center;padding:10px 12px}
@@ -38,35 +39,28 @@ a{color:var(--ember);text-decoration:none}
 .top b{letter-spacing:.14em;text-transform:uppercase;font-size:12px}
 .top nav{display:flex;gap:16px;color:var(--dim)}
 .top nav a{color:var(--dim)}.top nav a:hover{color:var(--ink)}
-.stage{position:relative;z-index:1;max-width:1180px;margin:0 auto;padding:18px 22px 64px}
-.lead{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,.9fr);gap:20px;align-items:end;margin-bottom:22px}
+.stage{position:relative;z-index:1;max-width:860px;margin:0 auto;padding:18px 22px 64px}
+.lead{display:grid;grid-template-columns:minmax(0,1.1fr) auto;gap:20px;align-items:end;margin-bottom:22px}
 @media(max-width:860px){.lead{grid-template-columns:1fr}}
 h1{font-family:var(--sans);font-size:clamp(34px,5vw,56px);line-height:.95;letter-spacing:-.04em;margin:8px 0 12px;font-weight:700}
 .meta{color:var(--dim);max-width:46em}
 .stamp{border:2px solid var(--stamp);color:var(--stamp);display:inline-block;padding:10px 14px;
   transform:rotate(-8deg);letter-spacing:.2em;text-transform:uppercase;font-size:12px;
   box-shadow:4px 4px 0 rgba(200,240,180,.15)}
-.split{display:grid;grid-template-columns:minmax(0,.95fr) minmax(0,1.05fr);gap:22px}
-@media(max-width:860px){.split{grid-template-columns:1fr}}
 .panel{background:var(--plate);border:1px solid var(--line);padding:18px}
 .panel h2{margin:0 0 6px;font-size:13px;letter-spacing:.16em;text-transform:uppercase;color:var(--warn)}
 .panel p.hint{margin:0 0 16px;color:var(--dim);font-size:13px}
 label{display:flex;flex-direction:column;gap:5px;margin:0 0 12px;color:var(--ghost);font-size:11px;letter-spacing:.08em;text-transform:uppercase}
-input,select,textarea{font:14px var(--mono);color:var(--ink);background:#0B0E0C;border:1px solid #3A463E;
-  border-radius:0;padding:9px 10px}
-textarea{min-height:110px;resize:vertical}
-.pair{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-@media(max-width:560px){.pair{grid-template-columns:1fr}}
-.check{flex-direction:row;align-items:flex-start;gap:8px;text-transform:none;letter-spacing:0;font-size:13px;color:var(--dim)}
-.check input{margin-top:2px}
+textarea{font:14px var(--mono);color:var(--ink);background:#0B0E0C;border:1px solid #3A463E;
+  border-radius:0;padding:9px 10px;min-height:140px;resize:vertical}
 .actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
 button,.btn{font:13px var(--mono);border:0;padding:10px 14px;cursor:pointer}
-button.primary,.btn.primary{background:var(--ember);color:#1A1008;font-weight:500}
-.btn.ghost{background:transparent;color:var(--ink);border:1px solid var(--line)}
+button.primary{background:var(--ember);color:#1A1008;font-weight:500}
+.btn.ghost{background:transparent;color:var(--ink);border:1px solid var(--line);display:inline-flex;align-items:center}
 .note{margin:12px 0 0;color:var(--ghost);font-size:12px}
 .wall-head{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:12px}
 #count{color:var(--stamp)}
-.wall{display:flex;flex-direction:column;gap:10px;max-height:70vh;overflow:auto}
+.wall{display:flex;flex-direction:column;gap:10px}
 .plate{border:1px solid #3A463E;background:#101510;padding:14px 14px 12px;position:relative}
 .plate::before{content:"";position:absolute;left:8px;top:8px;width:6px;height:6px;border-radius:50%;background:#4a554c}
 .plate::after{content:"";position:absolute;right:8px;top:8px;width:6px;height:6px;border-radius:50%;background:#4a554c}
@@ -76,104 +70,123 @@ button.primary,.btn.primary{background:var(--ember);color:#1A1008;font-weight:50
 .plate .did{margin:6px 0 0;color:var(--dim)}
 .empty{color:var(--ghost);border:1px dashed #3A463E;padding:28px 16px;text-align:center}
 .how{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 22px;padding:0;list-style:none}
-.how li{border:1px solid var(--line);background:var(--plate);padding:10px 12px;color:var(--dim)}
+.how li{border:1px solid var(--line);background:var(--plate);padding:10px 12px;color:var(--dim);flex:1;min-width:160px}
 .how li b{display:block;color:var(--warn);font-size:11px;letter-spacing:.14em;margin-bottom:4px}
+.retry{margin-top:22px}
+.retry summary{cursor:pointer;color:var(--dim);font-size:13px;letter-spacing:.04em}
+.retry summary:hover{color:var(--ink)}
+.retry .panel{margin-top:12px}
 </style>
 </head>
 <body>
 <div class="tape"><span>The roll is empty. A spare AMD box is enough to be first.</span></div>
 <header class="top">
-  <b>Cameo / testers</b>
+  <b>Cameo / the roll</b>
   <nav>
     <a href="index.html">product page</a>
-    <a href="#file">file a run</a>
     <a href="#wall">the roll</a>
+    <a href="#retry">upload failed</a>
   </nav>
 </header>
 
 <main class="stage">
   <div class="lead">
     <div>
-      <p style="margin:0;color:var(--warn);letter-spacing:.18em;text-transform:uppercase;font-size:11px">open log · first testers wanted</p>
-      <h1>Got a spare AMD box?<br>Boot it. File it.</h1>
-      <p class="meta">Download the ISO, flash a USB, install to a disk you can wipe, open the console, then come back here and write what the GPU did. Check the box if you want your handle on the roll.</p>
+      <p style="margin:0;color:var(--warn);letter-spacing:.18em;text-transform:uppercase;font-size:11px">consented hardware runs · review required</p>
+      <h1>The roll</h1>
+      <p class="meta">Names appear only after <code>cameo report --submit</code> on a Cameo box, reviewer export, and explicit credit consent. This page does not take a hardware report. Pending reports stay off the roll.</p>
     </div>
     <div><span class="stamp" id="stamp">unvalidated</span></div>
   </div>
   <ol class="how">
     <li><b>1</b><a href="index.html#install">Grab the ISO</a></li>
     <li><b>2</b>Flash a USB. Install only to a disk you can wipe.</li>
-    <li><b>3</b>Open the console, then file the GPU below.</li>
+    <li><b>3</b>On the box run <code>cameo report --submit</code>. Credit is opt-in on that command.</li>
   </ol>
 
-  <div class="split">
-    <section class="panel" id="file">
-      <h2>File a run</h2>
-      <p class="hint">Opens mail, or file the GitHub hardware report. Same facts either way.</p>
-      <form id="run">
-        <div class="pair">
-          <label>Handle<input id="name" maxlength="80" placeholder="@you — blank stays off the roll"></label>
-          <label>GPU<input id="gpu" maxlength="80" placeholder="RX 6800, 7900 XTX, RX 580…"></label>
-        </div>
-        <label>Machine<input id="host" maxlength="120" placeholder="desktop, 32 GB, UEFI — no address"></label>
-        <label>What you booted<input id="artifact" maxlength="120" placeholder="v0.2.0-beta.1 universal / commit"></label>
-        <label>What you proved<textarea id="proved" maxlength="900" placeholder="Installed to disk, console came up, qwen answered offline."></textarea></label>
-        <label>What broke<textarea id="broke" maxlength="700" placeholder="Optional. Exact error, not a novel."></textarea></label>
-        <label>CLI payload<textarea id="payload" maxlength="131072" placeholder="Optional: paste the exact payload printed by cameo report --submit after a failed upload."></textarea></label>
-        <label class="check"><input id="consent" type="checkbox"> Permanently list this handle on the public site, repository, and release artifacts.</label>
+  <section class="panel" id="wall">
+    <div class="wall-head">
+      <h2>Leaderboard</h2>
+      <span id="count">000 validated</span>
+    </div>
+    <div class="wall" id="plates">
+      <p class="empty" id="empty">No plates yet. First consented metal report becomes #001.</p>
+    </div>
+  </section>
+
+  <details class="retry" id="retry">
+    <summary>If <code>cameo report --submit</code> failed, paste the exact JSON here</summary>
+    <section class="panel">
+      <h2>Retry upload</h2>
+      <p class="hint">Same payload the CLI printed. No free-text report. Nothing is public until a reviewer exports it.</p>
+      <form id="retry-form">
+        <label>CLI payload<textarea id="payload" maxlength="131072" required placeholder='{"schema_version":"cameo-hardware-submission/v1", ...}'></textarea></label>
         <div class="actions">
-          <button class="primary" type="submit">Send as mail</button>
-          <a class="btn ghost" href="https://github.com/sadlowskik/Cameo/issues/new?template=hardware-report.yml">GitHub report</a>
+          <button class="primary" type="submit">Queue for review</button>
+          <a class="btn ghost" href="https://github.com/sadlowskik/Cameo/issues/new?template=hardware-report.yml">GitHub last resort</a>
         </div>
-        <p class="note">Mail goes to korbin.sadlowski@gmail.com. The installer erases the disk you pick — not a gaming PC you still need.</p>
+        <p class="note" id="status">Posts to /api/hardware-reports. GitHub is only if the box cannot reach this site.</p>
       </form>
     </section>
-
-    <section class="panel" id="wall">
-      <div class="wall-head">
-        <h2>The roll</h2>
-        <span id="count">000 validated</span>
-      </div>
-      <div class="wall" id="plates">
-        <p class="empty" id="empty">No plates yet. First consented metal report becomes #001.</p>
-      </div>
-    </section>
-  </div>
+  </details>
 </main>
 <script>
 (function(){
-  var form=document.getElementById('run');
+  var form=document.getElementById('retry-form');
+  var status=document.getElementById('status');
+  function setStatus(msg){status.textContent=msg;}
   form.addEventListener('submit',function(e){
     e.preventDefault();
-    function v(id){return (document.getElementById(id).value||'').trim();}
-    var payload=v('payload');
-    if(!payload&&!v('gpu')){
-      document.getElementById('gpu').focus();
+    var payload=(document.getElementById('payload').value||'').trim();
+    if(!payload){
+      document.getElementById('payload').focus();
       return;
     }
-    var text=[
-      'Cameo hardware validation',
-      'Handle: '+(v('name')||'(anonymous)'),
-      'GPU: '+(v('gpu')||'(missing)'),
-      'Machine: '+(v('host')||'(unspecified)'),
-      'Artifact: '+(v('artifact')||'(unspecified)'),
-      'Permanent public credit (site, repository, release artifacts): '+(document.getElementById('consent').checked?'yes':'no'),
-      '',
-      'Proved:',
-      v('proved')||'(none)',
-      '',
-      'Broke:',
-      v('broke')||'(none)'
-    ].join('\n');
-    if(payload) text='Cameo hardware validation — exact CLI payload\n\n'+payload;
-    if(text.length>131072) text=text.slice(0,131072)+'\n[truncated]';
-    window.location.href='mailto:korbin.sadlowski@gmail.com?subject='+encodeURIComponent('hardware: '+(v('gpu')||'report'))+'&body='+encodeURIComponent(text);
+    try{JSON.parse(payload);}catch(err){
+      setStatus('Not JSON. Paste the exact object printed by cameo report --submit.');
+      return;
+    }
+    setStatus('Submitting…');
+    fetch('/api/hardware-reports',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:payload
+    }).then(function(res){
+      return res.json().catch(function(){return null;}).then(function(body){
+        if(!body||typeof body!=='object'||Array.isArray(body)){
+          setStatus('Intake is not live. Keep the JSON and use GitHub last resort, or retry after deploy.');
+          return;
+        }
+        if(res.status===202){
+          setStatus('Queued for review. Receipt '+(body.receipt||'')+'. Still not on the roll.');
+          return;
+        }
+        if(res.status===409){
+          setStatus('This report was already received.');
+          return;
+        }
+        if(res.status===429){
+          setStatus('Too many submissions from this network. Try again in an hour.');
+          return;
+        }
+        if(res.status===503){
+          setStatus('Intake is not live. Keep the JSON and use GitHub last resort, or retry after deploy.');
+          return;
+        }
+        var err=typeof body.error==='string'?body.error:'submission_failed';
+        setStatus('Intake rejected the payload ('+err+').');
+      });
+    }).catch(function(){
+      setStatus('Could not reach intake. Keep the JSON and use GitHub last resort.');
+    });
   });
   fetch('testers.json').then(function(r){return r.ok?r.json():null;}).then(function(data){
     var people=data&&data.testers||[];
     var n=String(people.length).padStart(3,'0');
     document.getElementById('count').textContent=n+' validated';
     document.getElementById('stamp').textContent=people.length?'log open':'unvalidated';
+    var tape=document.querySelector('.tape span');
+    if(people.length) tape.textContent=n+' consented runs on the roll. Pending reports stay off it.';
     if(!people.length) return;
     document.getElementById('empty').hidden=true;
     var plates=document.getElementById('plates');
