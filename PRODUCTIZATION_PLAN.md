@@ -184,13 +184,11 @@ Implemented in the current pinned tree:
 - Knossos session adapter, Cameo-aware displays, Rome/Atlas UI, asset provenance
   manifest, bundle budgets, and release audit tooling.
 
-Evidence observed on 2026-09-08: every test runnable without nested child-process
-creation passed, including security, policy, durability, recovery, WebSocket,
-simulation, world, and the 100,004-event stress case. The complete suite still
-stops at `process-generation.test.mjs`, and Vite/esbuild cannot start, because
-this execution sandbox denies Node child spawn with `EPERM`. That is an
-environmental block, not evidence that process generation or the production
-bundle passes.
+Evidence observed on Windows on 2026-09-09: the complete Field suite passed when
+child-process creation was allowed, including process generation, security,
+policy, durability, recovery, WebSocket, simulation, world, and the 100,004-event
+stress case. The Vite production build also passed. This is local Windows
+evidence; rerun the same suite and build in Linux CI with child spawn allowed.
 
 Not established:
 
@@ -441,7 +439,8 @@ truthful than it found it.
    are aligned; current Cameo ISO artifacts still need to be built and published.
 4. `REL-002` — complete: `release-manifest.json` generates the site download block,
    and unpublished/mislabeled artifacts cannot appear as working downloads.
-5. `FIELD-CI-001`: run the complete Field suite/build where child spawn is allowed.
+5. `FIELD-CI-001` — complete locally: the full Field suite and production build
+   pass on Windows with child spawn allowed; retain the same run in Linux CI.
 6. `CAM-ROCMCLI-001` - in progress: the optional read-only ROCm CLI examination
    adapter is implemented and locally tested. Qualify it on native Windows,
    Linux, and WSL AMD systems; pin a supported upstream contract/version before

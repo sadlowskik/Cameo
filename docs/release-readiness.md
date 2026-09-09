@@ -1,10 +1,10 @@
 # Release readiness
 
-Snapshot: 2026-09-08
+Snapshot: 2026-09-09
 
-Cameo: `311f7cd` / `v0.2.0-beta.3`
+Cameo: `9db81f8` / `v0.2.0-beta.4`
 
-Bundled Knossos baseline: `9916bdc` / target `v0.2.0-beta.2` (unpublished)
+Bundled Knossos baseline: `78fb311` / target `v0.2.0-beta.2` (unpublished)
 
 Next package targets: Cameo `v0.2.0-beta.4`; Knossos and Field
 `v0.2.0-beta.2`. These versions are not published yet.
@@ -15,10 +15,10 @@ evidence snapshot.
 
 ## Verdict
 
-Cameo and Knossos are **beta, pre-v1**. Cameo's software core and Knossos's
-deterministic suite are locally green, but the current appliance has no retained
-real-hardware certification record. Field's current run reached a sandbox-denied
-process-spawn test before the remaining suite could execute.
+Cameo and Knossos are **beta, pre-v1**. Cameo's software core, Knossos's
+deterministic suite, and Field's Windows suite/build are locally green, but the
+current appliance has no retained real-hardware certification record. Field
+still needs the same complete run retained in Linux CI.
 
 Do not label this checkout stable or release-candidate qualified.
 
@@ -27,15 +27,15 @@ Do not label this checkout stable or release-candidate qualified.
 | Product | Observed result | Interpretation |
 |---|---|---|
 | Cameo | `cargo test --workspace` passed on Windows | Locally verified software paths; not Linux, ISO, or AMD-hardware proof |
-| Knossos | All 572 tests passed, including cross-process conversation recovery | Locally verified deterministic baseline |
+| Knossos | All 575 tests passed, including cross-process conversation recovery and bounded long-mission history rotation | Locally verified deterministic baseline |
 | Knossos evaluation | 27 fixtures pass the frozen-suite audit. Windows `knossos-rs` tests passed; Python 1069 passed / 5 skipped. Live two-arm runner against `gemini-3.6-flash` on 2026-09-08 stopped on token-budget/tool-calling failures before 8/8 (`daedalus/reports/reward-hacking/20260908-211431/`) | Grader and suite are locally verified. The live run is retained infrastructure evidence, not a capability score |
-| Field | Every directly runnable test passed, including the 100,004-event stress case; process generation and Vite/esbuild both hit sandbox `EPERM` | Broad local evidence; rerun the complete suite/build where child spawn is allowed |
+| Field | Complete suite and Vite production build passed on Windows with child spawn allowed, including process generation and the 100,004-event stress case | Locally verified; rerun and retain the same suite/build in Linux CI |
 | Hardware | Tester roll is empty; no `known-good-combo.json` is present | No hardware combination is certified from this checkout |
 | Release metadata | Next Cargo/npm/display versions are aligned; the site block is generated from `release-manifest.json`; mislabeled legacy downloads were removed | Metadata is consistent; all next-version artifacts remain explicitly unpublished |
 
 ## Present release blockers
 
-1. Complete Field's full test/build run on supported systems.
+1. Retain Field's full test/build run in Linux CI with child spawn allowed.
 2. Finish a complete two-arm Knossos live matrix without agent/provider abort,
    retain both equal-budget arms, and obtain independent review before publishing
    a claim. The 2026-09-08 Gemini Windows run is not that matrix.
