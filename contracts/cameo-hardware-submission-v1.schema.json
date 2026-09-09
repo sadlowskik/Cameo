@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cameoconstruct.xyz/contracts/cameo-hardware-submission-v1.schema.json",
+  "title": "Cameo moderated hardware submission v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "report", "credit_request"],
+  "properties": {
+    "schema_version": { "const": "cameo-hardware-submission/v1" },
+    "report": { "$ref": "cameo-hardware-report-v1.schema.json" },
+    "credit_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["publish", "permanence_acknowledged"],
+      "properties": {
+        "publish": { "type": "boolean" },
+        "display_name": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "permanence_acknowledged": { "type": "boolean" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "publish": { "const": true } } },
+          "then": {
+            "required": ["display_name"],
+            "properties": { "permanence_acknowledged": { "const": true } }
+          },
+          "else": {
+            "properties": { "permanence_acknowledged": { "const": false } },
+            "not": { "required": ["display_name"] }
+          }
+        }
+      ]
+    }
+  }
+}

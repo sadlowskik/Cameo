@@ -113,13 +113,14 @@ button.primary,.btn.primary{background:var(--ember);color:#1A1008;font-weight:50
       <form id="run">
         <div class="pair">
           <label>Handle<input id="name" maxlength="80" placeholder="@you — blank stays off the roll"></label>
-          <label>GPU<input id="gpu" required maxlength="80" placeholder="RX 6800, 7900 XTX, RX 580…"></label>
+          <label>GPU<input id="gpu" maxlength="80" placeholder="RX 6800, 7900 XTX, RX 580…"></label>
         </div>
         <label>Machine<input id="host" maxlength="120" placeholder="desktop, 32 GB, UEFI — no address"></label>
         <label>What you booted<input id="artifact" maxlength="120" placeholder="v0.2.0-beta.1 universal / commit"></label>
         <label>What you proved<textarea id="proved" maxlength="900" placeholder="Installed to disk, console came up, qwen answered offline."></textarea></label>
         <label>What broke<textarea id="broke" maxlength="700" placeholder="Optional. Exact error, not a novel."></textarea></label>
-        <label class="check"><input id="consent" type="checkbox"> List this handle on the public roll.</label>
+        <label>CLI payload<textarea id="payload" maxlength="131072" placeholder="Optional: paste the exact payload printed by cameo report --submit after a failed upload."></textarea></label>
+        <label class="check"><input id="consent" type="checkbox"> Permanently list this handle on the public site, repository, and release artifacts.</label>
         <div class="actions">
           <button class="primary" type="submit">Send as mail</button>
           <a class="btn ghost" href="https://github.com/sadlowskik/Cameo/issues/new?template=hardware-report.yml">GitHub report</a>
@@ -145,13 +146,18 @@ button.primary,.btn.primary{background:var(--ember);color:#1A1008;font-weight:50
   form.addEventListener('submit',function(e){
     e.preventDefault();
     function v(id){return (document.getElementById(id).value||'').trim();}
+    var payload=v('payload');
+    if(!payload&&!v('gpu')){
+      document.getElementById('gpu').focus();
+      return;
+    }
     var text=[
       'Cameo hardware validation',
       'Handle: '+(v('name')||'(anonymous)'),
       'GPU: '+(v('gpu')||'(missing)'),
       'Machine: '+(v('host')||'(unspecified)'),
       'Artifact: '+(v('artifact')||'(unspecified)'),
-      'List on roll: '+(document.getElementById('consent').checked?'yes':'no'),
+      'Permanent public credit (site, repository, release artifacts): '+(document.getElementById('consent').checked?'yes':'no'),
       '',
       'Proved:',
       v('proved')||'(none)',
@@ -159,10 +165,10 @@ button.primary,.btn.primary{background:var(--ember);color:#1A1008;font-weight:50
       'Broke:',
       v('broke')||'(none)'
     ].join('\n');
-    if(text.length>1800) text=text.slice(0,1800)+'\n[truncated]';
+    if(payload) text='Cameo hardware validation — exact CLI payload\n\n'+payload;
+    if(text.length>131072) text=text.slice(0,131072)+'\n[truncated]';
     window.location.href='mailto:korbin.sadlowski@gmail.com?subject='+encodeURIComponent('hardware: '+(v('gpu')||'report'))+'&body='+encodeURIComponent(text);
   });
-  function esc(s){return String(s||'').replace(/[<>&]/g,function(c){return ({'<':'&lt;','>':'&gt;','&':'&amp;'})[c];});}
   fetch('testers.json').then(function(r){return r.ok?r.json():null;}).then(function(data){
     var people=data&&data.testers||[];
     var n=String(people.length).padStart(3,'0');
@@ -170,10 +176,25 @@ button.primary,.btn.primary{background:var(--ember);color:#1A1008;font-weight:50
     document.getElementById('stamp').textContent=people.length?'log open':'unvalidated';
     if(!people.length) return;
     document.getElementById('empty').hidden=true;
-    document.getElementById('plates').innerHTML=people.map(function(t,i){
+    var plates=document.getElementById('plates');
+    people.forEach(function(t,i){
       var id=String(i+1).padStart(3,'0');
-      return '<article class="plate"><div class="when">#'+id+' · '+esc(t.date)+'</div><h3>'+esc(t.name)+'</h3><div class="gpu">'+esc(t.machine||t.gpu)+'</div><p class="did">'+esc(t.proved)+'</p></article>';
-    }).join('');
+      var plate=document.createElement('article');
+      plate.className='plate';
+      var when=document.createElement('div');
+      when.className='when';
+      when.textContent='#'+id+' · '+String(t.date||'');
+      var name=document.createElement('h3');
+      name.textContent=String(t.name||'');
+      var gpu=document.createElement('div');
+      gpu.className='gpu';
+      gpu.textContent=String(t.machine||t.gpu||'');
+      var did=document.createElement('p');
+      did.className='did';
+      did.textContent=String(t.proved||'');
+      plate.append(when,name,gpu,did);
+      plates.appendChild(plate);
+    });
   }).catch(function(){});
 })();
 </script>

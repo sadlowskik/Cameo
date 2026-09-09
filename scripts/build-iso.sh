@@ -24,6 +24,11 @@ OUT="${CAMEO_OUT:-$REPO/archiso/out}"
 EDITION="${CAMEO_EDITION:-full}"
 RELENG="${CAMEO_RELENG:-/usr/share/archiso/configs/releng}"
 
+case "$EDITION" in
+  full | lite) ;;
+  *) printf '[cameo-iso] ERROR: CAMEO_EDITION must be full or lite (got %s).\n' "$EDITION" >&2; exit 1 ;;
+esac
+
 log() { printf '\033[1;38;5;209m[cameo-iso]\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31m[cameo-iso] ERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 
@@ -46,7 +51,16 @@ else
   log "No git history and no SOURCE_DATE_EPOCH: this build is not reproducible."
 fi
 export SOURCE_DATE_EPOCH="$STAMP"
-COMMIT="$(git -C "$REPO" rev-parse --short=8 HEAD 2>/dev/null || echo unknown)"
+SOURCE_REVISION="$(git -C "$REPO" rev-parse HEAD 2>/dev/null || echo unknown)"
+COMMIT="${SOURCE_REVISION:0:8}"
+SOURCE_DIRTY=false
+[ -z "$(git -C "$REPO" status --porcelain --untracked-files=normal 2>/dev/null)" ] || SOURCE_DIRTY=true
+KNOSSOS_REVISION="$(git -C "$REPO/daedalus" rev-parse HEAD 2>/dev/null || echo unknown)"
+CAMEO_VERSION="$(awk '
+  $0 == "[workspace.package]" { workspace_package = 1; next }
+  workspace_package && /^version = "/ { gsub(/^version = "|"$/, ""); print; exit }
+' "$REPO/Cargo.toml")"
+[ -n "$CAMEO_VERSION" ] || die "could not read workspace package version from Cargo.toml"
 CAMEO_ISO_VERSION="$(date -u -d "@$STAMP" +%Y.%m.%d).g$COMMIT"
 CAMEO_ISO_LABEL="CAMEO_$(date -u -d "@$STAMP" +%Y%m)"
 # The edition rides in the image name so both artifacts can sit in one release
@@ -121,6 +135,10 @@ if [ -d "$RELENG/airootfs" ]; then
   rm -rf "$BUILD/airootfs"
   mv "$MERGED" "$BUILD/airootfs"
   log "Merged airootfs: releng base, Cameo overlay"
+
+  sed -i "s/^BUILD_ID=.*/BUILD_ID=$CAMEO_ISO_VERSION/" "$BUILD/airootfs/etc/os-release"
+  grep -qF "BUILD_ID=$CAMEO_ISO_VERSION" "$BUILD/airootfs/etc/os-release" \
+    || die "failed to stamp os-release BUILD_ID"
 
   # Record the source snapshot for provenance; cameo-install copies this to the
   # target. It is not an update authorization or rollback mechanism. The signed
@@ -520,9 +538,22 @@ fi
 install -Dm755 "$CARGO_TARGET/release/cameo" "$BUILD/airootfs/usr/local/bin/cameo"
 install -Dm755 "$CARGO_TARGET/release/cameod" "$BUILD/airootfs/usr/local/bin/cameod"
 install -Dm644 "$REPO/contracts/cameo-capabilities-v1.json" "$BUILD/airootfs/etc/cameo/capabilities.json"
+install -Dm644 "$REPO/testers/roster.json" "$BUILD/airootfs/usr/share/cameo/credits.json"
 install -Dm755 "$KNOSSOS_TARGET/release/knossos" "$BUILD/airootfs/usr/local/bin/knossos"
 install -Dm644 "$REPO/scripts/update_host_transaction.py" \
   "$BUILD/airootfs/usr/local/lib/cameo/update_host_transaction.py"
+
+arch_snapshot_json=null
+if [ -n "${CAMEO_ARCH_SNAPSHOT:-}" ]; then
+  arch_snapshot_json="\"$CAMEO_ARCH_SNAPSHOT\""
+fi
+install -d -m755 "$BUILD/airootfs/etc/cameo"
+printf '{\n  "cameo_version": "%s",\n  "iso_build_id": "%s",\n  "edition": "%s",\n  "source_revision": "%s",\n  "source_dirty": %s,\n  "knossos_revision": "%s",\n  "arch_snapshot": %s,\n  "rocm_cli_version": null\n}\n' \
+  "$CAMEO_VERSION" "$CAMEO_ISO_VERSION" "$EDITION" "$SOURCE_REVISION" \
+  "$SOURCE_DIRTY" "$KNOSSOS_REVISION" "$arch_snapshot_json" \
+  >"$BUILD/airootfs/etc/cameo/build.json"
+chmod 644 "$BUILD/airootfs/etc/cameo/build.json"
+log "Embedded build identity and consented release credits"
 
 # Trust root for `cameo-update verify`. The private half never enters the image.
 # CAMEO_UPDATE_ROOT_PEM may be a PEM blob or a file path (GitHub Actions secret

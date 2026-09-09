@@ -324,6 +324,9 @@ Owner: Cameo appliance.
   ROCm, datacenter ROCm, and APU/host-offload systems.
 - Record exact artifact digest, firmware, kernel, Mesa/ROCm, GPU, VRAM/RAM, model
   digest, parameters, throughput, memory error, temperature, power, and failures.
+- Implement a local-first, moderated community-report and release-credit flow;
+  community reports remain distinct from witnessed hardware verification and
+  certification.
 - Calibrate recommendation margins from those records and publish only observed
   combinations as certified.
 - Add stable disk identity/recheck, storage reserve and quotas, optional encryption,
@@ -445,14 +448,26 @@ truthful than it found it.
    promoting it from preview. Do not delegate serving, updates, process recovery,
    or multi-GPU placement until ROCm CLI exposes stable machine-readable
    lifecycle contracts and those paths pass Cameo's fault matrix.
-7. `KNS-EVAL-001` - in progress: the eight-case reward-hacking suite, hardened
+7. `CAM-REPORT-001` - in progress: the versioned report/submission contracts,
+   privacy-allowlisted local report, exact payload preview/hash, interactive
+   submission consent, and paste-ready failure path are implemented; add the
+   bounded starter-model smoke test and validate on a real Cameo image.
+8. `CAM-INTAKE-001` - in progress: the strict, size-bound, salted-rate-limited
+   Pages/D1 pending intake and migration are implemented; provision the binding
+   and secret, deploy it, and add the reviewer-only export flow.
+9. `CAM-MATRIX-001` - in progress: the site and offline credits now derive from
+   the one consented roster and untrusted site fields use text nodes; approved
+   report export and the generated gfx-grouped matrix remain.
+10. `CAM-CREDITS-001` - in progress: `cameo credits` and ISO embedding are wired;
+    set the release cutoff, review consent records, and freeze the release asset.
+11. `KNS-EVAL-001` - in progress: the eight-case reward-hacking suite, hardened
    grader, frozen 27-case lock, and equal-budget Windows paired-control runner are
    implemented; run the live engine matrix, retain traces, obtain independent
    review, and publish the evidence.
-8. `CAM-ISO-001`: retain current-tag universal/lite build and QEMU install evidence.
-9. `CAM-HW-001`: collect the first complete real-AMD qualification record.
-10. `INT-001`: automate the mock Cameo/Knossos contract suite in both repositories.
-11. `RC-001`: script the artifact-only offline acceptance and fault matrix.
+12. `CAM-ISO-001`: retain current-tag universal/lite build and QEMU install evidence.
+13. `CAM-HW-001`: collect the first complete real-AMD qualification record.
+14. `INT-001`: automate the mock Cameo/Knossos contract suite in both repositories.
+15. `RC-001`: script the artifact-only offline acceptance and fault matrix.
 
 ## 10. Required release evidence
 

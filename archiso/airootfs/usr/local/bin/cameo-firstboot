@@ -31,5 +31,6 @@ if [ -d /run/archiso ]; then
   esac
   echo "This is the live USB. To install to disk: cameo-install-guided"
 fi
+echo "Help qualify this GPU: cameo report"
 echo "────────────────────────────────────────"
 echo

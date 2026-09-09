@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cameoconstruct.xyz/contracts/cameo-testers-v1.schema.json",
+  "title": "Cameo consented tester credits v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "consent", "release_id", "cutoff_at", "testers"],
+  "properties": {
+    "schema": { "const": "cameo-testers/v1" },
+    "consent": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "release_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "cutoff_at": { "type": ["string", "null"], "format": "date-time" },
+    "testers": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+          "date": { "type": "string", "minLength": 1, "maxLength": 32 },
+          "machine": { "type": "string", "minLength": 1, "maxLength": 160 },
+          "gpu": { "type": "string", "minLength": 1, "maxLength": 160 },
+          "proved": { "type": "string", "minLength": 1, "maxLength": 500 }
+        }
+      }
+    }
+  }
+}

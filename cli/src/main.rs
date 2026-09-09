@@ -28,8 +28,11 @@ use cameo_placement::{
     plan as make_plan, CommandSpec, KvCacheType, ModelMeta, PlacementPlan, QuantLevel, Task,
 };
 
+mod credits;
 mod doctor;
 mod fleet;
+mod report;
+mod system_facts;
 
 /// Terminal styling. Zero-dependency ANSI, auto-off when piped, on a dumb
 /// terminal, or when `NO_COLOR` / `CAMEO_NO_COLOR` is set. Cameo's signature
@@ -169,11 +172,15 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Show the consented tester credits embedded in this Cameo release.
+    Credits,
     /// Inspect local readiness; optionally export the displayed, redacted JSON report.
     Doctor {
         #[arg(long, value_name = "FILE")]
         bundle: Option<PathBuf>,
     },
+    /// Create a privacy-allowlisted hardware report; optionally submit with consent.
+    Report(report::Args),
     /// Print the versioned capability manifest (JSON; no hardware or daemon required).
     Capabilities,
     /// Show detected GPU(s), topology, support tier, and selected backend.
@@ -560,7 +567,9 @@ fn main() {
 
 fn run(cli: &Cli) -> Result<()> {
     match &cli.command {
+        Command::Credits => credits::run(cli.json),
         Command::Doctor { bundle } => doctor::run(cli, bundle.as_deref()),
+        Command::Report(args) => report::run(cli, args),
         Command::Capabilities => {
             println!(
                 "{}",

@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cameoconstruct.xyz/contracts/cameo-hardware-report-v1.schema.json",
+  "title": "Cameo hardware report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "report_id", "generated_at_unix", "artifact", "platform", "hardware", "outcomes", "privacy"],
+  "properties": {
+    "schema_version": { "const": "cameo-hardware-report/v1" },
+    "report_id": { "type": "string", "pattern": "^chr_[0-9a-f]{24}$" },
+    "generated_at_unix": { "type": "integer", "minimum": 1 },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cameo_version"],
+      "properties": {
+        "cameo_version": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "iso_build_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "edition": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "source_revision": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "source_dirty": { "type": "boolean" },
+        "knossos_revision": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "arch_snapshot": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "rocm_cli_version": { "type": "string", "minLength": 1, "maxLength": 64 }
+      }
+    },
+    "platform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["os", "architecture"],
+      "properties": {
+        "os": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "architecture": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "kernel_version": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "cpu_model": { "type": "string", "minLength": 1, "maxLength": 160 }
+      }
+    },
+    "hardware": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "gpus"],
+      "properties": {
+        "status": { "enum": ["observed", "unverified"] },
+        "system_ram_total_bytes": { "type": "integer", "minimum": 0 },
+        "system_ram_available_bytes": { "type": "integer", "minimum": 0 },
+        "gpus": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["model", "vendor", "pci_id", "is_apu", "cameo_tier"],
+            "properties": {
+              "model": { "type": "string", "maxLength": 200 },
+              "vendor": { "type": "string", "maxLength": 32 },
+              "pci_id": { "type": "string", "pattern": "^[0-9a-fA-F]{4}:[0-9a-fA-F]{4}$" },
+              "gfx_target": { "type": "string", "pattern": "^gfx[0-9a-z]+$", "maxLength": 32 },
+              "vram_total_bytes": { "type": "integer", "minimum": 0 },
+              "is_apu": { "type": "boolean" },
+              "driver_version": { "type": "string", "maxLength": 128 },
+              "cameo_tier": { "type": "integer", "minimum": 1, "maximum": 3 }
+            }
+          }
+        }
+      }
+    },
+    "outcomes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["boot", "gpu_detection", "inference"],
+      "properties": {
+        "boot": { "$ref": "#/$defs/outcome" },
+        "gpu_detection": { "$ref": "#/$defs/outcome" },
+        "inference": { "$ref": "#/$defs/outcome" }
+      }
+    },
+    "note": { "type": "string", "maxLength": 1000 },
+    "error_excerpt": { "type": "string", "maxLength": 2000 },
+    "privacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowlisted_fields_only", "hostname", "username", "ip_or_mac", "serial_numbers", "credentials", "raw_logs", "prompts_or_model_output"],
+      "properties": {
+        "allowlisted_fields_only": { "const": true },
+        "hostname": { "const": false },
+        "username": { "const": false },
+        "ip_or_mac": { "const": false },
+        "serial_numbers": { "const": false },
+        "credentials": { "const": false },
+        "raw_logs": { "const": false },
+        "prompts_or_model_output": { "const": false }
+      }
+    }
+  },
+  "$defs": {
+    "outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["result", "evidence_source"],
+      "properties": {
+        "result": { "enum": ["passed", "failed", "degraded", "not_tested"] },
+        "evidence_source": { "enum": ["observed", "tester_asserted", "unavailable"] }
+      }
+    }
+  }
+}

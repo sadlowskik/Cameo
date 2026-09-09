@@ -16,7 +16,8 @@
 set -euo pipefail
 
 PROJECT="${CAMEO_PAGES_PROJECT:-cameoconstruct}"
-SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/../site" && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SRC="$ROOT/site"
 
 [ -f "$SRC/index.html" ] || { printf 'no site/index.html at %s\n' "$SRC" >&2; exit 1; }
 
@@ -25,6 +26,7 @@ printf '\033[1;38;5;209m[pages]\033[0m Deploying %s -> Cloudflare Pages project 
 if command -v wrangler >/dev/null 2>&1; then WR=(wrangler); else WR=(npx --yes wrangler); fi
 # --branch main makes this a PRODUCTION deployment regardless of the repo's current
 # git branch; without it, deploys from feature branches only create previews.
+cd "$ROOT"
 "${WR[@]}" pages deploy "$SRC" --project-name "$PROJECT" --branch main --commit-dirty=true
 
 printf '\033[1;38;5;209m[pages]\033[0m Done. Add the custom domain in the Pages project:\n'

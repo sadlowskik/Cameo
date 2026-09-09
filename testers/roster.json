@@ -1,5 +1,7 @@
 {
   "schema": "cameo-testers/v1",
-  "consent": "Names appear only when the person asked to be listed.",
+  "consent": "Names appear only with explicit consent to permanent public credit in the site, repository, and immutable release artifacts.",
+  "release_id": "unreleased",
+  "cutoff_at": null,
   "testers": []
 }
