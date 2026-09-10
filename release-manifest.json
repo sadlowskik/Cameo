@@ -8,8 +8,33 @@
     "repository": "https://github.com/sadlowskik/Cameo",
     "release_index": "https://github.com/sadlowskik/Cameo/releases",
     "iso": {
-      "status": "rebuild-required",
-      "last_public_tag": "v0.1.0-beta.2"
+      "status": "ci-candidate",
+      "last_public_tag": "v0.1.0-beta.2",
+      "candidate": {
+        "run_number": 45,
+        "run_id": 34412346207,
+        "run_url": "https://github.com/sadlowskik/Cameo/actions/runs/34412346207",
+        "commit": "95724ee",
+        "built_at": "2026-09-09",
+        "validation": "passed",
+        "hardware_status": "unverified",
+        "artifacts": {
+          "full": {
+            "name": "cameo-iso-full",
+            "artifact_id": 10128795770,
+            "size_bytes": 5015250160,
+            "download_url": "https://github.com/sadlowskik/Cameo/actions/runs/34412346207/artifacts/10128795770",
+            "expires_at": "2026-09-23T23:01:56Z"
+          },
+          "lite": {
+            "name": "cameo-iso-lite",
+            "artifact_id": 10128180905,
+            "size_bytes": 1889003208,
+            "download_url": "https://github.com/sadlowskik/Cameo/actions/runs/34412346207/artifacts/10128180905",
+            "expires_at": "2026-09-23T22:42:38Z"
+          }
+        }
+      }
     }
   },
   "knossos": {
