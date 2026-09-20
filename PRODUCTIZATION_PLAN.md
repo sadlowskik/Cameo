@@ -180,8 +180,9 @@ Implemented in the current pinned tree:
 - Rust CLI, REPL, `serve`, ACP, evaluation, and Field launcher;
 - exact symbol indexing, lexical retrieval, bounded context, planning, tool
   dispatch, file staging/diffs, interjection, one-level delegation, and retries;
-- workspace jail, restricted argv execution, child-environment scrubbing,
-  approval hooks, permission protocol, and offline-by-default tools;
+- harness-tool path jail, restricted argv execution, child-environment
+  scrubbing, approval hooks, permission protocol, and offline-by-default tools
+  (child processes are not yet confined to the workspace; see `KNS-JAIL-001`);
 - tiered verification, pre-change baselines, test-deletion detection, proof
   invalidation, explicit halting, and non-verifying dry runs;
 - durable mission journal/snapshots, instruction/environment drift checks,
@@ -370,6 +371,74 @@ Owner: Knossos runtime.
   honour `Retry-After` on 429 (`KNS-BOUNDS-001`).
 - State the sandbox honestly: an environment jail with a harness-tool path
   jail; either document that or add OS-level confinement, never claim both.
+  Documented as of 2026-09-20; the confinement itself is `KNS-JAIL-001` below.
+- Confine child processes to the workspace (`KNS-JAIL-001`, Linux and macOS;
+  Windows has no unprivileged filesystem confinement and stays environment-jail
+  plus Job Object). The path jail binds the harness's own tools; `cargo test`,
+  `pytest`, delegated units, Field's operator terminal and any plug-and-play
+  agent Field launches run agent-authored code with the operator's full
+  filesystem and network. That is the gap a hostile or careless unit exploits,
+  and it grows with every third-party agent, so the gate has to be structural.
+  - **One spawn path.** `Sandbox::command` already constructs every child
+    (`run` tool, Oracle ladder, delegation). Confinement is applied there,
+    between fork and exec, so every descendant inherits it and none can shed
+    it. Field's Node server and its terminal spawn through `knossos exec --
+    <cmd>` (same `Sandbox`) until the Rust port replaces them, so the port
+    inherits the jail rather than retrofitting it.
+  - **Linux: Landlock** (`landlock` crate 0.4; kernel >= 5.13, unprivileged, no
+    daemon, enabled in the Arch kernel Cameo ships and in Ubuntu runners since
+    22.04). Ruleset: read + execute on the system roots (`/usr`, `/bin`,
+    `/lib`, `/lib64`, `/etc`, `/opt`, `/proc`, `/sys`, `/run`, `/var`) and the
+    toolchain homes (`RUSTUP_HOME`, `$HOME/.local`, `$HOME/.cache`, the Python
+    prefix, `$HOME/.npm`); read + write on `CARGO_HOME` (cargo takes a lock in
+    its package cache), `/dev`, and a per-run `TMPDIR`; full access including
+    execute on the workspace; nothing else. The rest of `$HOME` (SSH keys,
+    shell history, sibling repositories) does not exist for the child. Landlock
+    resolves the real inode, so a symlink inside the workspace that points
+    outside is refused without the manual check the path jail needs. ABI 4+
+    denies TCP bind and connect unless `Sandbox::networked`; UDP and Unix
+    sockets are not covered and the residual-risk line says so. Applied in a
+    `pre_exec` hook with `CompatLevel::BestEffort`, reporting the ABI actually
+    enforced.
+  - **macOS: Seatbelt.** Wrap the command in `/usr/bin/sandbox-exec -f
+    <profile> -D WORKSPACE=<root> -D TMP=<tmpdir> -- <program> <args>`.
+    `sandbox-exec` execs in place, so pid, process group and kill-tree handling
+    are unchanged. The profile is `(deny default)` with `(allow process-exec
+    process-fork sysctl-read mach-lookup)`, read on the system and toolchain
+    paths above, read-write on the workspace, `TMP`, `CARGO_HOME` and `/dev`,
+    and `(deny network*)` unless networked. Deprecated interface, still shipped
+    on current macOS and relied on by Chromium and Bazel; if Apple removes it
+    the run degrades to `EnvOnly` and says so rather than failing silently.
+  - **Policy knob** `--confine=require|prefer|off` (config and env
+    `KNOSSOS_CONFINE`; default `prefer`). `require` refuses to spawn when the
+    OS cannot confine, and is what CI and the Cameo appliance use; `prefer` runs
+    and records the level; `off` is an operator debugging aid and is journaled.
+    `Sandbox::allow_path(path, rw|ro)` admits an extra toolchain directory for
+    stacks this list did not anticipate; a denied path fails the child loudly
+    with `EACCES` in its stderr, which is the correct failure.
+  - **Reporting.** `Finished.confinement` is `Landlock { abi }`, `Seatbelt`, or
+    `EnvOnly` on every command record and in the journal. A mission in which
+    any child ran `EnvOnly` carries "child processes ran without filesystem
+    confinement on <platform>" in `Outcome.residual_risk`; on Linux with
+    Landlock below ABI 4 it carries "network not confined". The README Safety
+    section then reads: workspace jail and environment jail on Linux and
+    macOS, environment jail only on Windows.
+  - **Tests** (Linux and macOS jobs, skipped on Windows with a notice): a probe
+    child reads `/etc/hostname`; its writes to `$HOME` and to a sibling of the
+    workspace are refused; a write inside the workspace succeeds; a workspace
+    symlink to `$HOME` is refused; `cargo test` of a fixture crate passes under
+    the jail (proves the toolchain path list is complete); a TCP connect to
+    `127.0.0.1` is refused when offline and allowed when networked;
+    `--confine=require` on a kernel without Landlock returns a typed error.
+  - **Order.** Spike first: a 40-line probe in CI on `ubuntu-latest` and
+    `macos-latest` proving the ruleset and the profile before the module is
+    written. Then Linux, macOS, reporting, `knossos exec`, docs. Lands before
+    `KNS-RUST-001` so the Field port spawns through a jailed `Sandbox` from its
+    first commit.
+  - **Cameo.** Phase 0 hardware checklist gains `grep landlock
+    /sys/kernel/security/lsm`; the appliance runs Knossos with
+    `KNOSSOS_CONFINE=require`, which is a concrete reason to run agents on the
+    box rather than on a laptop.
 
 Exit: repeated forced termination at every journal/action boundary resumes to one
 explainable state with no duplicate consequential action and current proof only;
@@ -619,7 +688,8 @@ Exit: a release can be independently verified, serviced, revoked, and reproduced
    platform/browser qualification, and Cameo ISO/hardware qualification.
    Knossos order within this step: L (CI truth) → B's `KNS-VERIFY-001` and
    the restart pair (`KNS-REC-001`, `KNS-BASE-001`) → lineage and result
-   object → G's Rust port (event log first) with `KNS-PY-001` alongside →
+   object → `KNS-JAIL-001` (Landlock and Seatbelt child confinement) →
+   G's Rust port (event log first) with `KNS-PY-001` alongside →
    ACP adapter and Barracks/Power-sources/Folders UI → Cameo origin and
    private-network access → RTS surface, which can start in parallel on the
    web side because it is a projection over an unchanged event schema →
@@ -705,6 +775,10 @@ truthful than it found it.
 29. `FIELD-REMOTE-001`: cameod `/field/` proxy, `cameo remote` WireGuard
     helper, PWA manifest, systemd unit under the operator account.
 30. `KNS-PY-001`: Python to research marker; Rust evaluator is grading truth.
+31. `KNS-JAIL-001` (P1): child-process workspace jail, Landlock on Linux and
+    Seatbelt on macOS, `--confine` policy, confinement level in every command
+    record and in `Outcome.residual_risk`; `knossos exec` for Field; before
+    `KNS-RUST-001`.
 
 ## 10. Required release evidence
 
