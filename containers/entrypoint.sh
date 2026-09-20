@@ -24,7 +24,7 @@ fi
 
 # A non-loopback bind is an explicit operator opt-in. Keep authentication on it,
 # while defaulting the image to loopback for SSH/VPN or reverse-proxy access.
-export CAMEO_CONSOLE_HOST=${CAMEO_CONSOLE_HOST:-127.0.0.1}
+export CAMEO_CONSOLE_HOST="${CAMEO_CONSOLE_HOST:-127.0.0.1}"
 if [ -z "${CAMEO_CONSOLE_KEY:-}" ] && [ "$CAMEO_CONSOLE_HOST" != "127.0.0.1" ]; then
     key=$(head -c 48 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | cut -c1-32)
     if [ -n "$key" ]; then

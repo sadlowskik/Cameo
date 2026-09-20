@@ -1,11 +1,14 @@
 [Unit]
 Description=Cameo first-boot GPU tier report
-After=multi-user.target
+# NOT After=multi-user.target: a target adds an implicit After= on every unit it
+# Wants, so that formed an ordering cycle systemd broke by deleting a job.
+After=cameod.service
 ConditionPathExists=!/var/lib/cameo/.firstboot-done
 
 [Service]
 Type=oneshot
 Environment=CAMEO_FORCE_COLOR=1
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/opt/rocm/bin
 ExecStart=/usr/local/bin/cameo-firstboot
 ExecStartPost=/usr/bin/mkdir -p /var/lib/cameo
 ExecStartPost=/usr/bin/touch /var/lib/cameo/.firstboot-done

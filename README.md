@@ -118,7 +118,9 @@ GPU 0  Radeon RX 580 8G
   why  gfx803 has no usable ROCm path:
        Vulkan-only inference, no training.
 -----------------------------------------
-Web console:  http://192.168.1.40:9090
+Web console:  https://192.168.1.40:9090
+  Console key:  Kq7…   (required for every action)
+  Certificate:  3A:9F:…  (self-signed — accept it once if this matches)
   Open it from a browser on this LAN. No internet required.
   Starter model qwen2.5-0.5b is on disk — open the console and chat.
 ```

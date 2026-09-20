@@ -473,6 +473,24 @@ jobs:
           done
           echo "OK: vim and man present"
 
+          # Package closure: every executable a shipped script, unit or binary
+          # calls must exist in the image (archiso/required-binaries.txt).
+          # A missing tool here is a first-boot failure, not a build failure.
+          missing=0
+          while IFS= read -r b; do
+            case "$b" in ''|'#'*) continue ;; esac
+            found=0
+            for d in usr/bin usr/local/bin usr/local/lib/cameo usr/lib/systemd; do
+              if sudo test -x "$A/$d/$b"; then found=1; break; fi
+            done
+            if [ "$found" -eq 0 ]; then
+              echo "FAIL: required binary '$b' is not in the image"
+              missing=$((missing + 1))
+            fi
+          done < archiso/required-binaries.txt
+          [ "$missing" -eq 0 ] || exit 1
+          echo "OK: required-binaries manifest satisfied"
+
       - name: Verify boot splash was rendered
         if: always()
         run: |

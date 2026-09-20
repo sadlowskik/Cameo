@@ -100,8 +100,13 @@ def build_bundle(
     prepared = []
     seen_targets = set()
     for source_value, target_value, mode in components:
-        source = Path(source_value).resolve()
-        if source.is_symlink() or not source.is_file():
+        # Check the path as given: resolve() follows a symlink, so testing the
+        # resolved path can never see one, and a linked component must be refused.
+        given = Path(source_value)
+        if given.is_symlink():
+            raise BundleError(f"component is linked: {source_value}")
+        source = given.resolve()
+        if not source.is_file():
             raise BundleError(f"component is missing, linked, or not regular: {source_value}")
         target = normalize_target(target_value)
         if target in seen_targets:

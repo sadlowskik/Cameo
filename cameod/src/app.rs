@@ -86,10 +86,9 @@ pub struct AppState {
     /// The token a node must present to enroll (`POST /hub/register|heartbeat`).
     /// Required in hub mode — registration fails closed without it.
     pub farm_token: Option<String>,
-    /// Whether `/v1` inference may be reached without any credential. True only
-    /// for a loopback bind (dev) or an explicit `CAMEO_OPEN_INFERENCE` opt-in. On
-    /// a routable bind it is false, so an operator-only key ring still gates `/v1`
-    /// to that operator key instead of serving the GPU to anyone on the network.
+    /// Explicit `CAMEO_OPEN_INFERENCE` opt-in: `/v1` needs no credential even
+    /// though keys are configured. Never derived from the bind address — see
+    /// [`inference_is_open`].
     pub open_inference: bool,
 }
 
@@ -259,6 +258,9 @@ impl ModelRequest {
 /// error path that escapes, so the HTTP layer only ever writes bytes.
 pub fn route(state: &Arc<AppState>, req: &Request) -> Response {
     let segs = req.segments();
+    if let Some(denied) = check_origin(state, req) {
+        return denied;
+    }
     if let Some(denied) = check_request_rate(state, req, &segs) {
         return denied;
     }
@@ -367,9 +369,8 @@ fn check_request_rate(state: &Arc<AppState>, req: &Request, segs: &[&str]) -> Op
     let pairing = segs == ["hub", "pair"];
     let protected =
         segs.first() == Some(&"api") || segs.first() == Some(&"hub") || segs.first() == Some(&"v1");
-    let intentionally_open =
-        (segs.first() == Some(&"v1") && state.open_inference && !state.keyring.requires_consumer())
-            || (segs.first() == Some(&"api") && !state.keyring.requires_operator());
+    let intentionally_open = (segs.first() == Some(&"v1") && inference_is_open(state))
+        || (segs.first() == Some(&"api") && !state.keyring.requires_operator());
     let (class, limit) = if pairing {
         ("pair", crate::rate_limit::PAIRING_REQUESTS_PER_WINDOW)
     } else if protected && !authenticated && !intentionally_open {
@@ -423,19 +424,16 @@ fn bearer(req: &Request) -> Option<&str> {
         .map(str::trim)
 }
 
-/// Authenticate a `/v1` request. Any valid credential (consumer *or* operator) may
-/// run inference. `None` = allowed.
-///
-/// `/v1` is only open without a credential where that is deliberately safe: a
-/// loopback bind, or an explicit opt-in, *and* only when no consumer key is
-/// configured to gate it. On a routable bind with an operator-only key ring the
-/// gateway falls closed to that operator key — an unauthenticated public `/v1`
-/// would serve the box's GPU to anyone who can reach the port.
+/// Authenticate an inference request. `/v1` is keyless only when the daemon has
+/// no key of any role (a hand-run dev daemon, where `/api` is equally open) or
+/// `CAMEO_OPEN_INFERENCE` is set. The bind address is deliberately NOT a factor:
+/// a loopback bind is exactly what sits behind a TLS reverse proxy or a Cameo
+/// Link callback, and an operator-only key ring must still gate the GPU there.
 fn check_serve_auth(state: &Arc<AppState>, req: &Request) -> Option<Response> {
     if req.from_unix && state.posture.allows_local_harness() {
         return None;
     }
-    if state.open_inference && !state.keyring.requires_consumer() {
+    if inference_is_open(state) {
         return None;
     }
     if state.keyring.is_consumer_or_better(bearer(req)) {
@@ -443,6 +441,63 @@ fn check_serve_auth(state: &Arc<AppState>, req: &Request) -> Option<Response> {
     } else {
         Some(Response::error(401, "missing or invalid api key"))
     }
+}
+
+/// See [`check_serve_auth`]: keyless daemon, or explicit opt-in.
+fn inference_is_open(state: &AppState) -> bool {
+    state.open_inference
+        || (!state.keyring.requires_operator() && !state.keyring.requires_consumer())
+}
+
+/// Browser-origin defences, applied before any route:
+///
+/// * A request carrying an `Origin` must come from this daemon's own origin. The
+///   dashboard is same-origin, so nothing legitimate breaks; a hostile page the
+///   operator happens to visit cannot drive `/api` with a `text/plain` "simple"
+///   POST that skips the CORS preflight.
+/// * A daemon with no keys at all accepts only a loopback `Host`, which is the
+///   only place such a daemon may listen. That closes DNS rebinding, where a
+///   public name resolves to 127.0.0.1 and the browser sends the attacker's
+///   `Host` — the responses would otherwise be readable cross-site.
+///
+/// Requests without these headers (curl, Prometheus, the CLI, tests) are untouched.
+fn check_origin(state: &Arc<AppState>, req: &Request) -> Option<Response> {
+    if req.from_unix {
+        return None;
+    }
+    let host = req.header("host").unwrap_or("");
+    if let Some(origin) = req.header("origin") {
+        let origin_host = origin
+            .split_once("://")
+            .map(|(_, rest)| rest)
+            .unwrap_or(origin)
+            .trim_end_matches('/');
+        if origin == "null" || host.is_empty() || !origin_host.eq_ignore_ascii_case(host) {
+            return Some(Response::error(403, "cross-origin request refused"));
+        }
+    }
+    let keyless = !state.keyring.requires_operator() && !state.keyring.requires_consumer();
+    if keyless && !host.is_empty() && !host_is_loopback(host) {
+        return Some(Response::error(
+            403,
+            "a keyless daemon answers only to a loopback Host; configure a console key",
+        ));
+    }
+    None
+}
+
+/// `127.0.0.0/8`, `localhost`, or `::1`, with or without a port.
+fn host_is_loopback(host: &str) -> bool {
+    let name = if let Some(rest) = host.strip_prefix('[') {
+        rest.split(']').next().unwrap_or("")
+    } else {
+        host.rsplit_once(':').map(|(name, _)| name).unwrap_or(host)
+    };
+    name.eq_ignore_ascii_case("localhost")
+        || name == "::1"
+        || name
+            .parse::<std::net::Ipv4Addr>()
+            .is_ok_and(|ip| ip.is_loopback())
 }
 
 /// The `/v1` OpenAI gateway (F8). `GET /v1/models` lists the served models; any
@@ -776,6 +831,11 @@ fn route_hub(state: &Arc<AppState>, req: &Request, rest: &[&str]) -> Response {
             };
             if requested_id.is_empty() || requested_id.len() > 256 {
                 return Response::error(400, "pairing requires a node id or name up to 256 bytes");
+            }
+            // A caller without a live code learns nothing about the roster: the
+            // enrolled/not-enrolled distinction below is only for legitimate pairers.
+            if !state.pairings.is_live(&body.code) {
+                return Response::error(401, "invalid or expired pairing code");
             }
             if state.farm.contains(requested_id) {
                 return Response::error(
@@ -2027,6 +2087,49 @@ mod tests {
 
     fn response_json(response: Response) -> Value {
         serde_json::from_slice(&response.body).expect("JSON response")
+    }
+
+    #[test]
+    fn inference_is_gated_whenever_any_key_exists() {
+        // contract_state has operator + consumer keys and open_inference=false:
+        // no bind-address exemption may open /v1.
+        let state = contract_state();
+        let anonymous = route(
+            &state,
+            &contract_request("GET", "/v1/models", None, json!({})),
+        );
+        assert_eq!(anonymous.status, 401);
+        let keyed = route(
+            &state,
+            &contract_request("GET", "/v1/models", Some("operator-key"), json!({})),
+        );
+        assert_eq!(keyed.status, 200, "operator is a superset of consumer");
+    }
+
+    #[test]
+    fn cross_origin_browser_requests_are_refused() {
+        let state = contract_state();
+        let mut request = contract_request("POST", "/api/drain", Some("operator-key"), json!({}));
+        request
+            .headers
+            .insert("host".into(), "127.0.0.1:9090".into());
+        request
+            .headers
+            .insert("origin".into(), "http://evil.example".into());
+        assert_eq!(route(&state, &request).status, 403);
+        request
+            .headers
+            .insert("origin".into(), "https://127.0.0.1:9090".into());
+        assert_ne!(route(&state, &request).status, 403, "same-origin passes");
+    }
+
+    #[test]
+    fn loopback_host_parsing() {
+        assert!(host_is_loopback("127.0.0.1:9090"));
+        assert!(host_is_loopback("localhost"));
+        assert!(host_is_loopback("[::1]:9090"));
+        assert!(!host_is_loopback("cameo.local:9090"));
+        assert!(!host_is_loopback("192.168.4.20:9090"));
     }
 
     #[test]

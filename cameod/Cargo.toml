@@ -28,3 +28,8 @@ getrandom.workspace = true
 sha2.workspace = true
 fs2 = "0.4"
 ctrlc = { version = "3.5.2", features = ["termination"] }
+# HTTPS for the console listener (self-signed, minted on first start). Pure
+# Rust TLS; the HTTP framing above it stays the hand-written server.
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "logging", "std", "tls12"] }
+rustls-pki-types = { version = "1.11", features = ["std"] }
+rcgen = { version = "0.13", default-features = false, features = ["crypto", "aws_lc_rs", "pem"] }

@@ -7,8 +7,18 @@
 # Base system
 base
 linux
-linux-firmware
-linux-headers
+# Firmware: the `linux-firmware` metapackage pulls every vendor (NVIDIA alone is
+# ~100 MB). Take only what an AMD box and its network cards can use.
+linux-firmware-whence
+linux-firmware-amd
+linux-firmware-amdgpu
+linux-firmware-radeon
+linux-firmware-atheros
+linux-firmware-broadcom
+linux-firmware-intel
+linux-firmware-mediatek
+linux-firmware-realtek
+linux-firmware-other
 mkinitcpio
 # Builds the archiso hooks into the initramfs — without it the live image has
 # no way to find and mount its own squashfs root.
@@ -17,9 +27,9 @@ mkinitcpio-archiso
 # validation outright if it is absent.
 syslinux
 sudo
-# The account database is inherited from releng, which points root at zsh.
-# Without it the shell does not exist and tty1 autologin fails silently.
-zsh
+# root's shell is switched to bash by scripts/build-iso.sh (releng's passwd
+# points it at zsh, which without grml-zsh-config drops every autologin into
+# the zsh new-user wizard). bash is in `base`.
 
 # AMD graphics + Vulkan userspace (the universal baseline — every tier)
 mesa
@@ -93,6 +103,10 @@ man-pages
 #   * gptfdisk (sgdisk), dosfstools (mkfs.fat for the EFI partition),
 #     parted (partprobe).
 arch-install-scripts
+# mkfs.ext4 / fsck.ext4 for the installer's A/B slots, cameo-persist-cache,
+# the A/B updater's slot format, and the `fsck` initramfs hook on the installed
+# system. NOT in `base`: without it cameo-install dies at its preflight.
+e2fsprogs
 squashfs-tools
 rsync
 grub
@@ -104,4 +118,5 @@ parted
 # NOTE: the `cameo` CLI and the `cameod` control-plane daemon are injected by the
 # build pipeline (cargo build --release, staged into the airootfs) rather than
 # listed here as packages. cameod is started on boot by cameod.service and serves
-# the browser console on 127.0.0.1:9090 by default. See archiso/README.md.
+# the browser console over HTTPS on every interface, port 9090, gated by the key
+# cameo-console-init generates. See archiso/README.md.

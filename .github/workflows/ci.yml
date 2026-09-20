@@ -13,8 +13,14 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
+      # render-releases.mjs reads daedalus/knossos-rs/Cargo.toml to cross-check
+      # the pinned Knossos version, so this job needs the submodule too.
       - uses: actions/checkout@v4
+        with:
+          submodules: true
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -24,7 +30,9 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Test
-        run: cargo test --workspace --locked
+        run: |
+          set -o pipefail
+          cargo test --workspace --locked 2>&1 | tee ci-check-test.log
       - name: Release build
         run: cargo build --workspace --release --locked
       - uses: actions/setup-node@v4
@@ -40,10 +48,23 @@ jobs:
         run: node --test tests/hardware-reports.test.mjs tests/approved-hardware.test.mjs
       - name: Documentation links are current
         run: node scripts/check-doc-links.mjs
+      - name: Publish failure log to ci-logs branch
+        if: failure()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/ci/publish-log.sh ci-check-test.log ci-check-test-${{ github.run_id }}.log
 
   knossos:
     name: Knossos submodule
     runs-on: ubuntu-latest
+    # The Knossos test suite has starved hosted runners ("runner lost
+    # communication") and hung for over an hour here. Cameo only needs the
+    # pinned commit to format, lint and build the binary it ships; Knossos's own
+    # repository CI owns its tests. The cap turns a hang into a failure.
+    timeout-minutes: 30
+    # contents: write only so the failure log can be published (see below).
+    permissions:
+      contents: write
     steps:
       # `true` fetches Cameo's direct Knossos submodule without recursively
       # pulling Knossos's optional editor checkout.
@@ -59,18 +80,28 @@ jobs:
       - name: Format
         working-directory: daedalus/knossos-rs
         run: cargo fmt --all -- --check
+      # Each step tees into one log so a failure is diagnosable without
+      # authenticated access to the workflow log (published below).
       - name: Clippy
         working-directory: daedalus/knossos-rs
-        run: cargo clippy --all-targets --locked -- -D warnings
-      - name: Test
-        working-directory: daedalus/knossos-rs
-        run: cargo test --all-targets --locked
+        run: |
+          set -o pipefail
+          cargo clippy --all-targets --locked -- -D warnings 2>&1 | tee -a "$GITHUB_WORKSPACE/ci-knossos.log"
       - name: Release build
         working-directory: daedalus/knossos-rs
-        run: cargo build --release --locked --bin knossos
+        run: |
+          set -o pipefail
+          cargo build --release --locked --bin knossos 2>&1 | tee -a "$GITHUB_WORKSPACE/ci-knossos.log"
+      - name: Publish failure log to ci-logs branch
+        if: failure()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/ci/publish-log.sh ci-knossos.log ci-knossos-${{ github.run_id }}.log
 
   shellcheck:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - name: ShellCheck scripts
@@ -96,26 +127,43 @@ jobs:
         env:
           PYTHONDONTWRITEBYTECODE: "1"
         run: |
-          command -v openssl
-          python -m py_compile scripts/build_update_bundle.py \
-            scripts/update_host_transaction.py \
-            archiso/airootfs/usr/local/lib/cameo/update-host \
-            archiso/airootfs/usr/local/lib/cameo/update-verify
-          python -m unittest tests.test_build_update_bundle tests.test_update_bundle tests.test_update_ab_simulator \
-            tests.test_update_host_transaction tests.test_installer_ab_contract -v
+          set -o pipefail
+          {
+            command -v openssl
+            python -m py_compile scripts/build_update_bundle.py \
+              scripts/update_host_transaction.py \
+              archiso/airootfs/usr/local/lib/cameo/update-host \
+              archiso/airootfs/usr/local/lib/cameo/update-verify
+            python -m unittest tests.test_build_update_bundle tests.test_update_bundle tests.test_update_ab_simulator \
+              tests.test_update_host_transaction tests.test_installer_ab_contract -v
+          } 2>&1 | tee ci-pyupdate.log
+      - name: Publish failure log to ci-logs branch
+        if: failure()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/ci/publish-log.sh ci-pyupdate.log ci-pyupdate-${{ github.run_id }}.log
 
   # Build the Vulkan container image (F1) and smoke it: the binaries must run and
   # the serving dependencies must be present. Real GPU/serving is a Phase-1
   # hardware step; here we prove the image assembles and links.
   container:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - name: Build the Vulkan image
-        run: docker build -f containers/Containerfile --build-arg CAMEO_SKIP_STARTER=1 -t cameo:vulkan .
+        run: |
+          set -o pipefail
+          docker build --progress=plain -f containers/Containerfile --build-arg CAMEO_SKIP_STARTER=1 -t cameo:vulkan . 2>&1 | tee ci-container.log
       - name: Smoke — binaries run and serving deps are present
         run: |
           test "$(docker run --rm cameo:vulkan id -u)" = "10001"
           docker run --rm cameo:vulkan cameo pull --list
           docker run --rm cameo:vulkan cameod --help
           docker run --rm cameo:vulkan sh -c 'command -v llama-server && command -v vulkaninfo'
+      - name: Publish failure log to ci-logs branch
+        if: failure()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/ci/publish-log.sh ci-container.log ci-container-${{ github.run_id }}.log

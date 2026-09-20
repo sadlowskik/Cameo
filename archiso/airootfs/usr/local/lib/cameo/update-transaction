@@ -23,9 +23,13 @@ case "$command" in
       key="${CAMEO_UPDATE_TEST_KEY:-$key}"
       verifier="${CAMEO_UPDATE_TEST_VERIFIER:-$verifier}"
     fi
-    [ -f "$bundle/manifest.json" ] && [ -f "$bundle/manifest.sig" ] || { echo "cameo-update: incomplete bundle" >&2; exit 1; }
+    if ! { [ -f "$bundle/manifest.json" ] && [ -f "$bundle/manifest.sig" ]; }; then
+      echo "cameo-update: incomplete bundle" >&2; exit 1
+    fi
     [ -r "$key" ] || { echo "cameo-update: trusted release key is not installed" >&2; exit 1; }
-    [ ! -L "$bundle" ] && [ ! -L "$bundle/manifest.json" ] && [ ! -L "$bundle/manifest.sig" ] && [ ! -L "$key" ] || { echo "cameo-update: linked trust or signature input refused" >&2; exit 1; }
+    if ! { [ ! -L "$bundle" ] && [ ! -L "$bundle/manifest.json" ] && [ ! -L "$bundle/manifest.sig" ] && [ ! -L "$key" ]; }; then
+      echo "cameo-update: linked trust or signature input refused" >&2; exit 1
+    fi
     staged="$(mktemp -d)"; trap 'rm -rf -- "$staged"' EXIT
     chmod 0700 "$staged"
     cp --no-dereference "$bundle/manifest.json" "$staged/manifest.json"
@@ -35,8 +39,9 @@ case "$command" in
     "$verifier" verify "$bundle" / "$staged/manifest.json"
     [ "$command" = verify ] || "$verifier" preflight "$bundle" / "$staged/manifest.json"
     if [ "$command" = apply ]; then
-      [ -f "$layout" ] && [ -x "$host" ] \
-        || { echo "cameo-update: installed A/B layout is unavailable" >&2; exit 1; }
+      if ! { [ -f "$layout" ] && [ -x "$host" ]; }; then
+        echo "cameo-update: installed A/B layout is unavailable" >&2; exit 1
+      fi
       "$host" apply "$bundle" "$staged/manifest.json"
       echo "cameo-update: signed offline bundle apply staged; reboot required"
       exit 0
@@ -44,8 +49,9 @@ case "$command" in
     echo "cameo-update: signed offline bundle $command passed" ;;
   commit|auto-commit|rollback|recover)
     [ "$#" -eq 0 ] || { echo "usage: cameo-update $command" >&2; exit 2; }
-    [ -f "$layout" ] && [ -x "$host" ] \
-      || { echo "cameo-update: installed A/B layout is unavailable" >&2; exit 1; }
+    if ! { [ -f "$layout" ] && [ -x "$host" ]; }; then
+      echo "cameo-update: installed A/B layout is unavailable" >&2; exit 1
+    fi
     exec "$host" "$command" ;;
   *) echo "usage: cameo-update verify|preflight|apply <bundle-directory> | status|commit|rollback|recover" >&2; exit 2 ;;
 esac

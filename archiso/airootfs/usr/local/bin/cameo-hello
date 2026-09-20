@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Print how to open the console: wordmark, URL, key, next click.
-# Sourced from first-boot and every interactive login (profile.d).
+# Print how to open the console: wordmark, URL, key, certificate fingerprint.
+# Run from first-boot and every interactive login (profile.d).
 # Must never fail a login.
 set +e
 
@@ -18,12 +18,13 @@ fi
 
 host="${CAMEO_CONSOLE_HOST:-127.0.0.1}"
 port="${CAMEO_CONSOLE_PORT:-9090}"
+scheme="https"
+[ "${CAMEO_TLS:-on}" = "off" ] && scheme="http"
 
-# IPv4 on a real interface. Retry a few seconds: first-boot often races DHCP.
+# First global IPv4 on a real interface, via iproute2 (`hostname` is not on the
+# image). Retry a few seconds: first boot often races DHCP.
 lan_ip() {
-  hostname -I 2>/dev/null | awk '{
-    for (i = 1; i <= NF; i++) if ($i ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ && $i !~ /^127\./) { print $i; exit }
-  }'
+  ip -4 -o addr show scope global 2>/dev/null | awk '{ sub(/\/.*/, "", $4); print $4; exit }'
 }
 
 ip="$(lan_ip)"
@@ -35,10 +36,22 @@ while [ -z "$ip" ] && [ "$i" -lt "$tries" ]; do
   i=$((i + 1))
 done
 
-if [ "$host" = "0.0.0.0" ] || [ "$host" = "::" ]; then
-  shown="${ip:-<this-box-ip>}"
-else
+loopback_only=0
+case "$host" in
+  127.0.0.1 | localhost | ::1) loopback_only=1 ;;
+esac
+if [ "$loopback_only" -eq 1 ]; then
   shown="$host"
+else
+  shown="${ip:-<this-box-ip>}"
+fi
+
+# The certificate cameod actually presents, read back over loopback so this works
+# for any user (the key material itself is owner-only). SHA-256 fingerprint.
+fingerprint=""
+if [ "$scheme" = "https" ] && command -v openssl >/dev/null 2>&1; then
+  fingerprint="$(openssl s_client -connect "127.0.0.1:${port}" -servername cameo.local </dev/null 2>/dev/null \
+    | openssl x509 -noout -fingerprint -sha256 2>/dev/null | sed 's/^.*=//')"
 fi
 
 rule() { printf '%s────────────────────────────────────────%s\n' "$C_DIM" "$C_OFF"; }
@@ -60,33 +73,38 @@ ART
 fi
 rule
 printf '%s  Web console%s\n' "$C_ACCENT" "$C_OFF"
-echo "    http://${shown}:${port}"
-if [ "$host" != "127.0.0.1" ] && [ "$host" != "localhost" ] && [ "$host" != "::1" ]; then
-  echo "    http://cameo.local:${port}"
+echo "    ${scheme}://${shown}:${port}"
+if [ "$loopback_only" -eq 0 ]; then
+  echo "    ${scheme}://cameo.local:${port}"
 fi
 if [ -n "${CAMEO_CONSOLE_KEY:-}" ]; then
   printf '    Console key:  %s%s%s\n' "$C_ACCENT" "$CAMEO_CONSOLE_KEY" "$C_OFF"
 fi
+if [ -n "$fingerprint" ]; then
+  echo "    Certificate:  ${fingerprint}"
+  echo "    ${C_DIM}Self-signed: your browser warns once. Accept it only if the fingerprint matches.${C_OFF}"
+elif [ "$scheme" = "https" ]; then
+  echo "    ${C_DIM}Certificate fingerprint appears once cameod is up (systemctl status cameod).${C_OFF}"
+fi
 if [ -d /run/archiso ]; then
-  echo "    ${C_DIM}Live USB — this key lasts until reboot. Install to keep it.${C_OFF}"
+  echo "    ${C_DIM}Live USB — key and certificate last until reboot. Install to keep them.${C_OFF}"
 else
-  echo "    ${C_DIM}Key in /etc/cameo/cameod.env — stable across reboots.${C_OFF}"
+  echo "    ${C_DIM}Key in /etc/cameo/cameod.env, certificate in /var/lib/cameo/tls — stable across reboots.${C_OFF}"
 fi
 echo
-if [ "$host" = "127.0.0.1" ] || [ "$host" = "localhost" ] || [ "$host" = "::1" ]; then
-  echo "    Listener is loopback-only (HTTP credentials stay off the LAN)."
-  echo "    Tunnel from your laptop: ssh -L ${port}:127.0.0.1:${port} <user>@${ip:-<this-box-ip>}"
-  echo "    Then open http://127.0.0.1:${port} locally."
+if [ "$loopback_only" -eq 1 ]; then
+  echo "    Listener is loopback-only (CAMEO_CONSOLE_HOST=127.0.0.1 in /etc/cameo/cameod.env)."
+  echo "    Set it to 0.0.0.0 to reach the console from another machine."
 else
-  echo "    Non-loopback HTTP is enabled explicitly; prefer a TLS reverse proxy."
+  echo "    Reachable from any machine on this LAN; the key is required for every action."
+  echo "    Never port-forward this to the internet."
 fi
 echo "    Starter is a smoke test: Start qwen2.5-0.5b and chat."
 rule
 
 if [ -z "$ip" ]; then
   echo
-  printf '%s  No LAN address yet.%s Plug Ethernet before creating the SSH/VPN tunnel.\n' "$C_ACCENT" "$C_OFF"
-  echo "    Wi-Fi is only for attaching this box as a fleet node — then: iwctl"
+  printf '%s  No LAN address yet.%s Plug Ethernet, or for Wi-Fi: iwctl\n' "$C_ACCENT" "$C_OFF"
 fi
 echo
 exit 0

@@ -9,6 +9,15 @@ Wants=network.target cameo-storage-init.service cameo-seed-models.service
 Type=simple
 User=cameo
 Group=cameo
+# GPU device nodes are group-owned by render/video; DeviceAllow below only
+# whitelists them in the cgroup, it does not grant file permission.
+SupplementaryGroups=render video
+# ROCm's tools install to /opt/rocm/bin and reach login shells only through
+# profile.d, which units never source. Put them on the daemon's PATH.
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/opt/rocm/bin
+# Serve HTTPS with a self-signed certificate minted into this directory on first
+# start (persistent on an installed system, per-boot on the live overlay).
+Environment=CAMEO_TLS_DIR=/var/lib/cameo/tls
 # Two env layers, later wins for a duplicate key:
 #   1. /run/cameo/cameod.env — generated each boot by cameo-console-init: a random
 #      key + a loopback bind for SSH/VPN or TLS-proxy access.
@@ -25,8 +34,9 @@ EnvironmentFile=-/etc/cameo/cameod.env
 # makes it wheel-writable — is never clobbered.
 StateDirectory=cameo
 StateDirectoryMode=0750
-RuntimeDirectory=cameo
-RuntimeDirectoryMode=0750
+# /run/cameo is created by tmpfiles.d, deliberately NOT as RuntimeDirectory=:
+# systemd deletes a RuntimeDirectory whenever the unit stops, which wiped the
+# console key cameo-console-init writes there on every restart.
 ExecStartPre=+/usr/bin/install -d -o cameo -g cameo -m 0750 /var/lib/cameo/models
 ExecStart=/usr/local/bin/cameod
 # A crashed daemon takes its supervised endpoints with it (PR_SET_PDEATHSIG), so

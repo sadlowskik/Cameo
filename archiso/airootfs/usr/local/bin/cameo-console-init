@@ -1,19 +1,23 @@
 #!/usr/bin/env bash
-# Cameo console bootstrap.
+# Cameo console bootstrap (live medium).
 #
-# The image is a headless appliance and the built-in listener is HTTP-only, so
-# keep it on loopback. Reach it through an SSH/VPN tunnel or put a TLS reverse
-# proxy in front.
+# The image is a headless appliance: no local browser, no sshd. The only way to
+# use it out of the box is from another machine on the LAN, so this oneshot,
+# ordered *before* cameod, writes an ephemeral env file that binds the console
+# to every interface with a freshly generated key. cameod serves HTTPS with a
+# self-signed certificate it mints into /var/lib/cameo/tls on first start (see
+# cameod.service), so the key and every chat are encrypted on the wire; the
+# certificate fingerprint is printed at login by cameo-hello.
 #
-# So this oneshot, ordered *before* cameod, writes an ephemeral env file with a
-# freshly generated key and a loopback bind. It runs before cameod's
-# EnvironmentFile is read, which is why it is a separate unit and not an
-# ExecStartPre (systemd reads EnvironmentFile at service-start, before ExecStartPre).
+# It runs before cameod's EnvironmentFile is read, which is why it is a separate
+# unit and not an ExecStartPre (systemd reads EnvironmentFile at service-start,
+# before ExecStartPre). /run/cameo is created by tmpfiles.d and is NOT a
+# RuntimeDirectory of cameod, so a daemon restart never deletes this file.
 #
-# The operator's /etc/cameo/cameod.env is layered AFTER this file by the unit, so
-# anything they uncomment there — a fixed key, or CAMEO_CONSOLE_HOST=127.0.0.1 to
-# force loopback-only — overrides what is generated here. This file lives on tmpfs
-# and is regenerated every boot, which is the right lifetime for a live image.
+# The operator's /etc/cameo/cameod.env is layered AFTER this file by the unit,
+# so anything uncommented there — a fixed key, or CAMEO_CONSOLE_HOST=127.0.0.1
+# to force loopback-only — overrides what is generated here. On the live medium
+# this file lives on tmpfs and is regenerated every boot.
 set -euo pipefail
 
 RUN_DIR=/run/cameo
@@ -28,9 +32,8 @@ if [ -z "$key" ]; then
   # /dev/urandom or base64 unavailable should be impossible on this image, but a
   # bootstrap must never leave the console unauthenticated on the LAN. Fall back
   # to loopback rather than binding wide with a weak/empty key.
-  {
-    echo "CAMEO_CONSOLE_HOST=127.0.0.1"
-  } >"$RUN_ENV"
+  umask 077
+  echo "CAMEO_CONSOLE_HOST=127.0.0.1" >"$RUN_ENV"
   echo "cameo-console-init: could not generate a key; bound loopback-only." >&2
   exit 0
 fi
@@ -39,8 +42,8 @@ umask 077
 {
   echo "# Auto-generated each boot by cameo-console-init. Ephemeral (tmpfs)."
   echo "# Override anything here from /etc/cameo/cameod.env."
-  echo "CAMEO_CONSOLE_HOST=127.0.0.1"
+  echo "CAMEO_CONSOLE_HOST=0.0.0.0"
   echo "CAMEO_CONSOLE_KEY=$key"
 } >"$RUN_ENV"
 
-echo "cameo-console-init: console will bind loopback-only with a generated key."
+echo "cameo-console-init: console will bind the LAN over HTTPS with a generated key."

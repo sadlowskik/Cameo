@@ -1,0 +1,78 @@
+# Package closure for the Cameo image: every executable a shipped script, unit,
+# or the cameo/cameod binaries invoke at runtime. CI asserts each one exists in
+# the built airootfs (searched in /usr/bin, /usr/local/bin, /usr/local/lib/cameo,
+# /usr/lib/systemd). Add a name here when a script gains a dependency; a package
+# that silently drops out of the closure then fails the build, not first boot.
+#
+# Installer (cameo-install) and persistence helpers
+mkfs.ext4
+fsck.ext4
+mkfs.fat
+sgdisk
+partprobe
+wipefs
+blkid
+lsblk
+findmnt
+blockdev
+mount
+umount
+swapoff
+udevadm
+genfstab
+arch-chroot
+unsquashfs
+rsync
+mkinitcpio
+lsinitcpio
+bootctl
+grub-install
+grub-mkconfig
+grub-set-default
+grub-reboot
+efibootmgr
+useradd
+chpasswd
+locale-gen
+hwclock
+timedatectl
+python3
+# Update chain (cameo-update, update-host, update-verify)
+openssl
+systemd-bless-boot
+# Boot-time scripts (console-init, hello, firstboot, storage-init, seed-models)
+base64
+ip
+systemctl
+systemd-run
+# Detection (gpu-detect::collect) — rocminfo/rocm-smi live in /opt/rocm/bin on the
+# universal edition only and are looked up there explicitly, so they are not listed.
+lspci
+vulkaninfo
+# Inference engine (everything the CLI/daemon spawn)
+llama-server
+llama-cli
+llama-quantize
+# Model pulls and dev use
+curl
+git
+iwctl
+# Operator tooling promised by the docs
+nano
+vim
+less
+man
+sudo
+# Cameo's own executables staged by build-iso.sh
+cameo
+cameod
+knossos
+cameo-install
+cameo-install-guided
+cameo-hello
+cameo-firstboot
+cameo-console-init
+cameo-storage-init
+cameo-seed-models
+cameo-persist-cache
+cameo-update

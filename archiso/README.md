@@ -59,10 +59,13 @@ sudo dd if=archiso/out/cameo-*.iso of=/dev/sdX bs=4M status=progress oflag=sync
   `build/models/` across rebuilds.
 - **The CLI** — `cameo` is on `PATH` in the image, wordmark and all.
 - **The console** — `cameod.service` starts the browser control plane on boot.
-  `cameo-console-init` generates a random key and binds to loopback each boot.
-  The built-in listener is HTTP-only, so use an SSH/VPN tunnel or terminate TLS
-  at a reverse proxy before exposing it to a LAN. Override settings in
-  `/etc/cameo/cameod.env`; a non-loopback bind without a key is always refused.
+  `cameo-console-init` generates a random key and binds every interface each
+  boot; `cameod` serves HTTPS with a self-signed certificate it mints into
+  `/var/lib/cameo/tls` on first start (per boot on the live overlay, persistent
+  once installed). The fingerprint is printed at login. Override settings in
+  `/etc/cameo/cameod.env` (`CAMEO_CONSOLE_HOST=127.0.0.1` for loopback-only,
+  `CAMEO_TLS=off` behind your own TLS proxy); a non-loopback bind without a key
+  is always refused, and `/v1` requires a key whenever any key is configured.
 
 ## What's in the image
 `packages.x86_64`: kernel + amdgpu + Vulkan userspace (every tier), ROCm runtime

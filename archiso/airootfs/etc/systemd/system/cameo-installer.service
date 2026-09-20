@@ -15,6 +15,7 @@ Before=getty@tty1.service
 [Service]
 # idle: wait for other startup jobs so the installer owns a quiet console.
 Type=idle
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/opt/rocm/bin
 ExecStart=/usr/local/bin/cameo-install-guided
 # Take tty1 for an interactive session.
 StandardInput=tty-force
