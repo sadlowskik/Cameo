@@ -53,8 +53,9 @@ vulkaninfo
 llama-server
 llama-cli
 llama-quantize
-# Model pulls and dev use
+# Model pulls, `cameo knossos install` (bsdtar extracts the release zip), dev use
 curl
+bsdtar
 git
 iwctl
 # Operator tooling promised by the docs
