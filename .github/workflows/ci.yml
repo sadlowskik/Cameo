@@ -52,7 +52,7 @@ jobs:
         if: failure()
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: scripts/ci/publish-log.sh ci-check-test.log ci-check-test-${{ github.run_id }}.log
+        run: bash scripts/ci/publish-log.sh ci-check-test.log ci-check-test-${{ github.run_id }}.log
 
   knossos:
     name: Knossos submodule
@@ -96,7 +96,7 @@ jobs:
         if: failure()
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: scripts/ci/publish-log.sh ci-knossos.log ci-knossos-${{ github.run_id }}.log
+        run: bash scripts/ci/publish-log.sh ci-knossos.log ci-knossos-${{ github.run_id }}.log
 
   shellcheck:
     runs-on: ubuntu-latest
@@ -141,7 +141,7 @@ jobs:
         if: failure()
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: scripts/ci/publish-log.sh ci-pyupdate.log ci-pyupdate-${{ github.run_id }}.log
+        run: bash scripts/ci/publish-log.sh ci-pyupdate.log ci-pyupdate-${{ github.run_id }}.log
 
   # Build the Vulkan container image (F1) and smoke it: the binaries must run and
   # the serving dependencies must be present. Real GPU/serving is a Phase-1
@@ -166,4 +166,4 @@ jobs:
         if: failure()
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: scripts/ci/publish-log.sh ci-container.log ci-container-${{ github.run_id }}.log
+        run: bash scripts/ci/publish-log.sh ci-container.log ci-container-${{ github.run_id }}.log
