@@ -137,8 +137,24 @@ impl EndpointStore {
         if !lock.metadata().map_err(|e| e.to_string())?.is_file() {
             return Err("invalid endpoint lock file".into());
         }
-        fs2::FileExt::try_lock_exclusive(&lock)
-            .map_err(|_| "endpoint state is already owned by another daemon".to_string())?;
+        // flock is inherited across fork and released only when the last
+        // descriptor closes. A previous owner that has just exited (or a test
+        // that just dropped its store) can still have the lock pinned by a
+        // freshly forked child for the microseconds before its exec closes the
+        // CLOEXEC descriptor. Retry across that window instead of refusing.
+        let mut attempt = 0;
+        loop {
+            match fs2::FileExt::try_lock_exclusive(&lock) {
+                Ok(()) => break,
+                Err(_) if attempt < 20 => {
+                    attempt += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+                Err(_) => {
+                    return Err("endpoint state is already owned by another daemon".into());
+                }
+            }
+        }
         let mut store = Self {
             directory: directory.into(),
             _lock: lock,
