@@ -16,16 +16,19 @@ repo="${GITHUB_REPOSITORY:?}"
 token="${GITHUB_TOKEN:?}"
 url="https://x-access-token:${token}@github.com/${repo}"
 
+source_dir="$PWD"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
-if ! git clone -q --depth 1 -b ci-logs "$url" "$work/repo" 2>/dev/null; then
+# A full clone: GitHub refuses pushes from a shallow one ("shallow update not
+# allowed"), and the branch is pruned to 40 small files anyway.
+if ! git clone -q -b ci-logs "$url" "$work/repo" 2>/dev/null; then
   git init -q -b ci-logs "$work/repo"
 fi
 cd "$work/repo"
 git config user.name "github-actions[bot]"
 git config user.email "github-actions[bot]@users.noreply.github.com"
-if [ -f "$OLDPWD/$log" ]; then
-  cp "$OLDPWD/$log" "$name"
+if [ -f "$source_dir/$log" ]; then
+  cp "$source_dir/$log" "$name"
 else
   echo "no log produced ($log)" >"$name"
 fi
