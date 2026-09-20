@@ -99,6 +99,8 @@ jobs:
 
   shellcheck:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - name: ShellCheck scripts
@@ -124,13 +126,29 @@ jobs:
         env:
           PYTHONDONTWRITEBYTECODE: "1"
         run: |
-          command -v openssl
-          python -m py_compile scripts/build_update_bundle.py \
-            scripts/update_host_transaction.py \
-            archiso/airootfs/usr/local/lib/cameo/update-host \
-            archiso/airootfs/usr/local/lib/cameo/update-verify
-          python -m unittest tests.test_build_update_bundle tests.test_update_bundle tests.test_update_ab_simulator \
-            tests.test_update_host_transaction tests.test_installer_ab_contract -v
+          set -o pipefail
+          {
+            command -v openssl
+            python -m py_compile scripts/build_update_bundle.py \
+              scripts/update_host_transaction.py \
+              archiso/airootfs/usr/local/lib/cameo/update-host \
+              archiso/airootfs/usr/local/lib/cameo/update-verify
+            python -m unittest tests.test_build_update_bundle tests.test_update_bundle tests.test_update_ab_simulator \
+              tests.test_update_host_transaction tests.test_installer_ab_contract -v
+          } 2>&1 | tee ci-pyupdate.log
+      - name: Publish failure log to ci-logs branch
+        if: failure()
+        run: |
+          rm -rf /tmp/logpub && mkdir -p /tmp/logpub
+          log="ci-pyupdate-${{ github.run_id }}.log"
+          cp ci-pyupdate.log "/tmp/logpub/$log" 2>/dev/null || echo "no log produced" > "/tmp/logpub/$log"
+          cd /tmp/logpub
+          git init -q -b ci-logs
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "$log"
+          git commit -qm "python update-chain ci log for run ${{ github.run_number }}"
+          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}" ci-logs
 
   # Build the Vulkan container image (F1) and smoke it: the binaries must run and
   # the serving dependencies must be present. Real GPU/serving is a Phase-1
