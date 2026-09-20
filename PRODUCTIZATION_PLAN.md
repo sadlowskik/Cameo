@@ -61,7 +61,9 @@ The harness is all Rust: every process a user runs is the `knossos` binary.
 That includes Field's core (event log, projection, adapters, budgets, routines,
 director, API and WebSocket) which today runs as a Node sidecar and is ported
 under workstream G. The browser client stays a web app because it runs in a
-browser; a native shell, when it comes, is Rust (Tauri). Agents plug in through
+browser; the desktop app is a Tauri shell that links the `knossos` crate
+directly (one process, no sidecar) and is usable with any provider, any
+project and any ACP agent, with Atlas as its default face. Agents plug in through
 the Agent Client Protocol: Knossos is itself an ACP agent, and any ACP agent
 (Claude Code, Codex, Gemini CLI, a user's own) becomes a unit on the same map
 under one Field-level permission gate. Field is served through the Cameo box's
@@ -595,6 +597,25 @@ non-negotiables.
   evaluator and the frozen suite lock become the only grading truth
   (`KNS-PY-001`).
 - Complete the process-generation test and production build outside this sandbox.
+- **Desktop app for anyone, on the Rust core** (`KNS-APP-001`). The app is
+  the reason for the port, not something after it. Order: (1) event log and
+  session API in Rust; (2) the `knossos` binary serves the Field web UI over
+  local HTTPS, so the app already works in a browser on every OS with no
+  Node anywhere, and it is the same thing `cameod` proxies; (3) Tauri 2 shell
+  linking the `knossos` library crate directly: native window and tray,
+  provider keys in the OS keychain read only at spawn time, file pickers,
+  notifications; (4) first run: pick a model (a Cameo box found on the LAN,
+  Ollama on this machine, or a cloud key into the keychain), open a folder,
+  confirm the per-project verification contract (cargo, npm test, pytest, go
+  test, make; editable), go; (5) ACP agents in the same jail; (6) signed
+  installers for Windows, macOS and Linux, a release lock, in-app updates.
+  Atlas is the default mode and uses plain words (Models, Projects, Agents,
+  Approvals, "needs you"); Rome and the RTS map are the operator mode behind
+  a switch, over the same event log. Stated up front in the app: the
+  workspace jail exists on Linux and macOS only; on Windows children run
+  unconfined and every result says so, and the confined path is WSL2, which
+  the app can drive. The app collects nothing and phones nowhere unless a
+  Cameo hub is paired.
 - Qualify child-process termination and secret isolation on all supported systems.
 - Finish durable admission/fairness for concurrent missions and routine misfires.
 - Exercise campaigns with real Knossos engines, not only fixtures.
@@ -697,7 +718,8 @@ Exit: a release can be independently verified, serviced, revoked, and reproduced
    ACP adapter and Barracks/Power-sources/Folders UI → Cameo origin and
    private-network access → RTS surface, which can start in parallel on the
    web side because it is a projection over an unchanged event schema →
-   native shell last.
+   the desktop app (`KNS-APP-001`) as soon as the binary serves the web UI,
+   then the shell, first run, agents and installers.
 4. **Close security and durability.** Independent review plus fault matrices for
    secrets, workspaces, processes, storage, updates, and mesh identity.
 5. **Run the cross-product path.** Artifact-only offline Cameo + Knossos + Field
@@ -779,6 +801,10 @@ truthful than it found it.
 29. `FIELD-REMOTE-001`: cameod `/field/` proxy, `cameo remote` WireGuard
     helper, PWA manifest, systemd unit under the operator account.
 30. `KNS-PY-001`: Python to research marker; Rust evaluator is grading truth.
+32. `KNS-APP-001` (P1): desktop app for anyone on the Rust core; Atlas
+    default with plain words (first pass landed 2026-09-20), single binary
+    serving the UI, Tauri shell linking the crate, keychain, first run,
+    ACP agents, installers. Drives `KNS-RUST-001`.
 31. `KNS-JAIL-001` (P1) - implemented 2026-09-20 on Knossos branch
     `fix/wire-delegation-constitution-ariadne` (commit 9f1c298), pending CI
     on Linux and macOS: child-process workspace jail, Landlock on Linux and
