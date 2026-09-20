@@ -56,9 +56,20 @@ fn node_from_json(address: &str, body: &[u8]) -> Result<NodeInfo> {
     })
 }
 
-/// Fetch one node's self-description over HTTP (via `curl`).
+/// `host:port` becomes an `http://` URL (the historical form); an address that
+/// already carries a scheme is used as given, so an HTTPS node (the ISO default)
+/// is addressed as `--node https://box:9090`.
+fn base_url(address: &str) -> String {
+    if address.contains("://") {
+        address.trim_end_matches('/').to_string()
+    } else {
+        format!("http://{address}")
+    }
+}
+
+/// Fetch one node's self-description over HTTP(S) (via `curl`).
 fn fetch_node(address: &str, key: Option<&str>) -> Result<NodeInfo> {
-    let url = format!("http://{address}/api/node");
+    let url = format!("{}/api/node", base_url(address));
     let out = cameo_net_strategy::curl::json_request(
         &url,
         "GET",
@@ -86,7 +97,7 @@ fn api(
     key: Option<&str>,
     body: Option<&str>,
 ) -> Result<Vec<u8>> {
-    let url = format!("http://{address}{path}");
+    let url = format!("{}{path}", base_url(address));
     let out = cameo_net_strategy::curl::json_request(
         &url,
         method,
@@ -310,5 +321,11 @@ mod tests {
         assert_eq!(network_class("ib"), NetworkClass::Infiniband);
         assert_eq!(network_class("fast"), NetworkClass::FastEthernet);
         assert_eq!(network_class("whatever"), NetworkClass::Consumer);
+    }
+
+    #[test]
+    fn node_addresses_keep_an_explicit_scheme() {
+        assert_eq!(base_url("box:9090"), "http://box:9090");
+        assert_eq!(base_url("https://box:9090/"), "https://box:9090");
     }
 }

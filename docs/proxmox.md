@@ -18,21 +18,23 @@ has a real AMD GPU. The dashboard and `/v1` then live at **that guest’s IP**.
 
 ```bash
 # on the guest
-cameod --host 127.0.0.1 --port 9090 --console-key "$CAMEO_CONSOLE_KEY"
+cameod --host 0.0.0.0 --port 9090 --console-key "$CAMEO_CONSOLE_KEY" \
+       --tls-dir /var/lib/cameo/tls
 ```
 
-The built-in listener is HTTP-only. Keep it on loopback and use an SSH/Tailscale
-tunnel, or terminate TLS at a reverse proxy before exposing it to the LAN.
+`--tls-dir` makes the listener HTTPS with a self-signed certificate minted on
+first start; the fingerprint is printed at startup. Omit it only behind your
+own TLS-terminating reverse proxy (then keep `--host 127.0.0.1`).
 
-After tunneling port 9090, open `http://127.0.0.1:9090/` for cards, VRAM, and
-load/unload. Inference uses `/v1/chat/completions` on the same protected origin.
+Open `https://<guest-ip>:9090/` for cards, VRAM, and load/unload. Inference uses
+`/v1/chat/completions` on the same origin and needs the key too.
 
 ## From the operator machine
 
 ```bash
-cameo fleet status --node 192.168.4.20:9090 --key "$CAMEO_CONSOLE_KEY"
-cameo fleet start qwen2.5-7b --node 192.168.4.20:9090 --key "$CAMEO_CONSOLE_KEY"
-knossos task "…" --engine cameo --base-url http://192.168.4.20:9090/v1
+cameo fleet status --node https://192.168.4.20:9090 --key "$CAMEO_CONSOLE_KEY"
+cameo fleet start qwen2.5-7b --node https://192.168.4.20:9090 --key "$CAMEO_CONSOLE_KEY"
+knossos task "…" --engine cameo --base-url https://192.168.4.20:9090/v1
 ```
 
 If `start` fails without a key, the command prints the dashboard URL. Load

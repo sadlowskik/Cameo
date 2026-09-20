@@ -3,7 +3,8 @@
 //! This is deliberately *not* a general-purpose web server. The only client is
 //! Cameo's own dashboard, so it implements exactly what that needs: `GET`/`POST`,
 //! `Content-Length` request bodies, and `Connection: close`. No keep-alive, no
-//! chunked encoding, no TLS. Keeping it this small is what lets the daemon stay
+//! chunked encoding. TLS, when configured, wraps the accepted socket (see
+//! [`crate::tls`]) and this layer never knows. Keeping it this small is what lets the daemon stay
 //! dependency-light and self-contained, matching the rest of the project (the
 //! same reason the CLI shells out to `curl` rather than linking an HTTP stack).
 //!
@@ -31,9 +32,17 @@ pub const MAX_REQUEST_BODY_BYTES: usize = 1024 * 1024;
 /// 32 KiB is far beyond anything a browser or curl sends.
 const MAX_HEAD: u64 = 32 * 1024;
 
-/// How long a single connection may dawdle before we drop it, so a stalled or
-/// half-open client cannot pin a worker thread forever.
+/// How long a single write may dawdle before we drop the connection, so a
+/// stalled or half-open client cannot pin a worker thread forever.
 const IO_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Per-read stall limit while receiving a request.
+const READ_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Absolute budget for receiving one request (head and body). Per-read
+/// timeouts alone let a client trickle one byte every few seconds and hold a
+/// worker forever without ever tripping them; this bounds the whole receive.
+const REQUEST_DEADLINE: Duration = Duration::from_secs(30);
 
 /// Ceiling on concurrently served connections. One thread per connection is the
 /// right simplicity for a control plane, but without a cap a connection flood
@@ -42,24 +51,117 @@ const IO_TIMEOUT: Duration = Duration::from_secs(30);
 /// composing a 503 for an abuser); a handful of real clients never get near it.
 const MAX_CONNECTIONS: usize = 64;
 
-/// Owns one admitted connection slot. The decrement belongs in `Drop` so a
-/// panicking handler cannot permanently leak capacity and silently DoS the
-/// listener. Admission also makes the ceiling atomic instead of racy.
-struct ConnectionSlot(Arc<AtomicUsize>);
+/// Ceiling per remote address, so one LAN host cannot consume the global cap
+/// by itself. Loopback is exempt: a reverse proxy or the local updater funnels
+/// every client through 127.0.0.1 and must not be capped as one peer.
+const MAX_CONNECTIONS_PER_PEER: usize = 16;
 
-impl Drop for ConnectionSlot {
-    fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::Relaxed);
+/// Connection admission: a global ceiling plus a per-peer ceiling. Both counts
+/// are released in [`ConnectionSlot::drop`] so a panicking handler cannot
+/// permanently leak capacity and silently DoS the listener.
+#[derive(Default)]
+struct Admission {
+    total: AtomicUsize,
+    per_peer: std::sync::Mutex<HashMap<IpAddr, usize>>,
+}
+
+impl Admission {
+    fn admit(self: &Arc<Self>, peer: Option<IpAddr>) -> Option<ConnectionSlot> {
+        self.total
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                (current < MAX_CONNECTIONS).then_some(current + 1)
+            })
+            .ok()?;
+        let counted = match peer {
+            Some(ip) if !ip.is_loopback() => {
+                let mut map = self
+                    .per_peer
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let count = map.entry(ip).or_insert(0);
+                if *count >= MAX_CONNECTIONS_PER_PEER {
+                    drop(map);
+                    self.total.fetch_sub(1, Ordering::Relaxed);
+                    return None;
+                }
+                *count += 1;
+                Some(ip)
+            }
+            _ => None,
+        };
+        Some(ConnectionSlot {
+            admission: Arc::clone(self),
+            peer: counted,
+        })
     }
 }
 
-fn admit_connection(in_flight: &Arc<AtomicUsize>) -> Option<ConnectionSlot> {
-    in_flight
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
-            (current < MAX_CONNECTIONS).then_some(current + 1)
-        })
-        .ok()
-        .map(|_| ConnectionSlot(Arc::clone(in_flight)))
+/// Owns one admitted connection slot.
+struct ConnectionSlot {
+    admission: Arc<Admission>,
+    peer: Option<IpAddr>,
+}
+
+impl Drop for ConnectionSlot {
+    fn drop(&mut self) {
+        self.admission.total.fetch_sub(1, Ordering::Relaxed);
+        if let Some(ip) = self.peer {
+            let mut map = self
+                .admission
+                .per_peer
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if let Some(count) = map.get_mut(&ip) {
+                *count = count.saturating_sub(1);
+                if *count == 0 {
+                    map.remove(&ip);
+                }
+            }
+        }
+    }
+}
+
+/// End-of-response hook: a TLS stream sends `close_notify` so the client can
+/// tell a complete response from a truncated one; plain TCP needs nothing.
+trait Finish {
+    fn finish(&mut self) {}
+}
+
+impl Finish for TcpStream {}
+
+impl Finish for rustls::StreamOwned<rustls::ServerConnection, TcpStream> {
+    fn finish(&mut self) {
+        self.conn.send_close_notify();
+        let _ = self.flush();
+    }
+}
+
+/// Enforces [`REQUEST_DEADLINE`] on reads; writes pass straight through so a
+/// long streaming response is not cut off by the receive budget.
+struct DeadlineStream<S> {
+    inner: S,
+    deadline: std::time::Instant,
+}
+
+impl<S: std::io::Read> std::io::Read for DeadlineStream<S> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if std::time::Instant::now() >= self.deadline {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "request deadline exceeded",
+            ));
+        }
+        self.inner.read(buf)
+    }
+}
+
+impl<S: Write> Write for DeadlineStream<S> {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.inner.write(bytes)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
 }
 
 /// A parsed HTTP request. Header keys are lowercased; the path is already split
@@ -188,6 +290,7 @@ impl Response {
 /// pool would be complexity without payoff.
 pub fn serve<F>(
     listener: TcpListener,
+    tls: Option<Arc<rustls::ServerConfig>>,
     handler: F,
     mut stop: impl FnMut() -> bool,
 ) -> std::io::Result<()>
@@ -195,11 +298,11 @@ where
     F: Fn(&Request) -> Response + Send + Sync + 'static,
 {
     let handler = Arc::new(handler);
-    let in_flight = Arc::new(AtomicUsize::new(0));
+    let admission = Arc::new(Admission::default());
     listener.set_nonblocking(true)?;
     while !stop() {
-        let stream = match listener.accept() {
-            Ok((stream, _)) => stream,
+        let (stream, peer) = match listener.accept() {
+            Ok(accepted) => accepted,
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 std::thread::sleep(Duration::from_millis(20));
                 continue;
@@ -210,27 +313,63 @@ where
         // Over the cap, drop the connection on the floor: the accept loop stays
         // fast and no thread is spent on the excess. Admission is atomic, so
         // even a connection burst cannot overshoot the thread ceiling.
-        let Some(slot) = admit_connection(&in_flight) else {
+        let Some(slot) = admission.admit(Some(peer.ip())) else {
             drop(stream);
             continue;
         };
         let handler = Arc::clone(&handler);
+        let tls = tls.clone();
         std::thread::spawn(move || {
             let _slot = slot;
-            let _ = handle_connection(stream, handler.as_ref());
+            let _ = handle_connection(stream, tls.as_ref(), handler.as_ref());
         });
     }
     Ok(())
 }
 
-fn handle_connection<F>(stream: TcpStream, handler: &F) -> std::io::Result<()>
+fn handle_connection<F>(
+    stream: TcpStream,
+    tls: Option<&Arc<rustls::ServerConfig>>,
+    handler: &F,
+) -> std::io::Result<()>
 where
     F: Fn(&Request) -> Response,
 {
-    stream.set_read_timeout(Some(IO_TIMEOUT))?;
+    stream.set_read_timeout(Some(READ_TIMEOUT))?;
     stream.set_write_timeout(Some(IO_TIMEOUT))?;
     let peer_ip = stream.peer_addr().ok().map(|address| address.ip());
-    let mut reader = BufReader::new(stream);
+    // A second handle on the same socket for drain registration and the
+    // write-timeout tweak, whether or not TLS wraps the primary one.
+    let control = stream.try_clone()?;
+    match tls {
+        Some(config) => {
+            let connection = rustls::ServerConnection::new(Arc::clone(config))
+                .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+            handle_stream(
+                rustls::StreamOwned::new(connection, stream),
+                control,
+                peer_ip,
+                handler,
+            )
+        }
+        None => handle_stream(stream, control, peer_ip, handler),
+    }
+}
+
+fn handle_stream<S, F>(
+    stream: S,
+    control: TcpStream,
+    peer_ip: Option<IpAddr>,
+    handler: &F,
+) -> std::io::Result<()>
+where
+    S: std::io::Read + Write + Finish,
+    F: Fn(&Request) -> Response,
+{
+    let mut reader = BufReader::new(DeadlineStream {
+        inner: stream,
+        deadline: std::time::Instant::now() + REQUEST_DEADLINE,
+    });
 
     let response = match parse_request(&mut reader) {
         Ok(mut req) => {
@@ -245,16 +384,16 @@ where
     };
 
     if response.completion.is_some() {
-        reader
-            .get_ref()
-            .set_write_timeout(Some(Duration::from_millis(250)))?;
+        control.set_write_timeout(Some(Duration::from_millis(250)))?;
     }
     let _registration = response
         .completion
         .as_ref()
-        .map(|permit| permit.register_client(reader.get_ref()))
+        .map(|permit| permit.register_client(&control))
         .transpose()?;
-    write_response(reader.get_mut(), response)
+    let written = write_response(reader.get_mut(), response);
+    reader.get_mut().inner.finish();
+    written
 }
 
 #[derive(Debug)]
@@ -562,10 +701,10 @@ where
     F: Fn(&Request) -> Response + Send + Sync + 'static,
 {
     let handler = Arc::new(handler);
-    let in_flight = Arc::new(AtomicUsize::new(0));
+    let admission = Arc::new(Admission::default());
     for stream in listener.incoming() {
         let Ok(stream) = stream else { continue };
-        let Some(slot) = admit_connection(&in_flight) else {
+        let Some(slot) = admission.admit(None) else {
             drop(stream);
             continue;
         };
@@ -615,20 +754,149 @@ mod tests {
         use std::panic::{catch_unwind, AssertUnwindSafe};
         use std::sync::atomic::Ordering;
 
-        let in_flight = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let admission = std::sync::Arc::new(super::Admission::default());
+        let peer: std::net::IpAddr = "10.0.0.7".parse().unwrap();
         let result = catch_unwind(AssertUnwindSafe(|| {
-            let _slot = super::admit_connection(&in_flight).unwrap();
-            assert_eq!(in_flight.load(Ordering::Relaxed), 1);
+            let _slot = admission.admit(Some(peer)).unwrap();
+            assert_eq!(admission.total.load(Ordering::Relaxed), 1);
             panic!("handler fixture");
         }));
         assert!(result.is_err());
-        assert_eq!(in_flight.load(Ordering::Relaxed), 0);
+        assert_eq!(admission.total.load(Ordering::Relaxed), 0);
+        assert!(admission.per_peer.lock().unwrap().is_empty());
+    }
+
+    /// Accepts any server certificate: the test talks to the daemon's own
+    /// self-signed leaf and only checks that HTTP flows through TLS.
+    #[derive(Debug)]
+    struct TrustAnything;
+
+    impl rustls::client::danger::ServerCertVerifier for TrustAnything {
+        fn verify_server_cert(
+            &self,
+            _end_entity: &rustls::pki_types::CertificateDer<'_>,
+            _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+            _server_name: &rustls::pki_types::ServerName<'_>,
+            _ocsp_response: &[u8],
+            _now: rustls::pki_types::UnixTime,
+        ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+            Ok(rustls::client::danger::ServerCertVerified::assertion())
+        }
+        fn verify_tls12_signature(
+            &self,
+            _message: &[u8],
+            _cert: &rustls::pki_types::CertificateDer<'_>,
+            _dss: &rustls::DigitallySignedStruct,
+        ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+            Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+        }
+        fn verify_tls13_signature(
+            &self,
+            _message: &[u8],
+            _cert: &rustls::pki_types::CertificateDer<'_>,
+            _dss: &rustls::DigitallySignedStruct,
+        ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+            Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+        }
+        fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+            rustls::crypto::aws_lc_rs::default_provider()
+                .signature_verification_algorithms
+                .supported_schemes()
+        }
+    }
+
+    #[test]
+    fn serves_https_with_a_minted_certificate_and_refuses_plain_http() {
+        use std::io::{Read, Write};
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+
+        let dir = std::env::temp_dir().join(format!("cameo-https-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let configured = crate::tls::configure(Some(&dir), "127.0.0.1")
+            .unwrap()
+            .unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_flag = Arc::clone(&stop);
+        let server = std::thread::spawn(move || {
+            super::serve(
+                listener,
+                Some(configured.config),
+                |req| super::Response::text(200, format!("secure {}", req.path)),
+                move || stop_flag.load(Ordering::SeqCst),
+            )
+        });
+
+        // A TLS client gets a normal HTTP response.
+        let client_config = rustls::ClientConfig::builder()
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(TrustAnything))
+            .with_no_client_auth();
+        let name = rustls::pki_types::ServerName::try_from("localhost").unwrap();
+        let connection = rustls::ClientConnection::new(Arc::new(client_config), name).unwrap();
+        let socket = std::net::TcpStream::connect(address).unwrap();
+        socket
+            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .unwrap();
+        let mut tls = rustls::StreamOwned::new(connection, socket);
+        tls.write_all(b"GET /ping HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .unwrap();
+        let mut reply = String::new();
+        let _ = tls.read_to_string(&mut reply);
+        assert!(reply.starts_with("HTTP/1.1 200"), "got: {reply}");
+        assert!(reply.ends_with("secure /ping"), "got: {reply}");
+
+        // Plain HTTP on the TLS port is not a request the server will answer.
+        let mut plain = std::net::TcpStream::connect(address).unwrap();
+        plain
+            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .unwrap();
+        plain
+            .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .unwrap();
+        let mut junk = Vec::new();
+        let _ = plain.read_to_end(&mut junk);
+        assert!(
+            !junk.starts_with(b"HTTP/1.1 200"),
+            "plain HTTP was served on the TLS port"
+        );
+
+        stop.store(true, Ordering::SeqCst);
+        server.join().unwrap().unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn one_peer_cannot_take_the_whole_listener() {
+        let admission = std::sync::Arc::new(super::Admission::default());
+        let peer: std::net::IpAddr = "10.0.0.8".parse().unwrap();
+        let held: Vec<_> = (0..super::MAX_CONNECTIONS_PER_PEER)
+            .map(|_| admission.admit(Some(peer)).unwrap())
+            .collect();
+        assert!(admission.admit(Some(peer)).is_none(), "per-peer cap");
+        let other: std::net::IpAddr = "10.0.0.9".parse().unwrap();
+        assert!(
+            admission.admit(Some(other)).is_some(),
+            "others still admitted"
+        );
+        let loopback: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+        assert!(admission.admit(Some(loopback)).is_some(), "loopback exempt");
+        drop(held);
+        assert!(admission.admit(Some(peer)).is_some(), "released on drop");
     }
 
     #[test]
     fn serve_can_stop_without_waiting_for_an_incoming_connection() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        super::serve(listener, |_| super::Response::text(200, "unused"), || true).unwrap();
+        super::serve(
+            listener,
+            None,
+            |_| super::Response::text(200, "unused"),
+            || true,
+        )
+        .unwrap();
     }
 
     #[test]
@@ -642,6 +910,7 @@ mod tests {
         let server = std::thread::spawn(move || {
             super::serve(
                 listener,
+                None,
                 |_| super::Response::text(200, "shutdown-fixture"),
                 || observed.load(Ordering::SeqCst),
             )
@@ -671,7 +940,7 @@ mod tests {
         let (done_tx, done_rx) = std::sync::mpsc::channel();
         let server = std::thread::spawn(move || {
             let (stream, _) = listener.accept().unwrap();
-            let result = super::handle_connection(stream, &|_| {
+            let result = super::handle_connection(stream, None, &|_| {
                 let started = started_tx.clone();
                 let mut response = super::Response::streaming(move |sink| {
                     sink.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n")?;

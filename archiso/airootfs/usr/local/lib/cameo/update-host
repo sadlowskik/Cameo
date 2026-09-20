@@ -9,6 +9,7 @@ import json
 import os
 import re
 import shutil
+import ssl
 import stat
 import subprocess
 import sys
@@ -276,9 +277,22 @@ class LinuxOperations:
 
     def health_check(self, journal: dict) -> None:
         run(["systemctl", "is-active", "--quiet", "cameod.service"])
+        port = os.environ.get("CAMEO_CONSOLE_PORT", "9090")
+        certificate = Path("/var/lib/cameo/tls/cert.pem")
+        if certificate.is_file():
+            # Pin the daemon's own self-signed certificate; hostname checking is
+            # meaningless for a loopback probe of a self-minted certificate.
+            context = ssl.create_default_context(cafile=str(certificate))
+            context.check_hostname = False
+            scheme = "https"
+        else:
+            context = None
+            scheme = "http"
         for endpoint in ("healthz", "readyz"):
             try:
-                with urllib.request.urlopen(f"http://127.0.0.1:9090/{endpoint}", timeout=10) as response:
+                with urllib.request.urlopen(
+                    f"{scheme}://127.0.0.1:{port}/{endpoint}", timeout=10, context=context
+                ) as response:
                     body = json.load(response)
             except Exception as exc:
                 raise UpdateError(f"{endpoint} probe failed: {exc}") from exc
@@ -287,7 +301,8 @@ class LinuxOperations:
 
     def bless(self, journal: dict) -> None:
         if Path("/sys/firmware/efi").is_dir():
-            run(["systemd-bless-boot"])
+            # Lives in /usr/lib/systemd, which is not on PATH.
+            run(["/usr/lib/systemd/systemd-bless-boot"])
         else:
             run(["grub-set-default", journal["boot_entry"]])
 

@@ -43,6 +43,7 @@ mod rate_limit;
 mod resolve;
 mod sessions;
 mod supervisor;
+mod tls;
 
 #[derive(Parser)]
 #[command(
@@ -89,6 +90,13 @@ struct Args {
     /// Defaults to /var/lib/cameo on Unix and the user's local app-data on Windows.
     #[arg(long, value_name = "DIR", env = "CAMEO_STATE_DIR")]
     state_dir: Option<PathBuf>,
+
+    /// Serve HTTPS using `cert.pem`/`key.pem` in this directory, minting a
+    /// self-signed pair on first start if absent. Reads `CAMEO_TLS_DIR`;
+    /// `CAMEO_TLS=off` disables it. Unset = plain HTTP (dev, or behind your own
+    /// TLS proxy).
+    #[arg(long, value_name = "DIR", env = "CAMEO_TLS_DIR")]
+    tls_dir: Option<PathBuf>,
 
     /// Run as a Cameo Mesh hub: serve the central dashboard and accept paired
     /// Cameo Link nodes. A farm token enables only the legacy join path.
@@ -320,11 +328,10 @@ fn run(args: Args) -> Result<()> {
         rate_limits: rate_limit::RateLimiter::new(),
         hub_enabled: args.hub,
         farm_token: args.farm_token.clone(),
-        // /v1 is only open without a credential on a loopback bind, or when the
-        // operator explicitly opts in. A routable bind with an operator-only key
-        // ring keeps /v1 gated to that key rather than serving the GPU to the LAN.
-        open_inference: is_loopback(&args.host)
-            || std::env::var_os("CAMEO_OPEN_INFERENCE").is_some(),
+        // /v1 is keyless only on a daemon with no keys at all, or with this
+        // explicit opt-in. Never derived from the bind address: a loopback bind
+        // is exactly what sits behind a reverse proxy or a Mesh callback.
+        open_inference: std::env::var_os("CAMEO_OPEN_INFERENCE").is_some(),
     });
     let shutdown_requested = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let signal_flag = Arc::clone(&shutdown_requested);
@@ -400,15 +407,30 @@ fn run(args: Args) -> Result<()> {
 
     let listener = TcpListener::bind((args.host.as_str(), args.port))
         .map_err(|e| anyhow!("binding {}:{}: {e}", args.host, args.port))?;
+    let tls = tls::configure(args.tls_dir.as_deref(), &args.host)?;
+    let scheme = if tls.is_some() { "https" } else { "http" };
+    if let Some(configured) = &tls {
+        eprintln!(
+            "cameod: TLS {} {} (sha256 {})",
+            if configured.minted {
+                "certificate minted at"
+            } else {
+                "certificate loaded from"
+            },
+            configured.cert_path.display(),
+            configured.fingerprint
+        );
+    }
     app::recover_endpoints(&state);
 
     eprintln!(
-        "cameod: {} on http://{}:{} [{}]{}",
+        "cameod: {} on {}://{}:{} [{}]{}",
         if args.hub {
             "Cameo Mesh hub"
         } else {
             "console"
         },
+        scheme,
         args.host,
         args.port,
         match posture {
@@ -451,10 +473,14 @@ fn run(args: Args) -> Result<()> {
     }
 
     let serving = Arc::clone(&state);
+    let tls_config = tls
+        .as_ref()
+        .map(|configured| Arc::clone(&configured.config));
     let mut shutdown_started = None;
     let mut shutdown_error = None;
     http::serve(
         listener,
+        tls_config,
         move |req| app::route(&serving, req),
         || {
             if !shutdown_requested.load(std::sync::atomic::Ordering::SeqCst) {

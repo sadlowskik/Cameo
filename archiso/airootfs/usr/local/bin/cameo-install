@@ -147,10 +147,19 @@ partdev() {
 DISK_SIZE="$(lsblk -dno SIZE "$TARGET" 2>/dev/null | tr -d ' ')"
 DISK_MODEL="$(lsblk -dno MODEL "$TARGET" 2>/dev/null | sed 's/[ \t]*$//')"
 DISK_BYTES="$(blockdev --getsize64 "$TARGET")"
-ROOT_SLOT_GIB=24
-MIN_DISK_BYTES=$((54 * 1024 * 1024 * 1024))
+# Size each A/B system slot from the image actually being installed rather than
+# a fixed 24 GiB: the Vulkan image unpacks to ~4 GiB, the universal (ROCm) one to
+# ~12 GiB. 2.5x the unpacked size leaves headroom for updates and opt-in installs
+# such as `cameo rocm install`; never below 8 GiB. The state partition takes the
+# rest of the disk and must have at least 4 GiB for models.
+image_bytes="$(du -sxB1 /run/archiso/airootfs 2>/dev/null | awk '{print $1}')"
+[ -n "$image_bytes" ] && [ "$image_bytes" -gt 0 ] || image_bytes=$((4 * 1024 * 1024 * 1024))
+ROOT_SLOT_GIB=$(( (image_bytes * 5 / 2 + 1024 * 1024 * 1024 - 1) / (1024 * 1024 * 1024) ))
+[ "$ROOT_SLOT_GIB" -ge 8 ] || ROOT_SLOT_GIB=8
+MIN_DISK_GIB=$(( 2 * ROOT_SLOT_GIB + 1 + 4 ))
+MIN_DISK_BYTES=$(( MIN_DISK_GIB * 1024 * 1024 * 1024 ))
 [ "$DISK_BYTES" -ge "$MIN_DISK_BYTES" ] \
-  || die "$TARGET is too small for two ${ROOT_SLOT_GIB} GiB system slots plus persistent state (need at least 54 GiB)."
+  || die "$TARGET is too small: two ${ROOT_SLOT_GIB} GiB system slots + 1 GiB boot + 4 GiB state need at least ${MIN_DISK_GIB} GiB."
 
 if [ "$FIRMWARE" = "uefi" ]; then
   EFI_PART="$(partdev 1)"; BOOT_PART="$EFI_PART"
@@ -326,6 +335,12 @@ BINARIES=()
 FILES=()
 HOOKS=(base udev autodetect microcode modconf kms keyboard keymap consolefont block filesystems fsck)
 EOF
+# releng ships /etc/mkinitcpio.conf.d/archiso.conf, and drop-ins override the
+# main file, so without removing it the disk initramfs would still carry the
+# archiso hooks and hunt for the live squashfs at every boot. releng's sshd
+# drop-in (root password logins) goes with it.
+rm -f /mnt/etc/mkinitcpio.conf.d/archiso.conf /mnt/etc/ssh/sshd_config.d/10-archiso.conf
+rmdir /mnt/etc/mkinitcpio.conf.d 2>/dev/null || true
 cat > /mnt/etc/mkinitcpio.d/linux.preset <<'EOF'
 ALL_config="/etc/mkinitcpio.conf"
 ALL_kver="/boot/vmlinuz-linux"
@@ -368,9 +383,10 @@ umask 077
 cat > /mnt/etc/cameo/cameod.env <<EOF
 # Cameo console — persistent settings written by cameo-install.
 # This key is stable across reboots. cameo-hello prints it at login.
-# cameod's built-in listener is HTTP-only. Keep privileged credentials off the
-# LAN; administer through a local browser or an SSH/VPN tunnel.
-CAMEO_CONSOLE_HOST=127.0.0.1
+# cameod serves HTTPS on every interface with a self-signed certificate kept in
+# /var/lib/cameo/tls; the key is required for every action. Set the host to
+# 127.0.0.1 to make the console reachable only from this machine.
+CAMEO_CONSOLE_HOST=0.0.0.0
 CAMEO_CONSOLE_KEY=$key
 CAMEO_CONSOLE_PORT=9090
 # CAMEO_AUTOSTART_MODEL=none
@@ -538,6 +554,11 @@ PY
 arch-chroot /mnt systemctl enable systemd-networkd systemd-resolved iwd cameod cameo-firstboot cameo-update-recover.service cameo-update-health.service 2>/dev/null || \
   arch-chroot /mnt systemctl enable systemd-networkd systemd-resolved iwd cameod
 arch-chroot /mnt mkinitcpio -P
+# Prove the disk initramfs is a normal one: any archiso hook left inside means
+# the copy would hunt for the live USB instead of mounting its root.
+if lsinitcpio -a /mnt/boot/initramfs-linux.img 2>/dev/null | grep -qi 'archiso'; then
+  die "the generated initramfs still contains archiso hooks; the installed system would not boot."
+fi
 if [ "$FIRMWARE" = "uefi" ]; then
   # Omitting `default` makes systemd-boot use assessment-aware preferred-entry
   # selection. A future `cameo-B+3.conf` trial therefore falls behind slot A
@@ -600,9 +621,11 @@ info "Leave the USB plugged in. Reboot first."
 info "When the screen goes dark or you see the firmware logo, THEN unplug the USB."
 info "Pulling it now kills the live OS (SQUASHFS unable to read page/block …)."
 info "Log in as ${C_BOLD}${USERNAME_VAL}${C_OFF} (or root) with the password you set."
-info "Web console:  http://<this-box-ip>:9090   or   http://${HOSTNAME_VAL}.local:9090"
+info "Web console:  https://<this-box-ip>:9090   or   https://${HOSTNAME_VAL}.local:9090"
 info "Console key:  ${key}"
 info "  (stored in /etc/cameo/cameod.env — stable across reboots now)"
+info "The certificate is self-signed: the browser warns once. Compare the"
+info "fingerprint printed at login before accepting it."
 info "After login the URL and key print again."
 info "Wi-Fi is only for attaching this box as a fleet node (then: iwctl)."
 info 'On the console: press "Start qwen2.5-0.5b and chat".'

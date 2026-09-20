@@ -41,13 +41,18 @@ You do **not** need Wi-Fi for this.
 
 ## 4. Open the console and chat
 
-After login the box prints the console URL and key (`cameo-hello` reprints them).
-Plug Ethernet if the box has a port so another device on the LAN can open:
+After login the box prints the console URL, the key and the certificate
+fingerprint (`cameo-hello` reprints them). Plug Ethernet if the box has a port
+so another device on the LAN can open:
 
-`http://cameo.local:9090` or `http://<the-box>:9090`
+`https://cameo.local:9090` or `https://<the-box>:9090`
 
-Enter the key. Press **Start qwen2.5-0.5b and chat**. That starter is a smoke
-test (~0.5B). Extra GGUFs: drop them in `/var/lib/cameo/models`.
+The certificate is self-signed, so the browser warns once: compare the
+fingerprint it shows with the one printed on the box, then accept it. Enter the
+key. Press **Start qwen2.5-0.5b and chat**. That starter is a smoke test
+(~0.5B). Extra GGUFs: drop them in `/var/lib/cameo/models`.
+
+Never port-forward the console to the internet; it is built for your LAN.
 
 Live USB (without installing): the console key **changes every reboot**.
 Install to disk to keep it.

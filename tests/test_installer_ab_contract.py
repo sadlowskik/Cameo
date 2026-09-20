@@ -14,8 +14,12 @@ class InstallerAbContractTests(unittest.TestCase):
     def test_layout_has_two_fixed_system_slots_and_separate_state(self):
         for label in ("CAMEO-A", "CAMEO-B", "CAMEO-STATE"):
             self.assertIn(label, self.script)
-        self.assertIn('ROOT_SLOT_GIB=24', self.script)
-        self.assertIn('MIN_DISK_BYTES=$((54 * 1024 * 1024 * 1024))', self.script)
+        # Slots are sized from the unpacked image (2.5x, floor 8 GiB) and the
+        # minimum disk follows: two slots + 1 GiB boot + 4 GiB state.
+        self.assertIn('du -sxB1 /run/archiso/airootfs', self.script)
+        self.assertIn('[ "$ROOT_SLOT_GIB" -ge 8 ] || ROOT_SLOT_GIB=8', self.script)
+        self.assertIn('MIN_DISK_GIB=$(( 2 * ROOT_SLOT_GIB + 1 + 4 ))', self.script)
+        self.assertNotIn('ROOT_SLOT_GIB=24', self.script)
         self.assertNotIn('-c2:cameo-root', self.script)
 
     def test_identity_configuration_models_and_homes_are_persistent(self):

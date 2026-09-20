@@ -4,6 +4,10 @@ Status: canonical pre-v1 plan
 
 Recompiled: 2026-09-08
 
+Amended: 2026-09-20 (full functionality/size/security audit; hive scope: training
+in v1 as an on-demand devkit, Knossos as an on-demand pinned install, single
+Vulkan ISO with on-demand ROCm, image-based A/B updates, Mesh discovery).
+
 Cameo baseline: `311f7cd` (`v0.2.0-beta.3`)
 
 Bundled Knossos baseline: `a20a3b8` (`v0.2.0-beta.1`)
@@ -27,8 +31,14 @@ OpenAI-compatible subset, and can route whole requests among paired nodes.
 
 The primary delivery is a headless Arch-based ISO. The container is a developer
 and deployment alternative, not the appliance's identity. Cameo does not promise
-that every AMD card works, pool VRAM across machines, or provide a training
-framework.
+that every AMD card works or pool VRAM across machines.
+
+The product target is a plug-and-play node: flash, install, and the box serves.
+A second box pairs into Cameo Mesh with one code and every node's console shows
+the whole pool. Training is in scope on Tier 1 and 2 hardware through an
+on-demand devkit (`cameo-devkit`); neither the devkit nor ROCm HIP nor Knossos is
+baked into the ISO image. Vulkan is the universal baseline on the image and every
+heavier stack is an opt-in install pinned to the image's package snapshot.
 
 ### Knossos
 
@@ -82,9 +92,10 @@ Ownership is strict:
 - The model proposes; policy authorizes; deterministic evidence decides whether
   a change is complete.
 
-The repositories remain separate. Cameo consumes a pinned Knossos release or
-submodule commit through `cameo-engine/v1`; neither repository may reach into
-the other's internals as an integration mechanism.
+The repositories remain separate. Cameo installs a pinned Knossos release on
+demand (`cameo knossos install`, digest-verified) and talks to it only through
+`cameo-engine/v1`; neither repository may reach into the other's internals as an
+integration mechanism. The `daedalus` submodule is no longer an ISO build input.
 
 ## 3. Words that have release meaning
 
@@ -131,7 +142,14 @@ Evidence observed on 2026-09-08: `cargo test --workspace` passed on Windows.
 Not established:
 
 - a retained successful build, boot, install, upgrade, rollback, and recovery run
-  for the current ISO on real hardware;
+  for the current ISO on real hardware. The 2026-09-20 audit found the current
+  ISO fails the guided-install preflight (`e2fsprogs` absent), would install a
+  root that cannot boot (inherited `mkinitcpio.conf.d/archiso.conf`), gives the
+  daemon no GPU device access (`cameo` user lacks `render`/`video`), cannot find
+  ROCm tools from units (`/opt/rocm/bin` off PATH), loses the console key on any
+  daemon restart (`RuntimeDirectory=`), has an ordering cycle on
+  `cameo-firstboot`, and serves `/v1` without a key on any loopback bind. All are
+  open (`CAM-ISO-002`, `CAM-SEC-001`);
 - a non-empty certified AMD support matrix or calibrated memory/performance data;
 - Secure Boot qualification, disk-fault/power-loss qualification, encryption,
   quotas/reserve policy, or replacement-machine restore;
@@ -210,8 +228,13 @@ Not established:
 5. Update transactionally and automatically return to the prior bootable state
    when health checks fail.
 6. Produce a redacted support bundle and a restorable backup.
-7. Run bundled Knossos against the local engine without internet.
+7. Install a pinned Knossos release on demand and run it against the local
+   engine; the install needs network, the run does not.
 8. Label every capability and hardware combination by evidence level.
+9. Install the training devkit on demand on a Tier 1 or 2 node and complete a
+   bounded single-node fine-tune through `cameo train`.
+10. Pair a second node into Cameo Mesh with one code, after LAN discovery
+    surfaces it as a candidate, and route a whole request to it.
 
 ### Knossos v1 must
 
@@ -233,6 +256,8 @@ Not established:
 - training a competitive Daedalus model;
 - claiming every AMD GPU is supported;
 - pooling VRAM or sharding one model across consumer LAN nodes;
+- multi-node training (rendezvous across nodes) — post-v1;
+- baking ROCm HIP, PyTorch, or Knossos into the ISO image;
 - Kubernetes as a supported appliance path;
 - unrestricted shell or ambient credentials in Knossos;
 - autonomous publishing, deployment, spending, or destructive work without an
@@ -314,10 +339,25 @@ came from the harness, the model, more compute, data leakage, or grader gaming.
 
 Owner: Cameo appliance.
 
-- Build universal and lite ISOs twice from a clean tag and compare declared
-  reproducible outputs.
-- Boot in QEMU; install to virtual disk; reboot; validate persistence, A/B update,
-  interrupted update, fallback, backup, restore, and factory-reset boundaries.
+- Ship one Vulkan ISO as the lead artifact; the universal (ROCm-baked) ISO stays
+  buildable on manual dispatch for air-gapped Tier 1/2 boxes only. Build twice
+  from a clean tag and compare declared reproducible outputs.
+- Make the QEMU job a required gate: boot the ISO, assert autologin over serial,
+  probe `/readyz`, run the guided installer unattended against a virtual disk,
+  reboot from that disk, probe `/readyz` again. Then validate persistence, A/B
+  update, interrupted update, fallback, backup, restore, and factory-reset.
+- Declare the package closure: `archiso/required-binaries.txt` lists every
+  binary any script or unit calls; CI asserts each exists in the built airootfs.
+- Take releng files by allowlist, never the whole tree; CI diffs the allowlisted
+  files against upstream archiso and fails on drift.
+- `cameo rocm install`: Tier 1/2 only, persistent root only, installs `ggml-hip`
+  pinned to `/etc/cameo/snapshot`, restarts `cameod`; suggested by first boot
+  and the console, never automatic.
+- Trim the image: drop `linux-headers`; replace the `linux-firmware` metapackage
+  with the AMD, Wi-Fi and `whence` split packages the image can use.
+- Console posture: bind the LAN with the generated key by default and print it
+  at login; built-in TLS (self-signed at first boot, fingerprint printed) lands
+  under workstream E. The SSH-tunnel guidance is removed.
 - Run `scripts/phase1/RUNBOOK.md` on representative legacy Vulkan, current consumer
   ROCm, datacenter ROCm, and APU/host-offload systems.
 - Record exact artifact digest, firmware, kernel, Mesa/ROCm, GPU, VRAM/RAM, model
@@ -344,6 +384,19 @@ Owner: Cameo control plane.
 - Store immutable model provenance, license, source, digest, GGUF metadata,
   compatible templates, and import/export lineage; quarantine unknown input.
 - Make update-state schema compatibility and rollback behavior explicit.
+- Move to image-based A/B updates: an update bundle is a signed `airootfs.sfs`;
+  apply is the installer's own `unsquashfs` into the inactive slot followed by the
+  existing boot trial and health commit. Kernel, Mesa, llama.cpp and ROCm move as
+  one validated set; the rsync-and-overlay path is removed.
+- Move boot-time logic into the binary (`cameo hello`, `cameo storage`,
+  `cameo seed`); the shell scripts become one-line wrappers.
+- `/v1` requires a consumer key regardless of bind address; add an absolute
+  per-connection deadline and a per-IP connection cap; validate `Host` and
+  `Origin`; close the pairing enrollment oracle; escape `\r` in metrics.
+- Built-in TLS on `cameod`; managed serving as supervised, restart-on-failure
+  services so a rebooted node brings its models back unattended.
+- Demote live mode to try-it only: remove `cameo-persist-cache` and the
+  `CAMEO_DATA` auto-mount. Install is the one persistence story.
 - Add structured event IDs, retention/rotation, alert thresholds, and privacy levels.
 
 Exit: crash and fault injection cannot produce an unowned process, false-ready
@@ -353,7 +406,14 @@ endpoint, lost capacity, silent model substitution, or unrecoverable state.
 
 Owner: Cameo networking.
 
-- Add automatic local discovery without treating discovery as trust.
+- Add automatic local discovery without treating discovery as trust: a small
+  signed UDP multicast beacon from `cameod` (node id, version, gateway address)
+  surfaces candidates in the console with a join button; pairing remains the
+  only trust step. No Avahi dependency.
+- Route pool-wide: the hub's `/v1` forwards by model to the node holding it
+  through the existing dependency-free proxy; each node's own `/v1` keeps working.
+- Replicate models hub-to-node over the paired channel with digest verification;
+  residency and eviction become pool-aware (the hub asks a node to load or evict).
 - Bind paired device identity to mTLS certificates with rotation and revocation.
 - Advertise fresh capacity with bounded leases and reclaim ownership after loss.
 - Add remote cancellation, session affinity, overload behavior, model replication
@@ -386,7 +446,8 @@ Owner: release maintainer; witnessed by an independent tester.
 
 - Install Cameo from the candidate ISO on a supported AMD machine.
 - Start the bundled model and verify `/v1` sync and SSE responses.
-- Launch the bundled Knossos artifact with `--engine cameo` and no internet.
+- Install the pinned Knossos release with `cameo knossos install`, then launch it
+  with `--engine cameo`; the run itself uses no internet.
 - Complete a repository change through Field or ACP, inspect the result, accept it,
   reboot, and confirm mission and endpoint recovery.
 - Repeat with a refused oversized load, leased-model eviction conflict, cancelled
@@ -394,6 +455,35 @@ Owner: release maintainer; witnessed by an independent tester.
 
 Exit: the artifact-only transcript contains hashes and evidence for every step and
 requires no repository checkout, development server, or undocumented credential.
+
+### J. Training devkit (v1, on demand)
+
+Owner: Cameo appliance.
+
+- `cameo-devkit install`: a Python venv at `/var/lib/cameo/devkit` holding the
+  official PyTorch ROCm wheel from a committed hash-locked requirements file;
+  refused on the RAM overlay; free-space and Tier 1/2 preflight; `--dry-run`.
+- `cameo train` finds `torchrun` on PATH, then in the devkit, and runs as a
+  supervised job with a VRAM reservation the placement engine respects;
+  training and inference share one admission path and refuse rather than
+  oversubscribe.
+- Multi-node `torchrun` with the hub as rendezvous is post-v1.
+
+Exit: a bounded fine-tune completes on one Tier 1 node from release artifacts,
+with the devkit install, the run, and the reservation visible in the console.
+
+### K. Knossos delivery
+
+Owner: cross-product release maintainer.
+
+- `cameo knossos install <version>`: downloads the pinned Knossos release,
+  verifies its digest against a committed lock, installs to persistent storage.
+- Remove the `daedalus` submodule from the ISO build and the `knossos` binary
+  from the image; the `cameo-engine/v1` contract and its mock conformance suite
+  remain the only coupling.
+
+Exit: a fresh install can obtain Knossos with one command and pass the
+`cameo-engine/v1` conformance run against the local engine.
 
 ### I. Supply chain, governance, and support
 
@@ -410,8 +500,11 @@ Exit: a release can be independently verified, serviced, revoked, and reproduced
 
 ## 8. Execution order
 
-1. **Restore a green baseline.** Fix Knossos recovery semantics; rerun Cameo,
-   Knossos, Field, docs generation, and link checks from clean trees.
+1. **Restore a green baseline.** Fix the 2026-09-20 audit P0s (`CAM-ISO-002`,
+   `CAM-SEC-001`) and land the required QEMU boot-install-reboot gate, the
+   required-binaries manifest and the releng allowlist; fix Knossos recovery
+   semantics; rerun Cameo, Knossos, Field, docs generation, and link checks from
+   clean trees.
 2. **Normalize releases.** Align versions, pin boundaries, artifact manifests,
    downloads, CI matrices, and clean packaging.
 3. **Prove each product alone.** Complete Knossos recovery/evaluation, Field
@@ -463,10 +556,25 @@ truthful than it found it.
    grader, frozen 27-case lock, and equal-budget Windows paired-control runner are
    implemented; run the live engine matrix, retain traces, obtain independent
    review, and publish the evidence.
-12. `CAM-ISO-001`: retain current-tag universal/lite build and QEMU install evidence.
-13. `CAM-HW-001`: collect the first complete real-AMD qualification record.
-14. `INT-001`: automate the mock Cameo/Knossos contract suite in both repositories.
-15. `RC-001`: script the artifact-only offline acceptance and fault matrix.
+12. `CAM-ISO-002` (P0): fix the audit boot/install blockers — `e2fsprogs`,
+    delete inherited `mkinitcpio.conf.d/archiso.conf` and
+    `sshd_config.d/10-archiso.conf`, `render`/`video` for the `cameo` user,
+    `/opt/rocm/bin` on unit PATH and in `gpu-detect`, `cameo-firstboot`
+    ordering, `RuntimeDirectory=` key loss, `hostname` → `ip`, root shell bash,
+    installer slot sizing; then make the QEMU install gate required.
+13. `CAM-SEC-001` (P0): `/v1` consumer key always; connection deadline and
+    per-IP cap; `Host`/`Origin` checks; pairing oracle; metrics escaping.
+14. `CAM-ISO-003`: single Vulkan lead ISO, universal on manual dispatch,
+    `cameo rocm install`, firmware/headers trims, LAN-bind console default.
+15. `CAM-UPD-002`: image-based A/B update bundle and apply path.
+16. `CAM-DEVKIT-001`: training devkit and `cameo train` integration (workstream J).
+17. `CAM-KNS-001`: `cameo knossos install`; remove the bundled binary and the
+    submodule build input (workstream K).
+18. `CAM-MESH-002`: discovery beacon, pool-wide `/v1` routing, replication.
+19. `CAM-ISO-001`: retain current-tag build and QEMU install evidence.
+20. `CAM-HW-001`: collect the first complete real-AMD qualification record.
+21. `INT-001`: automate the mock Cameo/Knossos contract suite in both repositories.
+22. `RC-001`: script the artifact-only acceptance and fault matrix.
 
 ## 10. Required release evidence
 
@@ -489,16 +597,19 @@ and manual interventions remain visible in the retained result.
 ## 11. Definition of v1 complete
 
 Cameo v1 is complete when a non-developer can turn a listed AMD system into a
-recoverable local inference appliance from a verifiable artifact and every support
-claim maps to a retained hardware record.
+recoverable local inference appliance from a verifiable artifact, can install the
+training devkit and complete a bounded fine-tune on a Tier 1 or 2 node, can pair
+a second node into Mesh with one code, and every support claim maps to a retained
+hardware record.
 
 Knossos v1 is complete when a non-developer can install one Rust artifact, run a
 bounded coding mission through any supported interface/engine, survive interruption,
 and receive independently verified changes without the model or harness being able
 to game completion.
 
-The combined product is complete when that Knossos workflow runs offline on a
-Cameo appliance, survives the defined compute and process failures, and can be
-operated through Field without weakening either product's policy or evidence model.
+The combined product is complete when that Knossos workflow runs on a Cameo
+appliance after a one-time `cameo knossos install`, with no internet needed at
+run time, survives the defined compute and process failures, and can be operated
+through Field without weakening either product's policy or evidence model.
 
 Anything less remains beta, regardless of test count or visual polish.

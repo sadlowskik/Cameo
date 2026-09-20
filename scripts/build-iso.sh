@@ -184,6 +184,17 @@ else
   log "WARNING: no /etc/shadow in the merged airootfs — root state is releng's"
 fi
 
+# 1a¾. root's login shell. releng points root at zsh and relies on
+# grml-zsh-config for a usable configuration; Cameo ships neither, and a zsh
+# with no rc files greets every autologin with the new-user wizard. bash comes
+# with `base` and sources /etc/profile (and profile.d/cameo-hello.sh) natively.
+if [ -f "$ROOTFS/etc/passwd" ]; then
+  sed -i 's#^\(root:.*:\)/usr/bin/zsh$#\1/bin/bash#' "$ROOTFS/etc/passwd"
+  grep -q '^root:.*:/bin/bash$' "$ROOTFS/etc/passwd" \
+    || die "could not point root's shell at /bin/bash in the merged passwd"
+  log "root's login shell is /bin/bash"
+fi
+
 # 1b. Drop the automation channel the merge inherits along with releng's root home.
 #
 # releng's /root/.zlogin runs /root/.automated_script.sh, which reads a `script=`
@@ -196,7 +207,11 @@ fi
 # Installation_guide goes with it: Cameo's installer is cameo-install, and a
 # command that opens the Arch installation guide is a promise the image cannot
 # keep.
-for f in root/.zlogin root/.automated_script.sh usr/local/bin/Installation_guide; do
+# releng's sshd drop-in permits root password logins over SSH; sshd is not
+# enabled here, but the file would otherwise be copied onto every installed
+# system by cameo-install and be live the moment someone enables sshd.
+for f in root/.zlogin root/.automated_script.sh usr/local/bin/Installation_guide \
+         etc/ssh/sshd_config.d/10-archiso.conf; do
   if [ -e "$BUILD/airootfs/$f" ]; then
     rm -f "$BUILD/airootfs/$f"
     log "Removed inherited $f"
@@ -511,6 +526,8 @@ KNOSSOS_TARGET="${CAMEO_KNOSSOS_TARGET_DIR:-${CAMEO_DAEDALUS_TARGET_DIR:-$WORK/k
 if [ "${CAMEO_SKIP_CARGO:-}" = "1" ]; then
   log "CAMEO_SKIP_CARGO=1 — using prebuilt bins in $CARGO_TARGET/release"
 else
+  [ -f "$REPO/daedalus/knossos-rs/Cargo.toml" ] \
+    || die "the daedalus submodule is empty — run: git -C $REPO submodule update --init"
   log "Building the cameo CLI + cameod daemon (release)..."
   mkdir -p "$CARGO_TARGET" "$KNOSSOS_TARGET"
   if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ] && command -v runuser >/dev/null 2>&1; then

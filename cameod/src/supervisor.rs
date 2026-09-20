@@ -1170,6 +1170,7 @@ pub(crate) fn esc(s: &str) -> String {
             '\\' => out.push_str("\\\\"),
             '"' => out.push_str("\\\""),
             '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
             _ => out.push(c),
         }
     }
@@ -1423,6 +1424,7 @@ mod tests {
     fn label_values_are_escaped() {
         assert_eq!(esc(r#"a"b\c"#), r#"a\"b\\c"#);
         assert_eq!(esc("line\nbreak"), "line\\nbreak");
+        assert_eq!(esc("carriage\rreturn"), "carriage\\rreturn");
         assert_eq!(esc("plain"), "plain");
     }
 

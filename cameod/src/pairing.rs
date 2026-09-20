@@ -74,6 +74,22 @@ impl PairingStore {
         })
     }
 
+    /// Whether `code` is a live, unexpired offer — without consuming it. Lets the
+    /// pairing route reject a caller who holds no valid code *before* any check
+    /// whose outcome would otherwise leak roster state to that caller.
+    pub fn is_live(&self, code: &str) -> bool {
+        if code.len() != 64 || !code.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return false;
+        }
+        let wanted = hash_secret(&code.to_ascii_lowercase());
+        let now = Instant::now();
+        let mut pending = self.pending.lock().unwrap();
+        pending.retain(|offer| offer.expires > now);
+        pending
+            .iter()
+            .any(|offer| ct_digest_eq(&offer.digest, &wanted))
+    }
+
     /// Consume a live code and return its operator label. The caller should only
     /// invoke this after validating the rest of the registration body: a bad
     /// callback must not burn a legitimate one-time code.
