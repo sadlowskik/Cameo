@@ -396,10 +396,13 @@ Owner: Knossos runtime.
     shell history, sibling repositories) does not exist for the child. Landlock
     resolves the real inode, so a symlink inside the workspace that points
     outside is refused without the manual check the path jail needs. ABI 4+
-    denies TCP bind and connect unless `Sandbox::networked`; UDP and Unix
-    sockets are not covered and the residual-risk line says so. Applied in a
-    `pre_exec` hook with `CompatLevel::BestEffort`, reporting the ABI actually
-    enforced.
+    can deny TCP bind and connect; this is opt-in (`Sandbox::deny_network`,
+    `knossos exec --deny-network`) rather than the default, because a
+    project's own test suite is entitled to bind loopback and Landlock's
+    network rules are port-based, so loopback cannot be carved out. UDP and
+    Unix sockets are not covered. A denial the kernel cannot honour is a
+    residual-risk line. Applied in a `pre_exec` hook, the ABI queried from
+    the kernel and reported.
   - **macOS: Seatbelt.** Wrap the command in `/usr/bin/sandbox-exec -f
     <profile> -D WORKSPACE=<root> -D TMP=<tmpdir> -- <program> <args>`.
     `sandbox-exec` execs in place, so pid, process group and kill-tree handling
@@ -409,13 +412,14 @@ Owner: Knossos runtime.
     and `(deny network*)` unless networked. Deprecated interface, still shipped
     on current macOS and relied on by Chromium and Bazel; if Apple removes it
     the run degrades to `EnvOnly` and says so rather than failing silently.
-  - **Policy knob** `--confine=require|prefer|off` (config and env
-    `KNOSSOS_CONFINE`; default `prefer`). `require` refuses to spawn when the
+  - **Policy knob** `KNOSSOS_CONFINE=require|prefer|off` (default `prefer`;
+    a `--confine` flag can follow once the config surface is consolidated). `require` refuses to spawn when the
     OS cannot confine, and is what CI and the Cameo appliance use; `prefer` runs
     and records the level; `off` is an operator debugging aid and is journaled.
-    `Sandbox::allow_path(path, rw|ro)` admits an extra toolchain directory for
-    stacks this list did not anticipate; a denied path fails the child loudly
-    with `EACCES` in its stderr, which is the correct failure.
+    `Sandbox::allow_path` and `KNOSSOS_CONFINE_ALLOW_RO`/`_RW` admit an extra
+    toolchain directory for stacks this list did not anticipate; a denied path
+    fails the child loudly with `EACCES` in its stderr, which is the correct
+    failure.
   - **Reporting.** `Finished.confinement` is `Landlock { abi }`, `Seatbelt`, or
     `EnvOnly` on every command record and in the journal. A mission in which
     any child ran `EnvOnly` carries "child processes ran without filesystem
@@ -775,10 +779,11 @@ truthful than it found it.
 29. `FIELD-REMOTE-001`: cameod `/field/` proxy, `cameo remote` WireGuard
     helper, PWA manifest, systemd unit under the operator account.
 30. `KNS-PY-001`: Python to research marker; Rust evaluator is grading truth.
-31. `KNS-JAIL-001` (P1): child-process workspace jail, Landlock on Linux and
-    Seatbelt on macOS, `--confine` policy, confinement level in every command
-    record and in `Outcome.residual_risk`; `knossos exec` for Field; before
-    `KNS-RUST-001`.
+31. `KNS-JAIL-001` (P1) - implemented 2026-09-20 on Knossos branch
+    `fix/wire-delegation-constitution-ariadne` (commit 9f1c298), pending CI
+    on Linux and macOS: child-process workspace jail, Landlock on Linux and
+    Seatbelt on macOS, `KNOSSOS_CONFINE` policy, confinement level on every
+    `Finished` and in `Outcome.residual_risk`; `knossos exec` for Field.
 
 ## 10. Required release evidence
 
