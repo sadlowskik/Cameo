@@ -8,6 +8,10 @@ Amended: 2026-09-20 (full functionality/size/security audit; hive scope: trainin
 in v1 as an on-demand devkit, Knossos as an on-demand pinned install, single
 Vulkan ISO with on-demand ROCm, image-based A/B updates, Mesh discovery).
 
+Amended: 2026-09-20 (Knossos harness assessment; all-Rust runtime including
+Field's core; plug-and-play agents over ACP; Field reachable from anywhere
+through the Cameo origin and the operator's private network; Knossos CI truth).
+
 Cameo baseline: `311f7cd` (`v0.2.0-beta.3`)
 
 Bundled Knossos baseline: `a20a3b8` (`v0.2.0-beta.1`)
@@ -52,6 +56,17 @@ Knossos can use Anthropic, Ollama, OpenAI-compatible providers, or Cameo as an
 engine. The Python implementation under `model/knossos/` is retained for
 research, trace curation, and comparison; it is not a second supported product
 runtime.
+
+The harness is all Rust: every process a user runs is the `knossos` binary.
+That includes Field's core (event log, projection, adapters, budgets, routines,
+director, API and WebSocket) which today runs as a Node sidecar and is ported
+under workstream G. The browser client stays a web app because it runs in a
+browser; a native shell, when it comes, is Rust (Tauri). Agents plug in through
+the Agent Client Protocol: Knossos is itself an ACP agent, and any ACP agent
+(Claude Code, Codex, Gemini CLI, a user's own) becomes a unit on the same map
+under one Field-level permission gate. Field is served through the Cameo box's
+own HTTPS origin and reached from anywhere over the operator's private network;
+there is no public relay and no token reselling.
 
 ### Knossos Field
 
@@ -180,6 +195,21 @@ operator amendment exactly.
 
 Not established:
 
+- the 2026-09-20 harness assessment found: a mission can halt as Done with exit
+  0 on a reused tier-0 quick verify without full verification ever running;
+  a crash between a consequential action and its recorded result makes the
+  mission permanently unresumable (no reconciliation); resume drops the
+  pre-change baseline; accept/revert exist only in `serve`; no mission
+  wall-clock or monetary ceiling; the result object lacks residual risk and
+  recovery instructions; `Retry-After` is ignored; the sandbox is an
+  environment jail while the docs say workspace jail; Field's terminal spawns
+  a real shell outside policy and Field launches missions without persistence.
+  All open (`KNS-VERIFY-001` … `KNS-RESULT-001`);
+- Knossos CI is red for reasons unrelated to the runtime: the Python job never
+  installs torch that ten test files import; the ACP conformance job never
+  builds the Rust binary it spawns; the "Lapce" job tests an editor that is now
+  a VS Code extension; macOS `cargo test` and Field-on-Windows fail without
+  readable logs (`KNS-CI-001`);
 - complete Linux/macOS/Windows execution and process-tree evidence;
 - live cloud, live local, and live Cameo conformance on one release commit;
 - durable multi-mission fairness, resource locks, provider-enforced cost ceilings,
@@ -250,6 +280,14 @@ Not established:
 6. Support one cloud engine, Ollama, and Cameo through tested capability
    negotiation rather than provider-specific assumptions.
 7. Ship Field and editor integration as thin clients over the same runtime.
+8. Run Field's core inside the `knossos` binary with no Node runtime on the
+   box; the Node server is retired once the ported test suite is green.
+9. Accept any ACP agent as a unit through the generic adapter, gated by the
+   same Field-level permission gate as Knossos's own units, with a conformance
+   suite that user-authored adapters must pass.
+10. Serve Field through the Cameo box's HTTPS origin behind the console key,
+    and reach it from a phone or laptop over the operator's private network
+    with sessions resuming on any device.
 
 ### Explicit non-goals for v1
 
@@ -260,6 +298,8 @@ Not established:
 - baking ROCm HIP, PyTorch, or Knossos into the ISO image;
 - Kubernetes as a supported appliance path;
 - unrestricted shell or ambient credentials in Knossos;
+- a public relay, hosted accounts, or token reselling for "anywhere" access;
+- multi-tenant Field (one operator per Field instance in v1);
 - autonomous publishing, deployment, spending, or destructive work without an
   explicit policy and approval boundary;
 - using simulated, fixture, or rehearsal state as production evidence.
@@ -313,9 +353,27 @@ Owner: Knossos runtime.
 - Reconcile unfinished external actions after restart; never blindly replay them.
 - Add schema migration fixtures and repeated-compaction invariant tests.
 - Add resource locks and idempotency keys before parallel writes or external calls.
+- Close the quick-verify reuse: a reused tier-0 verdict may never satisfy the
+  halt condition; `Halt::Done` and a zero exit require a full-mode verdict at
+  the current workspace revision (`KNS-VERIFY-001`).
+- Reconcile unfinished consequential actions on resume: re-observe the target
+  (file digest, command exit, external call receipt) and record an explicit
+  outcome instead of refusing resume (`KNS-REC-001`).
+- Serialize the Oracle baseline into the journal so a resumed mission judges
+  the same pre-existing failures as a fresh one (`KNS-BASE-001`).
+- Expose accept, revise and revert on CLI, REPL and ACP, not only `serve`;
+  make revise an explicit verb that increments the contract revision
+  (`KNS-LIN-001`).
+- Project residual risk and recovery instructions into the result object on
+  every interface (`KNS-RESULT-001`).
+- Add a mission wall-clock deadline and a monetary ceiling to the bounds;
+  honour `Retry-After` on 429 (`KNS-BOUNDS-001`).
+- State the sandbox honestly: an environment jail with a harness-tool path
+  jail; either document that or add OS-level confinement, never claim both.
 
 Exit: repeated forced termination at every journal/action boundary resumes to one
-explainable state with no duplicate consequential action and current proof only.
+explainable state with no duplicate consequential action and current proof only;
+no interface can report success without a full-mode verdict.
 
 ### C. Reward-hacking-resistant evaluation
 
@@ -428,6 +486,41 @@ never implies pooled VRAM or distributed execution.
 
 Owner: Field.
 
+Field's component roadmap (`field/docs/plug-and-play-roadmap.md` in the Knossos
+repository) holds the phase detail; this workstream fixes the order and the
+non-negotiables.
+
+- **Port field-core to Rust as the spine, not as "later".** The Node server's
+  responsibilities (event log with SQLite and JSONL backends, projection fold,
+  WebSocket coalescing, API with bootstrap-cookie auth and origin/host gates,
+  harness adapters, budget ledger and admission, routines, campaign director,
+  world projection) move into `knossos field` behind stable interfaces.
+  Strangler order: event log and projection first (the suite's replay and
+  stress tests are the parity oracle), then API and WebSocket, then adapters
+  (Knossos's own adapter becomes in-process), then director and routines. The
+  Node server stays selectable by flag until every ported test is green, then
+  is deleted with its `npm` dependency. The SPA and `field-event-v1` do not
+  change, so the web client needs no rewrite (`KNS-RUST-001`).
+- **Plug-and-play agents standardise on ACP.** The generic-ACP adapter is the
+  first new adapter; manifest-only CLI and HTTP agents follow. Every adapter,
+  including user-authored ones, passes the adapter conformance suite, and one
+  Field-level permission gate decides every consequential action regardless
+  of what the adapter self-reports (`FIELD-ACP-001`).
+- **Field's own terminal and shell go through Knossos policy** or are removed;
+  Field launches every mission with persistence on (`FIELD-POLICY-001`).
+- **Reachable from anywhere, through Cameo.** `cameod` reverse-proxies
+  `/field/` to `knossos field` on loopback, so Field shares the console's
+  TLS certificate, key and origin; the console links to it. Off-LAN access is
+  the operator's private network: Cameo ships `wireguard-tools` and
+  `cameo remote` mints a peer configuration and a QR code for a phone;
+  Headscale/Tailscale remain optional. Field ships a PWA manifest so it
+  installs on a phone, and the event log is the session store, so any device
+  resumes the same operation. Installed by `cameo knossos install`, run as a
+  systemd unit under the operator account (`FIELD-REMOTE-001`).
+- **Retire Python from the product path.** Daedalus training and trace tooling
+  stay in `model/` under a research marker outside the CI gate; the Rust
+  evaluator and the frozen suite lock become the only grading truth
+  (`KNS-PY-001`).
 - Complete the process-generation test and production build outside this sandbox.
 - Qualify child-process termination and secret isolation on all supported systems.
 - Finish durable admission/fairness for concurrent missions and routine misfires.
@@ -485,6 +578,21 @@ Owner: cross-product release maintainer.
 Exit: a fresh install can obtain Knossos with one command and pass the
 `cameo-engine/v1` conformance run against the local engine.
 
+### L. Knossos CI truth
+
+Owner: Knossos runtime.
+
+- Build the Rust binary before the ACP conformance job spawns it.
+- Guard or install torch for the Python job; move Daedalus tests behind the
+  research marker.
+- Publish failing job logs to a public `ci-logs` branch as Cameo does, so
+  macOS and Windows failures are diagnosable without credentials.
+- Retire or rename the Lapce job to match the VS Code extension that exists.
+- Make the Knossos submodule/pin in Cameo track a green mainline commit.
+
+Exit: every job on the Knossos default branch is green or explicitly skipped
+with a printed reason, and a red job has a readable log.
+
 ### I. Supply chain, governance, and support
 
 Owner: release maintainer.
@@ -509,6 +617,13 @@ Exit: a release can be independently verified, serviced, revoked, and reproduced
    downloads, CI matrices, and clean packaging.
 3. **Prove each product alone.** Complete Knossos recovery/evaluation, Field
    platform/browser qualification, and Cameo ISO/hardware qualification.
+   Knossos order within this step: L (CI truth) → B's `KNS-VERIFY-001` and
+   the restart pair (`KNS-REC-001`, `KNS-BASE-001`) → lineage and result
+   object → G's Rust port (event log first) with `KNS-PY-001` alongside →
+   ACP adapter and Barracks/Power-sources/Folders UI → Cameo origin and
+   private-network access → RTS surface, which can start in parallel on the
+   web side because it is a projection over an unchanged event schema →
+   native shell last.
 4. **Close security and durability.** Independent review plus fault matrices for
    secrets, workspaces, processes, storage, updates, and mesh identity.
 5. **Run the cross-product path.** Artifact-only offline Cameo + Knossos + Field
@@ -575,6 +690,21 @@ truthful than it found it.
 20. `CAM-HW-001`: collect the first complete real-AMD qualification record.
 21. `INT-001`: automate the mock Cameo/Knossos contract suite in both repositories.
 22. `RC-001`: script the artifact-only acceptance and fault matrix.
+23. `KNS-CI-001` (P0): conformance job builds the binary; torch guard or
+    install; ci-logs publishing; retire the Lapce job (workstream L).
+24. `KNS-VERIFY-001` (P0): no Done/exit-0 on a reused tier-0 verify.
+25. `KNS-REC-001`, `KNS-BASE-001`: reconcile pending actions and keep the
+    baseline across resume.
+26. `KNS-LIN-001`, `KNS-RESULT-001`, `KNS-BOUNDS-001`: accept/revise/revert on
+    every interface; residual risk and recovery in the result; time and money
+    ceilings; `Retry-After`.
+27. `KNS-RUST-001`: field-core in Rust, strangler order, Node server deleted
+    at parity.
+28. `FIELD-ACP-001`, `FIELD-POLICY-001`: generic ACP adapter and conformance
+    suite; Field terminal under policy; persistence on by default.
+29. `FIELD-REMOTE-001`: cameod `/field/` proxy, `cameo remote` WireGuard
+    helper, PWA manifest, systemd unit under the operator account.
+30. `KNS-PY-001`: Python to research marker; Rust evaluator is grading truth.
 
 ## 10. Required release evidence
 
@@ -610,6 +740,8 @@ to game completion.
 The combined product is complete when that Knossos workflow runs on a Cameo
 appliance after a one-time `cameo knossos install`, with no internet needed at
 run time, survives the defined compute and process failures, and can be operated
-through Field without weakening either product's policy or evidence model.
+through Field, served from the appliance's own origin and reached from a phone
+over the operator's private network, with any ACP agent as a unit, without
+weakening either product's policy or evidence model.
 
 Anything less remains beta, regardless of test count or visual polish.
