@@ -30,7 +30,8 @@ else
   echo "no log produced ($log)" >"$name"
 fi
 # Keep the branch small: drop logs older than the newest 40 files.
-ls -1t | grep -v "^$name$" | tail -n +40 | xargs -r git rm -q --cached -- 2>/dev/null || true
+find . -maxdepth 1 -type f -name '*.log' ! -name "$name" -printf '%T@ %p
+'   | sort -rn | tail -n +40 | cut -d' ' -f2- | xargs -r git rm -q --cached -- 2>/dev/null || true
 git add -- "$name"
 git commit -qm "ci log $name" || true
 for attempt in 1 2 3 4 5; do

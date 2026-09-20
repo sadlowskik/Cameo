@@ -13,6 +13,8 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       # render-releases.mjs reads daedalus/knossos-rs/Cargo.toml to cross-check
       # the pinned Knossos version, so this job needs the submodule too.
@@ -28,7 +30,9 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Test
-        run: cargo test --workspace --locked
+        run: |
+          set -o pipefail
+          cargo test --workspace --locked 2>&1 | tee ci-check-test.log
       - name: Release build
         run: cargo build --workspace --release --locked
       - uses: actions/setup-node@v4
@@ -44,6 +48,11 @@ jobs:
         run: node --test tests/hardware-reports.test.mjs tests/approved-hardware.test.mjs
       - name: Documentation links are current
         run: node scripts/check-doc-links.mjs
+      - name: Publish failure log to ci-logs branch
+        if: failure()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: scripts/ci/publish-log.sh ci-check-test.log ci-check-test-${{ github.run_id }}.log
 
   knossos:
     name: Knossos submodule
@@ -85,17 +94,9 @@ jobs:
           cargo build --release --locked --bin knossos 2>&1 | tee -a "$GITHUB_WORKSPACE/ci-knossos.log"
       - name: Publish failure log to ci-logs branch
         if: failure()
-        run: |
-          rm -rf /tmp/logpub && mkdir -p /tmp/logpub
-          log="ci-knossos-${{ github.run_id }}.log"
-          cp ci-knossos.log "/tmp/logpub/$log" 2>/dev/null || echo "no log produced" > "/tmp/logpub/$log"
-          cd /tmp/logpub
-          git init -q -b ci-logs
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add "$log"
-          git commit -qm "knossos ci log for run ${{ github.run_number }}"
-          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}" ci-logs
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: scripts/ci/publish-log.sh ci-knossos.log ci-knossos-${{ github.run_id }}.log
 
   shellcheck:
     runs-on: ubuntu-latest
@@ -138,17 +139,9 @@ jobs:
           } 2>&1 | tee ci-pyupdate.log
       - name: Publish failure log to ci-logs branch
         if: failure()
-        run: |
-          rm -rf /tmp/logpub && mkdir -p /tmp/logpub
-          log="ci-pyupdate-${{ github.run_id }}.log"
-          cp ci-pyupdate.log "/tmp/logpub/$log" 2>/dev/null || echo "no log produced" > "/tmp/logpub/$log"
-          cd /tmp/logpub
-          git init -q -b ci-logs
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add "$log"
-          git commit -qm "python update-chain ci log for run ${{ github.run_number }}"
-          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}" ci-logs
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: scripts/ci/publish-log.sh ci-pyupdate.log ci-pyupdate-${{ github.run_id }}.log
 
   # Build the Vulkan container image (F1) and smoke it: the binaries must run and
   # the serving dependencies must be present. Real GPU/serving is a Phase-1
@@ -171,14 +164,6 @@ jobs:
           docker run --rm cameo:vulkan sh -c 'command -v llama-server && command -v vulkaninfo'
       - name: Publish failure log to ci-logs branch
         if: failure()
-        run: |
-          rm -rf /tmp/logpub && mkdir -p /tmp/logpub
-          log="ci-container-${{ github.run_id }}.log"
-          cp ci-container.log "/tmp/logpub/$log" 2>/dev/null || echo "no log produced" > "/tmp/logpub/$log"
-          cd /tmp/logpub
-          git init -q -b ci-logs
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add "$log"
-          git commit -qm "container ci log for run ${{ github.run_number }}"
-          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}" ci-logs
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: scripts/ci/publish-log.sh ci-container.log ci-container-${{ github.run_id }}.log

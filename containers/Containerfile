@@ -42,6 +42,8 @@ COPY Cargo.toml Cargo.lock rust-toolchain.toml rustfmt.toml ./
 COPY cli/ cli/
 COPY cameod/ cameod/
 COPY core/ core/
+# cameo-api embeds contracts/cameo-capabilities-v1.json at compile time.
+COPY contracts/ contracts/
 RUN --mount=type=cache,target=/cargo/registry \
     --mount=type=cache,target=/cargo/git \
     --mount=type=cache,target=/src/target \
