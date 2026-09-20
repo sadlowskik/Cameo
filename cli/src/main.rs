@@ -32,6 +32,7 @@ use cameo_placement::{
 mod credits;
 mod doctor;
 mod fleet;
+mod knossos;
 mod report;
 mod system_facts;
 
@@ -207,6 +208,8 @@ enum Command {
     Model(ModelArgs),
     /// Front several cameod nodes as one fleet (poll /api/node, place a model).
     Fleet(FleetArgs),
+    /// Install, inspect or remove the pinned Knossos harness release (not baked into the image).
+    Knossos(knossos::Args),
     /// Build the `podman`/`docker run` command that passes AMD GPUs into a container.
     Containers(ContainersArgs),
     /// Print the package set this hardware would use (does not install).
@@ -571,6 +574,7 @@ fn run(cli: &Cli) -> Result<()> {
         Command::Credits => credits::run(cli.json),
         Command::Doctor { bundle } => doctor::run(cli, bundle.as_deref()),
         Command::Report(args) => report::run(cli, args),
+        Command::Knossos(args) => knossos::run(cli, args),
         Command::Capabilities => {
             println!(
                 "{}",

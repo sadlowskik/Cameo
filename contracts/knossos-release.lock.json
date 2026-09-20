@@ -1,0 +1,14 @@
+{
+  "schema": "cameo-knossos-release-lock/v1",
+  "version": "0.2.0-beta.2",
+  "tag": "v0.2.0-beta.2",
+  "repository": "https://github.com/sadlowskik/Knossos-Harness",
+  "assets": {
+    "linux_x86_64": {
+      "url": "https://github.com/sadlowskik/Knossos-Harness/releases/download/v0.2.0-beta.2/knossos-0.2.0-beta.2-linux-x86_64.zip",
+      "sha256": "aa135f14573543dfca2b9fee123cacfcb5b96114ae55d1b5391b4bec59933496",
+      "size": 5423297,
+      "binary": "knossos-0.2.0-beta.2-linux-x86_64/knossos"
+    }
+  }
+}
