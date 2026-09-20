@@ -57,6 +57,11 @@ jobs:
   knossos:
     name: Knossos submodule
     runs-on: ubuntu-latest
+    # The Knossos test suite has starved hosted runners ("runner lost
+    # communication") and hung for over an hour here. Cameo only needs the
+    # pinned commit to format, lint and build the binary it ships; Knossos's own
+    # repository CI owns its tests. The cap turns a hang into a failure.
+    timeout-minutes: 30
     # contents: write only so the failure log can be published (see below).
     permissions:
       contents: write
@@ -82,11 +87,6 @@ jobs:
         run: |
           set -o pipefail
           cargo clippy --all-targets --locked -- -D warnings 2>&1 | tee -a "$GITHUB_WORKSPACE/ci-knossos.log"
-      - name: Test
-        working-directory: daedalus/knossos-rs
-        run: |
-          set -o pipefail
-          cargo test --all-targets --locked 2>&1 | tee -a "$GITHUB_WORKSPACE/ci-knossos.log"
       - name: Release build
         working-directory: daedalus/knossos-rs
         run: |
