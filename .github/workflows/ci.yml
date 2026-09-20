@@ -14,7 +14,11 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
+      # render-releases.mjs reads daedalus/knossos-rs/Cargo.toml to cross-check
+      # the pinned Knossos version, so this job needs the submodule too.
       - uses: actions/checkout@v4
+        with:
+          submodules: true
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
