@@ -621,11 +621,18 @@ non-negotiables.
   the Rust server starts, assigns, commands and stops agents and answers
   permission requests; step 3 has the Tauri shell and the OS keychain for
   endpoint keys (macOS Keychain, Windows Credential Manager, Linux file
-  until Secret Service); Atlas has its plain-language pass. Being ported
-  now: workspace routes (files, git, terminal), cities, routines, the
-  campaign director. Not started: the Claude CLI adapter, first-run
-  screen and verification contract (step 4), ACP (5), installers,
-  signing, updates and app CI (6).
+  until Secret Service); Atlas has its plain-language pass. Later the
+  same day: every Node route is ported (files, git, terminal, cities,
+  routines, filesystem and git watchers, the campaign director,
+  rehearsals); Claude Code runs as an agent through the stream-json
+  adapter and an MCP permission bridge; any ACP agent runs through the
+  ACP adapter behind the same permission gate (step 5); the app has a
+  CI job on all three OSes; `cameod` proxies `/field/` (this branch,
+  `FIELD-REMOTE-001` first half). Not started: first-run screen and the
+  per-project verification contract (step 4), Field honouring
+  X-Forwarded-* behind the proxy, installers, signing and updates (6).
+  Known: the Ubuntu Rust CI runner dies during uncached builds; cause
+  unknown after ruling out setsid, the token, test codegen and the image.
 - Qualify child-process termination and secret isolation on all supported systems.
 - Finish durable admission/fairness for concurrent missions and routine misfires.
 - Exercise campaigns with real Knossos engines, not only fixtures.
