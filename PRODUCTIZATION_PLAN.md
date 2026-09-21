@@ -616,6 +616,16 @@ non-negotiables.
   unconfined and every result says so, and the confined path is WSL2, which
   the app can drive. The app collects nothing and phones nowhere unless a
   Cameo hub is paired.
+  Status 2026-09-21 (Knossos branch `feat/field-core-rust`): steps 1 and 2
+  are in, with the harness registry and the Knossos session adapter, so
+  the Rust server starts, assigns, commands and stops agents and answers
+  permission requests; step 3 has the Tauri shell and the OS keychain for
+  endpoint keys (macOS Keychain, Windows Credential Manager, Linux file
+  until Secret Service); Atlas has its plain-language pass. Being ported
+  now: workspace routes (files, git, terminal), cities, routines, the
+  campaign director. Not started: the Claude CLI adapter, first-run
+  screen and verification contract (step 4), ACP (5), installers,
+  signing, updates and app CI (6).
 - Qualify child-process termination and secret isolation on all supported systems.
 - Finish durable admission/fairness for concurrent missions and routine misfires.
 - Exercise campaigns with real Knossos engines, not only fixtures.
