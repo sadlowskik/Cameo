@@ -12,8 +12,68 @@
 //! [`resolve`] applies the full precedence chain.
 
 use serde::{Deserialize, Serialize};
+use std::net::{IpAddr, Ipv4Addr};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
+
+/// Default port `knossos field --native` listens on.
+pub const FIELD_DEFAULT_PORT: u16 = 7749;
+
+/// The `[field]` layer: `cameod` reverse-proxies `/field/` to `knossos field`
+/// on loopback so Field shares the console's TLS certificate, key and origin.
+/// Every key is optional so the layer merges like the rest of [`Settings`];
+/// [`FieldSettings::resolved`] applies the defaults and the loopback rule.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FieldSettings {
+    /// Proxy `/field/` at all. Off by default: the daemon must not forward to a
+    /// port nothing was asked to listen on.
+    pub enabled: Option<bool>,
+    /// The port `knossos field` listens on (default [`FIELD_DEFAULT_PORT`]).
+    pub port: Option<u16>,
+    /// Address Field listens on. Loopback only (default `127.0.0.1`): the whole
+    /// point of the proxy is that Field is never exposed on the LAN itself.
+    pub bind: Option<IpAddr>,
+}
+
+/// Fully resolved `[field]` settings (defaults applied, bind validated).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FieldConfig {
+    pub enabled: bool,
+    pub port: u16,
+    pub bind: IpAddr,
+}
+
+impl FieldSettings {
+    /// Overlay `higher` on top of `self`, key by key.
+    #[must_use]
+    pub fn overlay(mut self, higher: FieldSettings) -> FieldSettings {
+        if higher.enabled.is_some() {
+            self.enabled = higher.enabled;
+        }
+        if higher.port.is_some() {
+            self.port = higher.port;
+        }
+        if higher.bind.is_some() {
+            self.bind = higher.bind;
+        }
+        self
+    }
+
+    /// Apply defaults (`enabled = false`, `port = 7749`, `bind = 127.0.0.1`)
+    /// and refuse a non-loopback `bind`.
+    pub fn resolved(&self) -> Result<FieldConfig, Error> {
+        let bind = self.bind.unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST));
+        if !bind.is_loopback() {
+            return Err(Error::FieldBindNotLoopback(bind));
+        }
+        Ok(FieldConfig {
+            enabled: self.enabled.unwrap_or(false),
+            port: self.port.unwrap_or(FIELD_DEFAULT_PORT),
+            bind,
+        })
+    }
+}
 
 /// Which inference/training backend to use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -49,6 +109,8 @@ pub struct Settings {
     /// API key `llama-server` requires from clients. Serving on anything other
     /// than loopback is refused without one.
     pub serve_api_key: Option<String>,
+    /// `[field]`: the `/field/` reverse proxy to `knossos field` (daemon only).
+    pub field: FieldSettings,
 }
 
 impl Settings {
@@ -88,6 +150,7 @@ impl Settings {
         if higher.socket_path.is_some() {
             self.socket_path = higher.socket_path;
         }
+        self.field = self.field.overlay(higher.field);
         self
     }
 }
@@ -104,6 +167,8 @@ pub enum Error {
     Toml(#[from] toml::de::Error),
     #[error("failed to read config file: {0}")]
     Io(#[from] std::io::Error),
+    #[error("[field] bind must be a loopback address, got {0}")]
+    FieldBindNotLoopback(IpAddr),
 }
 
 #[cfg(test)]
@@ -150,5 +215,40 @@ mod tests {
         let s = Settings::from_toml("backend = \"rocm\"\nhsa_override = \"10.3.0\"\n").unwrap();
         assert_eq!(s.backend, Some(Backend::Rocm));
         assert_eq!(s.hsa_override.as_deref(), Some("10.3.0"));
+    }
+
+    #[test]
+    fn field_defaults_off_on_7749_loopback() {
+        let field = Settings::default().field.resolved().unwrap();
+        assert_eq!(
+            field,
+            FieldConfig {
+                enabled: false,
+                port: FIELD_DEFAULT_PORT,
+                bind: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            }
+        );
+    }
+
+    #[test]
+    fn field_layers_merge_key_by_key() {
+        let file = Settings::from_toml("[field]\nenabled = true\nport = 8000\n").unwrap();
+        let flags = Settings::from_toml("[field]\nbind = \"::1\"\n").unwrap();
+        let field = resolve(Settings::default(), file, flags)
+            .field
+            .resolved()
+            .unwrap();
+        assert!(field.enabled);
+        assert_eq!(field.port, 8000);
+        assert_eq!(field.bind, "::1".parse::<IpAddr>().unwrap());
+    }
+
+    #[test]
+    fn field_bind_must_be_loopback() {
+        let s = Settings::from_toml("[field]\nbind = \"0.0.0.0\"\n").unwrap();
+        assert!(matches!(
+            s.field.resolved(),
+            Err(Error::FieldBindNotLoopback(_))
+        ));
     }
 }

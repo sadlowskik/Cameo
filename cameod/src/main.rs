@@ -82,7 +82,8 @@ struct Args {
     #[arg(long, value_name = "FILE", env = "CAMEO_KEYS_FILE")]
     keys_file: Option<PathBuf>,
 
-    /// Load a daemon config file (TOML): backend, hsa_override, serve_api_key, …
+    /// Load a daemon config file (TOML): backend, hsa_override, serve_api_key,
+    /// `[field]` (the `/field/` proxy to `knossos field`), …
     #[arg(long, value_name = "FILE")]
     config: Option<PathBuf>,
 
@@ -221,6 +222,10 @@ fn run(args: Args) -> Result<()> {
         None => Settings::default(),
     };
     let settings = cameo_config::resolve(Settings::default(), file_settings, Settings::default());
+    let field = settings
+        .field
+        .resolved()
+        .map_err(|e| anyhow!("loading config: {e}"))?;
 
     if let Some(secret) = args.console_key.as_deref() {
         auth::validate_secret("console key", secret).map_err(|e| anyhow!(e))?;
@@ -327,6 +332,7 @@ fn run(args: Args) -> Result<()> {
         pairings: pairing::PairingStore::new(),
         rate_limits: rate_limit::RateLimiter::new(),
         hub_enabled: args.hub,
+        field_enabled: field.enabled,
         farm_token: args.farm_token.clone(),
         // /v1 is keyless only on a daemon with no keys at all, or with this
         // explicit opt-in. Never derived from the bind address: a loopback bind
@@ -443,6 +449,15 @@ fn run(args: Args) -> Result<()> {
             ""
         }
     );
+    let field_proxy = field.enabled.then(|| http::FieldProxy {
+        upstream: std::net::SocketAddr::new(field.bind, field.port),
+    });
+    if let Some(proxy) = &field_proxy {
+        eprintln!(
+            "cameod: /field/ proxied to knossos field at {}",
+            proxy.upstream
+        );
+    }
     if state.captures.is_live() {
         eprintln!("cameod: live GPU detection (Linux)");
     } else {
@@ -478,9 +493,10 @@ fn run(args: Args) -> Result<()> {
         .map(|configured| Arc::clone(&configured.config));
     let mut shutdown_started = None;
     let mut shutdown_error = None;
-    http::serve(
+    http::serve_with(
         listener,
         tls_config,
+        field_proxy,
         move |req| app::route(&serving, req),
         || {
             if !shutdown_requested.load(std::sync::atomic::Ordering::SeqCst) {
