@@ -2,7 +2,9 @@
 //!
 //! Console (this node's GPUs, endpoints, playground) plus a fleet map (every
 //! node, GPU, VRAM, loaded model, and who is using it). A hub sets
-//! `healthz.hub`; the HTML is the same. No build step, no bundler.
+//! `healthz.hub`; the HTML is the same. No build step, no bundler. When
+//! `healthz.field` is set the navigation shows a "Field" link to `/field/`,
+//! the Knossos Field UI `cameod` reverse-proxies under its own origin.
 
 /// The complete dashboard page. Embedded verbatim; served as `text/html`.
 pub const INDEX_HTML: &str = r##"
@@ -60,6 +62,10 @@ pub const INDEX_HTML: &str = r##"
     padding:12px 16px;cursor:pointer;transition:color .15s}
   nav.tabs button:hover{color:var(--muted)}
   nav.tabs button.on{color:var(--ember-soft);border-bottom-color:var(--ember)}
+  nav.tabs a.ext{color:var(--faint);text-decoration:none;font-family:var(--label);font-weight:600;font-size:12px;
+    letter-spacing:.08em;text-transform:uppercase;padding:12px 16px;margin-left:auto;border-bottom:2px solid transparent}
+  nav.tabs a.ext:hover{color:var(--muted)}
+  nav.tabs a.ext[hidden]{display:none}
 
   main{max-width:1280px;margin-inline:auto;padding:28px}
   #view-console.hide{display:none}
@@ -197,6 +203,7 @@ pub const INDEX_HTML: &str = r##"
 <nav class="tabs">
   <button id="tab-console" class="on" onclick="showView('console')">Console</button>
   <button id="tab-deck" onclick="showView('deck')">Deck</button>
+  <a id="tab-field" class="ext" href="/field/" hidden title="Knossos Field, proxied by this console">Field ↗</a>
 </nav>
 
 <main>
@@ -717,6 +724,7 @@ function refresh(){loadGpus();loadServers();loadPlayground();tickDeck();}
 let booted=false;
 async function boot(){
   try{const r=await fetch('/healthz'); const d=await r.json(); IS_HUB=!!d.hub;
+    document.getElementById('tab-field').hidden=!d.field;
     if(IS_HUB){document.querySelector('.tagline').textContent='nodes · GPUs · models · agents';
       document.title='Cameo Mesh'; showView('deck');}
   }catch(e){}

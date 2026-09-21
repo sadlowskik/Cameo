@@ -83,6 +83,10 @@ pub struct AppState {
     /// True when this daemon is a hub: `/hub/*` enrollment is on and
     /// `GET /healthz` reports `hub: true`. `/` is always the one fleet map.
     pub hub_enabled: bool,
+    /// True when `[field] enabled = true`: the HTTP layer splices `/field/` to
+    /// `knossos field` and `GET /healthz` reports `field: true` so the console
+    /// shows the link.
+    pub field_enabled: bool,
     /// The token a node must present to enroll (`POST /hub/register|heartbeat`).
     /// Required in hub mode — registration fails closed without it.
     pub farm_token: Option<String>,
@@ -278,7 +282,14 @@ pub fn route(state: &Arc<AppState>, req: &Request) -> Response {
             // `healthz.hub`; the HTML is the same so the map is one UI.
             [] => return Response::html(crate::dashboard::INDEX_HTML),
             ["healthz"] => {
-                return Response::json(200, &json!({ "status": "ok", "hub": state.hub_enabled }))
+                return Response::json(
+                    200,
+                    &json!({
+                        "status": "ok",
+                        "hub": state.hub_enabled,
+                        "field": state.field_enabled,
+                    }),
+                )
             }
             ["readyz"] => {
                 if state.drain.draining() {
@@ -2064,6 +2075,7 @@ mod tests {
             pairings: crate::pairing::PairingStore::new(),
             rate_limits: crate::rate_limit::RateLimiter::new(),
             hub_enabled: true,
+            field_enabled: false,
             farm_token: None,
             open_inference: false,
         })

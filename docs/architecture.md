@@ -108,6 +108,24 @@ strategies are worthwhile.
 flags)` applies the precedence **auto < file < flag**. Enforces the plan's hard
 "auto but overridable" requirement.
 
+Daemon settings (`cameod --config <file>`, TOML): `backend`, `hsa_override`,
+`model_dir`, `socket_path`, `allow_oversize`, `serve_api_key`, and the
+`[field]` table for the `/field/` reverse proxy to `knossos field`
+(`FIELD-REMOTE-001`):
+
+| Key | Default | Meaning |
+|---|---|---|
+| `field.enabled` | `false` | Splice `/field/` (and `/field/ws`) to Field on loopback; `/field` redirects to `/field/`. |
+| `field.port` | `7749` | The port `knossos field --native` listens on. |
+| `field.bind` | `127.0.0.1` | Field's listen address. Must be loopback — the daemon refuses to start otherwise. |
+
+Each key is layered like the rest of `Settings` (a layer that omits a key defers
+downward). `cameod` forwards every request header, rewrites `Host` to the
+loopback authority (`127.0.0.1:7749`) and sets `X-Forwarded-Host`,
+`X-Forwarded-Proto` and `X-Forwarded-For` from the original request, so Field
+shares the console's TLS certificate and origin. Field's own bootstrap-cookie
+authentication is unchanged; the console key is not consulted for `/field/`.
+
 ## `core/models`
 Model acquisition and cache resolution, shared by both front ends so there is one
 cache layout and one alias table. `resolve(name)` turns an alias or bare name into

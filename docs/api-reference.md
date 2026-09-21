@@ -15,10 +15,11 @@ Errors are JSON: `{ "error": "…", "status": <code> }`.
 
 | Method · Path | Returns |
 |---|---|
-| `GET /healthz` | `{ "status": "ok", "hub": <bool> }` — process is up (F9); `hub` is whether this daemon accepts `/hub/*`. |
+| `GET /healthz` | `{ "status": "ok", "hub": <bool>, "field": <bool> }` — process is up (F9); `hub` is whether this daemon accepts `/hub/*`, `field` whether `/field/` is proxied. |
 | `GET /readyz` | `{ "ready": true }` / `503` — can detect + plan (F9). |
 | `GET /version` | `{ "name": "cameod", "version": "…" }` (F5). |
 | `GET /` | The dashboard (HTML). |
+| `* /field/…` | Only with `[field] enabled = true`: spliced byte-for-byte to `knossos field` on loopback (`/field/api/state` → `/api/state`, `/field/ws` → `/ws`, WebSocket upgrades included) with `Host` rewritten to the loopback authority and `X-Forwarded-Host`/`-Proto`/`-For` set. `/field` redirects (`307`) to `/field/`. Field's own cookie auth applies; the console key does not. `502` when Field is not running; `404` when the proxy is off. |
 
 `GET /metrics` (Prometheus text: daemon/endpoint/GPU gauges, F11) requires the
 **console key** when one is configured — the default ISO/container bind is
