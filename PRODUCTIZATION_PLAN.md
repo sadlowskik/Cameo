@@ -810,6 +810,24 @@ truthful than it found it.
     on Linux and macOS: child-process workspace jail, Landlock on Linux and
     Seatbelt on macOS, `KNOSSOS_CONFINE` policy, confinement level on every
     `Finished` and in `Outcome.residual_risk`; `knossos exec` for Field.
+    Merged to main 2026-09-21 (cefa229).
+33. `KNS-JAIL-002` (P1): the Windows confined path is WSL2. On Windows the
+    harness and the app detect `wsl.exe` with a distribution whose kernel
+    lists `landlock` in `/sys/kernel/security/lsm`; when present, children
+    run inside it under the Linux jail (workspace path translated, the Linux
+    `knossos` binary invoked through `wsl.exe`) and the result says
+    `landlock`; when absent, children run unconfined, every result says so,
+    and the app offers a guided "set up confined mode" (firmware
+    virtualization switch, `wsl --install`). Glue tested against a fake
+    `wsl.exe`; end to end on a Windows runner or machine with WSL2 enabled,
+    never assumed from a machine without it. After the adapter port.
+34. `KNS-JAIL-003` (P2): native Windows jail through AppContainer, the only
+    unprivileged Windows mechanism that confines reads and writes: a
+    container profile granted the workspace, a per-run temp directory and
+    the toolchain homes, network off without a capability, reported as
+    `appcontainer`. Costs ACL entries on those directories and a toolchain
+    compatibility matrix. Low-integrity launch is not a substitute: it stops
+    writes only and is never called a jail.
 
 ## 10. Required release evidence
 
